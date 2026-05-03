@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.3.5</title>
+  <title>Smart Home UI HA Add-on v3.3.6</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="mobile-menu-bar" class="mobile-menu-bar"><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button><a class="button-link mobile-faq-link" href="FAQ.html" target="_blank" rel="noopener">FAQ</a></div>
+  <div id="mobile-menu-bar" class="mobile-menu-bar"><a class="button-link mobile-back-link" href="/" target="_top" title="Вернуться в Home Assistant">← HA</a><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button><a class="button-link mobile-faq-link" href="FAQ.html" target="_blank" rel="noopener">FAQ</a></div>
   <button type="button" id="btn-show-sidebar" class="floating-menu-btn left hidden">☰ Комнаты</button>
   <button type="button" id="btn-show-device-panel" class="floating-menu-btn right hidden">Устройства</button>
   <button type="button" id="btn-show-toolbar" class="floating-menu-btn top hidden">Панель</button>
-  <a class="button-link floating-faq-btn" href="FAQ.html" target="_blank" rel="noopener">FAQ</a>
   <aside class="sidebar">
     <div class="brand">SMART HOME LOCAL</div>
     <div class="top-actions">
+      <a class="button-link ha-back-link" href="/" target="_top" title="Вернуться в Home Assistant">← HA</a>
       <button type="button" id="btn-settings">Настройки</button>
       <button type="button" id="btn-refresh">Обновить</button>
       <button type="button" id="btn-hide-sidebar" title="Скрыть левое меню">Скрыть</button>
@@ -31,6 +31,7 @@
         <p id="page-subtitle">Обзор квартиры и отдельные 3D-карты помещений</p>
       </div>
       <div class="toolbar-actions">
+        <a class="button-link ha-back-link toolbar-back" href="/" target="_top" title="Вернуться в Home Assistant">← Назад в HA</a>
         <button type="button" id="btn-overview">Общий план</button>
         <label><input type="checkbox" id="toggle-zones" checked> Зоны</label>
         <label><input type="checkbox" id="toggle-devices" checked> Маркеры</label>

@@ -352,7 +352,7 @@ body.compact-mode .device-card{padding:7px;border-radius:10px}
 .source-card-inline{margin-bottom:10px}
 
 /* v3.2.1: room sensor readout, calibrated room mapping, FAQ visibility */
-.floating-faq-btn,.toolbar-faq,.mobile-faq-link{display:inline-flex!important;visibility:visible!important;opacity:1!important}
+.toolbar-faq,.mobile-faq-link{display:inline-flex!important;visibility:visible!important;opacity:1!important}
 .device-marker .marker-value,
 .dev-icon .marker-value,
 .quick-icon .marker-value{font-weight:600!important;font-size:9px!important;min-width:18px!important;padding:1px 4px!important}
@@ -391,3 +391,10 @@ body.compact-mode .device-card{padding:7px;border-radius:10px}
 #btn-save-edit:disabled{opacity:.55;cursor:not-allowed;filter:grayscale(.35)}
 #btn-cancel-edit{background:#3a2424;color:#ffdede;border:1px solid rgba(255,110,110,.35);font-weight:900}
 .addon-note{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);color:var(--muted);line-height:1.4;}
+
+
+/* v3.3.6: HA add-on navigation cleanup */
+.ha-back-link,.mobile-back-link{background:#203047!important;color:#eef6ff!important;border-color:rgba(140,180,255,.28)!important}
+.ha-back-link:hover,.mobile-back-link:hover{background:#2b4264!important}
+.floating-faq-btn{display:none!important}
+@media (max-width:900px){.toolbar-back{display:none!important}.mobile-back-link{min-width:54px;padding:10px 11px;white-space:nowrap}}
