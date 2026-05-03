@@ -1,100 +1,139 @@
-# Smart Home UI Local — Home Assistant Add-on
+# Smart Home UI Local — Home Assistant add-on
 
-Локальный UI-план квартиры для Home Assistant без Home Assistant frontend внутри приложения.
+Этот архив подготовлен под репозиторий `https://github.com/Lepi4/smart-home-ui` и GHCR image `ghcr.io/lepi4/smart-home-ui-{arch}`.
 
-## Что внутри
 
-- Home Assistant add-on с Ingress.
-- Не нужен ввод Home Assistant URL.
-- Не нужен long-lived token.
-- Подключение к Home Assistant Core идёт через Supervisor API и `SUPERVISOR_TOKEN`.
-- Runtime-данные сохраняются в `/data` add-on:
-  - `layout.json`
-  - `addon_config.json`
-  - `source_config.json`
-  - `devices.js`
-  - `lovelace-source.js`
-  - `backups/`
+Этот вариант рассчитан на установку Home Assistant add-on через готовые Docker images из GitHub Container Registry, а не через локальную сборку на Home Assistant.
 
-## Важное решение по layout
+## Важно перед загрузкой на GitHub
 
-В обычном режиме есть кнопка **Редактировать**.
+В файле:
 
-В режиме редактирования появляются две кнопки:
+```text
+smart-home-ui-local/config.yaml
+```
 
-- **Сохранить изменения** — создаёт backup и записывает новый layout.
-- **Отменить изменения** — откатывает изменения текущей сессии редактирования.
+замените `YOUR_GITHUB_USERNAME` на ваш GitHub username:
 
-Автосохранения после каждого движения нет.
-
-## Как выгрузить на GitHub
-
-### 1. Создай репозиторий
+```yaml
+url: https://github.com/Lepi4/smart-home-ui
+image: ghcr.io/Lepi4/smart-home-ui-{arch}
+```
 
 Например:
 
-```bash
-gh repo create smart-home-ui-ha-addon --public --source=. --remote=origin --push
+```yaml
+url: https://github.com/alex/smart-home-ui
+image: ghcr.io/alex/smart-home-ui-{arch}
 ```
 
-Или создай пустой репозиторий через GitHub UI.
+## Как загрузить на GitHub
 
-### 2. Залей файлы вручную через git
+Создайте публичный репозиторий, например:
+
+```text
+smart-home-ui
+```
+
+Загрузите в корень репозитория содержимое этой папки:
+
+```text
+repository.yaml
+README.md
+.github/
+smart-home-ui-local/
+```
+
+Через терминал:
 
 ```bash
 git init
 git add .
-git commit -m "Initial Home Assistant add-on"
+git commit -m "Initial Home Assistant add-on with GHCR images"
 git branch -M main
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/smart-home-ui-ha-addon.git
+git remote add origin https://github.com/Lepi4/smart-home-ui.git
 git push -u origin main
 ```
 
-Перед push замени `YOUR_GITHUB_USERNAME` в:
+## Как собрать Docker images
 
-- `repository.yaml`
-- `smart-home-ui-local/config.yaml`
-
-### 3. Добавь репозиторий в Home Assistant
-
-Home Assistant → Settings → Add-ons → Add-on Store → меню ⋮ → Repositories.
-
-Добавь URL своего GitHub-репозитория:
+После push откройте в GitHub:
 
 ```text
-https://github.com/YOUR_GITHUB_USERNAME/smart-home-ui-ha-addon
+Actions → Build and publish Home Assistant add-on images
 ```
 
-После этого появится add-on **Smart Home UI Local**.
+Запустите workflow вручную через `Run workflow`, либо он запустится автоматически после push в `main`.
 
-### 4. Установи и запусти add-on
+Будут опубликованы images:
 
-Открой add-on, нажми:
-
-1. Install
-2. Start
-3. Open Web UI
-
-## Опции add-on
-
-```yaml
-pollIntervalMs: 6000
-dashboardPaths: []
+```text
+ghcr.io/Lepi4/smart-home-ui-amd64:3.3.1
+ghcr.io/Lepi4/smart-home-ui-aarch64:3.3.1
+ghcr.io/Lepi4/smart-home-ui-armv7:3.3.1
 ```
 
-`dashboardPaths` можно оставить пустым и указать панели через настройки UI.
+## Если Home Assistant не может скачать image
 
-Примеры:
+Откройте на GitHub страницу package и проверьте, что package публичный:
 
-```yaml
-dashboardPaths:
-  - dashboard-unknown/0
-  - dashboard-unknown/1
-  - dashboard-unknown/media
+```text
+GitHub → ваш профиль → Packages → smart-home-ui-amd64 → Package settings → Change visibility → Public
 ```
 
-## Безопасность
+Повторите для `aarch64` и `armv7`, если используете их.
 
-Порт наружу не публикуется. Доступ идёт через Home Assistant Ingress.
+## Как добавить add-on в Home Assistant
 
-Не добавляй `ports:` и не запускай этот add-on как открытый LAN-сервис без дополнительной авторизации.
+В Home Assistant:
+
+```text
+Settings → Add-ons → Add-on Store → ⋮ → Repositories
+```
+
+Добавьте ссылку:
+
+```text
+https://github.com/Lepi4/smart-home-ui
+```
+
+После обновления магазина появится add-on:
+
+```text
+Smart Home UI Local
+```
+
+Установите его, запустите и откройте через `Open Web UI`.
+
+## Проверка структуры репозитория
+
+Правильно:
+
+```text
+repository.yaml
+README.md
+.github/workflows/docker.yml
+smart-home-ui-local/config.yaml
+smart-home-ui-local/Dockerfile
+smart-home-ui-local/server.js
+smart-home-ui-local/public/
+```
+
+Неправильно:
+
+```text
+smart-home-ui-repo/repository.yaml
+smart-home-ui-repo/smart-home-ui-local/config.yaml
+```
+
+В GitHub не должно быть лишней верхней папки.
+
+## v3.3.3 fix
+
+This version fixes add-on startup errors like:
+
+```text
+Error: Cannot find module 'express'
+```
+
+The Docker image now verifies `express` and `ws` during build. The runtime `start.sh` also checks dependencies before launching `server.js`.

@@ -1,12 +1,12 @@
 name: Smart Home UI Local
 slug: smart_home_ui_local
-version: "3.3.0"
+version: "3.3.3"
 description: Local floor-plan Smart Home UI for Home Assistant
-url: https://github.com/YOUR_GITHUB_USERNAME/smart-home-ui-ha-addon
+url: https://github.com/Lepi4/smart-home-ui
+image: ghcr.io/lepi4/smart-home-ui-{arch}
 arch:
   - aarch64
   - amd64
-  - armv7
 startup: application
 boot: auto
 init: false
@@ -21,4 +21,5 @@ options:
   dashboardPaths: []
 schema:
   pollIntervalMs: int(2000,60000)
-  dashboardPaths: [str]
+  dashboardPaths:
+    - str
