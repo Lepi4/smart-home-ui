@@ -488,7 +488,7 @@ app.post('/api/config', (req,res)=> {
   } catch(e){ res.status(500).json({error:e.message}); }
 });
 app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:6000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/api/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/system', (req,res)=> { try { res.json({ ok:true, mode:'home-assistant-addon', haApiBase:HA_API_BASE, haWsUrl:HA_WS_URL, hasSupervisorToken:!!HA_TOKEN, dataDir:DATA_DIR }); } catch(e){ res.status(500).json({error:e.message}); } });
 
 app.post('/api/ha/dashboard-paths/normalize', (req,res)=>{
@@ -516,8 +516,8 @@ app.post('/api/ha/lovelace/import-stored', (req,res)=>{
   try { res.json(importStoredLovelaceRaw()); }
   catch(e){ res.status(500).json({error:e.message}); }
 });
-app.get('/api/ha/states', async (req,res)=> { try { const states = await haFetch('/api/states'); res.json({ ok:true, states }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/ha/service', async (req,res)=> { try { const {domain, service, data} = req.body; if(!domain || !service) return res.status(400).json({error:'domain and service are required'}); const result = await haFetch(`/api/services/${domain}/${service}`, { method:'POST', body: JSON.stringify(data || {}) }); res.json({ ok:true, result }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/ha/states', async (req,res)=> { try { const states = await haFetch('/states'); res.json({ ok:true, states }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/ha/service', async (req,res)=> { try { const {domain, service, data} = req.body; if(!domain || !service) return res.status(400).json({error:'domain and service are required'}); const result = await haFetch(`/services/${domain}/${service}`, { method:'POST', body: JSON.stringify(data || {}) }); res.json({ ok:true, result }); } catch(e){ res.status(500).json({error:e.message}); } });
 
 const server = app.listen(PORT, ()=> console.log(`Smart Home UI HA Add-on listening on http://0.0.0.0:${PORT}`));
 server.on('error', err => {

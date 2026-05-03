@@ -128,7 +128,7 @@ smart-home-ui-repo/smart-home-ui-local/config.yaml
 
 В GitHub не должно быть лишней верхней папки.
 
-## v3.3.4 fix
+## v3.3.5 fix
 
 This version fixes add-on startup errors like:
 
@@ -137,3 +137,8 @@ Error: Cannot find module 'express'
 ```
 
 The Docker image now verifies `express` and `ws` during build. The runtime `start.sh` also checks dependencies before launching `server.js`.
+
+
+## v3.3.5 fix
+
+Fixed Home Assistant Supervisor Core API paths: the add-on now calls `/states`, `/services/...`, and `/` relative to `http://supervisor/core/api` instead of accidentally calling `/api/states` and receiving 404.
