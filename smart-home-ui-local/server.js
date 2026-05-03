@@ -14,6 +14,96 @@ const HA_TOKEN = process.env.SUPERVISOR_TOKEN || process.env.HA_TOKEN || '';
 const LAYOUT_PATH = path.join(DATA_DIR, 'layout.json');
 const LAYOUT_BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const SOURCE_CONFIG_PATH = path.join(DATA_DIR, 'source_config.json');
+
+const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
+const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
+const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.0';
+const ALLOWED_SERVICES = {
+  light: ['turn_on','turn_off','toggle','set_brightness','set_temperature','set_color_temp','set_hs_color','set_rgb_color'],
+  switch: ['turn_on','turn_off','toggle'],
+  fan: ['turn_on','turn_off','toggle','set_percentage','set_preset_mode'],
+  input_boolean: ['turn_on','turn_off','toggle'],
+  cover: ['open_cover','close_cover','stop_cover','set_cover_position'],
+  climate: ['turn_on','turn_off','set_temperature','set_hvac_mode','set_fan_mode','set_preset_mode'],
+  media_player: ['turn_on','turn_off','media_play_pause','volume_down','volume_up','volume_set','media_stop','media_play','media_pause'],
+  humidifier: ['turn_on','turn_off','set_humidity','set_mode'],
+  valve: ['open_valve','close_valve'],
+  lock: ['lock','unlock'],
+  scene: ['turn_on'],
+  button: ['press'],
+  script: ['turn_on'],
+  automation: ['trigger','turn_on','turn_off']
+};
+function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
+function parseJsAssignedArray(file, name){
+  try{
+    if(!fs.existsSync(file)) return [];
+    const txt=fs.readFileSync(file,'utf8');
+    const re=new RegExp('window\\.'+name+'\\s*=\\s*([\\s\\S]*?);\\s*(?:\\n|$)');
+    const m=txt.match(re); if(!m) return [];
+    return JSON.parse(m[1]);
+  }catch(e){ return []; }
+}
+function loadAllDevicesForDiagnostics(){
+  const file=fs.existsSync(DEVICES_PATH)?DEVICES_PATH:FALLBACK_DEVICES_PATH;
+  return parseJsAssignedArray(file,'ALL_DEVICES');
+}
+function listBackups(){
+  if(!fs.existsSync(LAYOUT_BACKUP_DIR)) return [];
+  return fs.readdirSync(LAYOUT_BACKUP_DIR).filter(f=>/^layout-.*\.json$/.test(f)).map(f=>{
+    const full=path.join(LAYOUT_BACKUP_DIR,f); const st=fs.statSync(full);
+    return { name:f, size:st.size, mtime:st.mtime.toISOString() };
+  }).sort((a,b)=>b.name.localeCompare(a.name));
+}
+function pruneLayoutBackups(max=20){
+  const items=listBackups();
+  for(const item of items.slice(max)){ try{fs.unlinkSync(path.join(LAYOUT_BACKUP_DIR,item.name));}catch(e){} }
+}
+function restoreLayoutBackup(name){
+  if(!/^layout-.*\.json$/.test(String(name||''))) throw new Error('Некорректное имя backup');
+  const src=path.join(LAYOUT_BACKUP_DIR,name);
+  if(!fs.existsSync(src)) throw new Error('Backup не найден');
+  fs.mkdirSync(DATA_DIR,{recursive:true});
+  if(fs.existsSync(LAYOUT_PATH)) backupLayout();
+  fs.copyFileSync(src, LAYOUT_PATH);
+  return loadLayout();
+}
+function deleteLayoutBackup(name){
+  if(!/^layout-.*\.json$/.test(String(name||''))) throw new Error('Некорректное имя backup');
+  const file=path.join(LAYOUT_BACKUP_DIR,name);
+  if(fs.existsSync(file)) fs.unlinkSync(file);
+}
+async function buildDiagnostics(){
+  const devices=loadAllDevicesForDiagnostics();
+  let haStates=[]; let haError=null;
+  try{ haStates=await haFetch('/states'); }catch(e){ haError=e.message; }
+  const haIds=new Set(haStates.map(s=>s.entity_id));
+  const counts={}; const duplicates=[];
+  for(const d of devices){ if(!d.entity_id) continue; counts[d.entity_id]=(counts[d.entity_id]||0)+1; }
+  for(const [id,n] of Object.entries(counts)) if(n>1) duplicates.push({entity_id:id,count:n});
+  const missing=devices.filter(d=>d.entity_id && !haIds.has(d.entity_id)).map(d=>({entity_id:d.entity_id,name:d.name||d.label||'',room:d.room||''}));
+  const noRoom=devices.filter(d=>!d.room).map(d=>d.entity_id).filter(Boolean);
+  const layout=loadLayout();
+  const markers=Object.assign({}, layout.overviewMarkers||{});
+  for(const map of Object.values(layout.roomMarkers||{})) Object.assign(markers,map||{});
+  const noCoordinates=devices.filter(d=>d.entity_id && !markers[d.entity_id]).map(d=>d.entity_id);
+  return {
+    ok: !haError,
+    version: ADDON_VERSION,
+    mode: 'home-assistant-addon',
+    dataDir: DATA_DIR,
+    haApiBase: HA_API_BASE,
+    haWsUrl: HA_WS_URL,
+    hasSupervisorToken: !!HA_TOKEN,
+    haError,
+    counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
+    missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
+    backups: listBackups().slice(0,50),
+    allowedServices: ALLOWED_SERVICES,
+    generatedAt: new Date().toISOString()
+  };
+}
 function loadLayout(){ if(!fs.existsSync(LAYOUT_PATH)) return {version:1, markers:{}}; try{return JSON.parse(fs.readFileSync(LAYOUT_PATH,'utf8'));}catch(e){return {version:1, markers:{}};} }
 function timestampForFile(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function backupLayout(){
@@ -31,6 +121,7 @@ function saveLayout(layout){
   const tmpPath = LAYOUT_PATH + '.tmp';
   fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
   fs.renameSync(tmpPath, LAYOUT_PATH);
+  pruneLayoutBackups(20);
   return backupPath;
 }
 
@@ -489,7 +580,11 @@ app.post('/api/config', (req,res)=> {
 });
 app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:6000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/system', (req,res)=> { try { res.json({ ok:true, mode:'home-assistant-addon', haApiBase:HA_API_BASE, haWsUrl:HA_WS_URL, hasSupervisorToken:!!HA_TOKEN, dataDir:DATA_DIR }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', haApiBase:HA_API_BASE, haWsUrl:HA_WS_URL, hasSupervisorToken:!!HA_TOKEN, dataDir:DATA_DIR }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics()); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:listBackups()}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutBackup(req.body?.name); res.json({ok:true, layout}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/backups/delete', (req,res)=> { try { deleteLayoutBackup(req.body?.name); res.json({ok:true, backups:listBackups()}); } catch(e){ res.status(500).json({error:e.message}); } });
 
 app.post('/api/ha/dashboard-paths/normalize', (req,res)=>{
   try { res.json({ ok:true, dashboardPaths: normalizeDashboardPaths(req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? '') }); }
@@ -517,7 +612,7 @@ app.post('/api/ha/lovelace/import-stored', (req,res)=>{
   catch(e){ res.status(500).json({error:e.message}); }
 });
 app.get('/api/ha/states', async (req,res)=> { try { const states = await haFetch('/states'); res.json({ ok:true, states }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/ha/service', async (req,res)=> { try { const {domain, service, data} = req.body; if(!domain || !service) return res.status(400).json({error:'domain and service are required'}); const result = await haFetch(`/services/${domain}/${service}`, { method:'POST', body: JSON.stringify(data || {}) }); res.json({ ok:true, result }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/ha/service', async (req,res)=> { try { const {domain, service, data} = req.body; if(!domain || !service) return res.status(400).json({error:'domain and service are required'}); const allowed=ALLOWED_SERVICES[String(domain)] || []; if(!allowed.includes(String(service))){ console.warn(`[Smart Home UI] Blocked service call ${domain}.${service}`); return res.status(403).json({error:`Service ${domain}.${service} запрещён allowlist`}); } const result = await haFetch(`/services/${domain}/${service}`, { method:'POST', body: JSON.stringify(data || {}) }); res.json({ ok:true, result }); } catch(e){ res.status(500).json({error:e.message}); } });
 
 const server = app.listen(PORT, ()=> console.log(`Smart Home UI HA Add-on listening on http://0.0.0.0:${PORT}`));
 server.on('error', err => {

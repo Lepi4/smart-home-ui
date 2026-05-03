@@ -393,8 +393,87 @@ body.compact-mode .device-card{padding:7px;border-radius:10px}
 .addon-note{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);color:var(--muted);line-height:1.4;}
 
 
-/* v3.3.6: HA add-on navigation cleanup */
+/* v3.3.7: HA add-on navigation cleanup */
 .ha-back-link,.mobile-back-link{background:#203047!important;color:#eef6ff!important;border-color:rgba(140,180,255,.28)!important}
 .ha-back-link:hover,.mobile-back-link:hover{background:#2b4264!important}
 .floating-faq-btn{display:none!important}
 @media (max-width:900px){.toolbar-back{display:none!important}.mobile-back-link{min-width:54px;padding:10px 11px;white-space:nowrap}}
+
+
+/* v3.3.7: touch-first controls and edit action sheet */
+.device-marker,.room-zone,.badge,.quick-action,.device-card,.device-card .state,.room-btn{touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none}
+.editing .device-marker,.editing .room-zone,.editing .badge{touch-action:none}
+.device-marker{min-width:44px;min-height:44px}
+.device-marker::after{content:'';position:absolute;inset:-8px;border-radius:999px}
+.device-marker.edit-selected,.room-zone.edit-selected,.badge.edit-selected{outline:3px solid rgba(80,170,255,.95)!important;box-shadow:0 0 0 6px rgba(80,170,255,.22),0 12px 26px rgba(0,0,0,.26)!important;z-index:80!important}
+.edit-action-sheet{position:absolute;left:18px;right:18px;bottom:18px;z-index:260;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;background:rgba(13,18,26,.94);color:#eef3f8;border:1px solid rgba(255,255,255,.16);border-radius:18px;padding:12px 14px;box-shadow:0 18px 55px rgba(0,0,0,.34);backdrop-filter:blur(14px)}
+.edit-action-sheet.hidden{display:none}
+.edit-action-sheet strong{display:block;font-size:15px}
+.edit-action-sheet p{margin:3px 0 0;color:#aeb8c6;font-size:12px;line-height:1.35}
+.edit-sheet-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.edit-sheet-actions button{min-height:42px}
+.edit-sheet-actions button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:760px){.edit-action-sheet{left:8px;right:8px;bottom:66px;grid-template-columns:1fr}.edit-sheet-actions{display:grid;grid-template-columns:1fr 1fr;justify-content:stretch}.edit-sheet-actions button{width:100%}}
+
+/* v3.4.0: touch hygiene and safer mobile editor */
+body.touch-capable button,
+body.touch-capable .button-link,
+body.touch-capable .quick-action,
+body.touch-capable .device-card .state,
+body.touch-capable .room-btn{min-height:44px}
+body.touch-capable .toolbar p{display:none}
+body.touch-capable .toolbar-faq,
+body.touch-capable .mobile-faq-link{display:none!important}
+body.touch-capable .device-marker{width:44px;height:44px}
+body.touch-capable .device-marker.text-marker,
+body.touch-capable .device-marker.sensor-readout{min-height:44px;min-width:76px}
+.badge{min-height:36px;display:inline-flex;align-items:center;justify-content:center}
+body.touch-capable .badge{min-height:44px;padding:8px 13px}
+.badge::after,.room-zone::after{content:'';position:absolute;inset:-8px;border-radius:inherit}
+.room-zone::after{inset:-6px}
+body.touch-capable .zone-label{min-height:36px;display:inline-flex;align-items:center;justify-content:center}
+body.touch-capable .toolbar-actions{gap:8px}
+body.touch-capable .toolbar-actions label{min-height:36px;padding:4px 0}
+.edit-sheet-actions .sheet-save{background:linear-gradient(135deg,#2fbf72,#55d98f);color:#07150d;border:1px solid rgba(85,217,143,.7);font-weight:950}
+.edit-sheet-actions .sheet-cancel{background:#3a2424;color:#ffdede;border:1px solid rgba(255,110,110,.35);font-weight:900}
+@media(max-width:760px){
+  .toolbar-actions .range-label,
+  .toolbar-actions .toolbar-faq{display:none!important}
+  .edit-action-sheet{max-height:44vh;overflow:auto}
+  .edit-sheet-actions{grid-template-columns:1fr 1fr!important}
+  .edit-sheet-actions #btn-reset-selected,
+  .edit-sheet-actions #btn-delete-selected,
+  .edit-sheet-actions #btn-close-edit-sheet{font-size:12px;padding:10px 8px}
+  .edit-sheet-actions .sheet-save,
+  .edit-sheet-actions .sheet-cancel{font-size:14px;min-height:46px}
+  body.editing .canvas-card::before{bottom:auto;top:10px;left:10px;right:10px;border-radius:14px;line-height:1.25}
+  .device-marker::after{inset:-10px}
+  .badge::after{inset:-10px}
+}
+
+
+/* v3.3.9 map zoom and pan */
+.plan-stage,.room-image-wrap{touch-action:none;cursor:grab}
+.plan-stage:active,.room-image-wrap:active{cursor:grabbing}
+.plan-content,.room-content{transform-origin:0 0;will-change:transform}
+.zoom-controls{position:absolute;right:14px;top:14px;z-index:60;display:flex;align-items:center;gap:6px;background:rgba(15,18,23,.74);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px;backdrop-filter:blur(10px);box-shadow:0 10px 26px rgba(0,0,0,.24)}
+.zoom-controls button{min-width:38px;min-height:38px;border-radius:999px;padding:8px 10px;font-size:17px;line-height:1}
+.zoom-controls span{min-width:54px;text-align:center;color:#fff;font-weight:900;font-size:12px}
+body.editing .zoom-controls{top:58px}
+#pref-hardware-scale{width:100%}
+#pref-hardware-scale-value{font-weight:900;color:#ffd38a}
+@media(max-width:760px){.zoom-controls{right:10px;top:58px}.zoom-controls button{min-width:44px;min-height:44px}.zoom-controls span{min-width:50px}.canvas-card{min-height:0}}
+
+
+/* v3.4.0 stability, kiosk and mobile polish */
+html,body,.plan-stage,.room-image-wrap,.canvas-card{overscroll-behavior:none}
+body,.device-marker,.badge,.room-zone,.button-link,button{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+body.dark-theme{--bg:#0b0e12;--text:#e9eef5;--muted:#9aa4b2;background:#0b0e12;color:#e9eef5}
+body.dark-theme .canvas-card{background:rgba(18,22,29,.72);border-color:rgba(255,255,255,.08)}
+body.dark-theme .toolbar p,body.dark-theme .muted{color:#aeb8c6}
+body.dark-theme .detail-card,body.dark-theme .room-image-wrap{background:rgba(20,25,33,.78);border-color:rgba(255,255,255,.08);color:#e9eef5}
+#btn-edit{position:relative;overflow:hidden}
+#btn-edit.holding::after{content:'';position:absolute;left:0;bottom:0;height:4px;background:#ffc35a;animation:editHold 2s linear forwards}
+@keyframes editHold{from{width:0}to{width:100%}}
+.kiosk-widget{position:absolute;left:18px;top:18px;z-index:58;background:rgba(9,13,18,.68);color:#fff;border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:12px 16px;min-width:148px;backdrop-filter:blur(12px);box-shadow:0 10px 30px rgba(0,0,0,.22);pointer-events:none}.kiosk-widget.hidden{display:none}.kiosk-clock{font-size:34px;font-weight:900;letter-spacing:.02em}.kiosk-weather{font-size:13px;color:#d7e0ea;margin-top:2px}.info-tabs{display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid #252c36;flex-wrap:wrap}.info-tabs button.active{background:#a36e25;color:#fff}.info-content{padding:16px;overflow:auto;max-height:62vh}.info-table{width:100%;border-collapse:collapse}.info-table th,.info-table td{border-bottom:1px solid #26313d;padding:8px 6px;text-align:left;vertical-align:top}.info-table th{color:#aeb8c6;width:220px}.info-list{background:#0b0f14;border:1px solid #26313d;border-radius:12px;padding:10px;line-height:1.7;max-height:280px;overflow:auto}.info-list code{color:#ffcd82}.backup-list{display:grid;gap:8px}.backup-row{display:flex;justify-content:space-between;gap:12px;align-items:center;background:#141a22;border:1px solid #26313d;border-radius:12px;padding:10px}.backup-row span{color:#aeb8c6;font-size:12px}.backup-row div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.info-modal-card{width:min(980px,100%)}
+@media(max-width:760px){.kiosk-widget{left:10px;top:110px;padding:10px 12px}.kiosk-clock{font-size:28px}.info-content{max-height:58vh}.backup-row{display:grid}.info-table th{width:auto;display:block;border-bottom:0}.info-table td{display:block}.toolbar{position:relative;z-index:55}.workspace{padding-bottom:62px}}

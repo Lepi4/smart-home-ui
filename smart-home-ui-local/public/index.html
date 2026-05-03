@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.3.6</title>
+  <title>Smart Home UI HA Add-on v3.4.0</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="mobile-menu-bar" class="mobile-menu-bar"><a class="button-link mobile-back-link" href="/" target="_top" title="Вернуться в Home Assistant">← HA</a><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button><a class="button-link mobile-faq-link" href="FAQ.html" target="_blank" rel="noopener">FAQ</a></div>
+  <div id="mobile-menu-bar" class="mobile-menu-bar"><a class="button-link mobile-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← HA</a><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button></div>
   <button type="button" id="btn-show-sidebar" class="floating-menu-btn left hidden">☰ Комнаты</button>
   <button type="button" id="btn-show-device-panel" class="floating-menu-btn right hidden">Устройства</button>
   <button type="button" id="btn-show-toolbar" class="floating-menu-btn top hidden">Панель</button>
   <aside class="sidebar">
     <div class="brand">SMART HOME LOCAL</div>
     <div class="top-actions">
-      <a class="button-link ha-back-link" href="/" target="_top" title="Вернуться в Home Assistant">← HA</a>
+      <a class="button-link ha-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← HA</a>
       <button type="button" id="btn-settings">Настройки</button>
       <button type="button" id="btn-refresh">Обновить</button>
       <button type="button" id="btn-hide-sidebar" title="Скрыть левое меню">Скрыть</button>
@@ -31,7 +31,7 @@
         <p id="page-subtitle">Обзор квартиры и отдельные 3D-карты помещений</p>
       </div>
       <div class="toolbar-actions">
-        <a class="button-link ha-back-link toolbar-back" href="/" target="_top" title="Вернуться в Home Assistant">← Назад в HA</a>
+        <a class="button-link ha-back-link toolbar-back" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← Назад в HA</a>
         <button type="button" id="btn-overview">Общий план</button>
         <label><input type="checkbox" id="toggle-zones" checked> Зоны</label>
         <label><input type="checkbox" id="toggle-devices" checked> Маркеры</label>
@@ -50,6 +50,16 @@
 
     <section class="workspace">
       <div class="canvas-card">
+        <div id="zoom-controls" class="zoom-controls" aria-label="Масштаб карты">
+          <button type="button" id="btn-zoom-out" title="Уменьшить">−</button>
+          <span id="zoom-value">100%</span>
+          <button type="button" id="btn-zoom-in" title="Увеличить">+</button>
+          <button type="button" id="btn-zoom-fit" title="Подогнать под экран">⛶</button>
+        </div>
+        <div id="kiosk-widget" class="kiosk-widget hidden" aria-label="Часы и погода">
+          <div id="kiosk-clock" class="kiosk-clock">--:--</div>
+          <div id="kiosk-weather" class="kiosk-weather"></div>
+        </div>
         <div id="overview-view" class="view active">
           <div id="overview-stage" class="plan-stage">
             <div id="overview-content" class="plan-content">
@@ -81,6 +91,21 @@
                 <div id="quick-actions" class="quick-actions"></div>
               </div>
             </div>
+          </div>
+        </div>
+
+
+        <div id="edit-action-sheet" class="edit-action-sheet hidden">
+          <div>
+            <strong id="edit-sheet-title">Ничего не выбрано</strong>
+            <p id="edit-sheet-hint">Коснитесь зоны, маркера или показателя, чтобы выбрать. Затем перетащите.</p>
+          </div>
+          <div class="edit-sheet-actions">
+            <button type="button" id="btn-reset-selected">Сбросить/убрать</button>
+            <button type="button" id="btn-delete-selected">Удалить маркер</button>
+            <button type="button" id="btn-close-edit-sheet">Снять выбор</button>
+            <button type="button" id="btn-sheet-save-edit" class="sheet-save">Сохранить</button>
+            <button type="button" id="btn-sheet-cancel-edit" class="sheet-cancel">Отменить</button>
           </div>
         </div>
 
@@ -122,7 +147,12 @@
         <label class="settings-check"><input type="checkbox" id="pref-mobile-mode"> Мобильная версия</label>
         <label class="settings-check"><input type="checkbox" id="pref-auto-hide"> Автоскрытие меню в мобильной версии</label>
         <label class="settings-check"><input type="checkbox" id="pref-compact-mode"> Компактные панели</label>
+        <label class="settings-check"><input type="checkbox" id="pref-dark-theme"> Тёмная тема</label>
+        <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
+        <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
         <label>Размер ореолов <input id="pref-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-halo-scale-value">50%</span></label>
+        <label>Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
+        <p class="muted">Масштаб карты меняется двумя пальцами или кнопками +/−. Аппаратный масштаб задаёт базовый размер плана для конкретной панели/экрана.</p>
       </div>
       <div class="source-tools">
         <h3>Источники устройств из панели</h3>
@@ -137,8 +167,29 @@
       </div>
       <div id="settings-status" class="status"></div>
       <div class="modal-actions">
+        <button type="button" id="btn-info-settings">Информация / диагностика</button>
         <button type="button" id="btn-save-config">Сохранить настройки</button>
         <button type="button" id="btn-clear-config">Сбросить настройки</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="info-modal" class="modal hidden">
+    <div class="modal-card info-modal-card">
+      <div class="modal-head">
+        <h2>Информация и диагностика</h2>
+        <button type="button" id="btn-close-info" class="close-word">× Закрыть</button>
+      </div>
+      <div class="info-tabs">
+        <button type="button" data-info-tab="summary" class="active">Система</button>
+        <button type="button" data-info-tab="entities">Entity</button>
+        <button type="button" data-info-tab="backups">Backups</button>
+        <button type="button" data-info-tab="allowlist">Команды</button>
+      </div>
+      <div id="info-content" class="info-content">Загрузка...</div>
+      <div class="modal-actions">
+        <button type="button" id="btn-refresh-info">Обновить</button>
       </div>
     </div>
   </div>

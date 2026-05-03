@@ -10,9 +10,12 @@ const state = {
   layoutDirty: false,
   dragged: null,
   dragMoved: false,
+  selectedEdit: null,
   suppressClick: false,
   quickOverlayOpen: false,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, showAllDevicesInRoom:false }
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, weatherEntity:'' },
+  viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -20,11 +23,16 @@ const ROOM_MAP = Object.fromEntries(ROOMS.map(r => [r.id, r]));
 const TYPE_ICONS = { light:'💡', switch:'🔌', cover:'▤', climate:'❄️', media_player:'▶️', humidifier:'💧', sensor:'📟', binary_sensor:'●', valve:'🚰', lock:'🔒', scene:'✨', fan:'💨', input_boolean:'✅', input_number:'🔢', input_select:'▾', button:'⏺', script:'▶', automation:'⚙', person:'👤' };
 const TOGGLE_DOMAINS = new Set(['light','switch','fan','input_boolean','cover','media_player','climate','humidifier','valve']);
 const IMPORTANT_DOMAINS = new Set(['light','switch','cover','climate','media_player','humidifier','fan','sensor','binary_sensor','input_boolean','input_number','input_select','valve','lock','button','script','automation']);
+const LONG_PRESS_MS = 560;
+const GESTURE_MOVE_PX = 14;
+const DRAG_SUPPRESS_MS = 420;
 
 function el(id){return document.getElementById(id)}
 function qsa(s,p=document){return [...p.querySelectorAll(s)]}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function midpoint(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}}
 function room(id){return ROOM_MAP[id]}
 function roomWithLayout(id){const r=room(id); return {...r,...(state.layout.zones?.[id]||{})}}
 function roomContentBox(roomId){
@@ -49,18 +57,64 @@ function loadUiPrefs(){
     const autoMobile = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
     state.ui = { ...state.ui, ...saved };
     if(autoMobile && saved.mobileMode === undefined) state.ui.mobileMode = true;
+    loadViewportPrefs();
     applyUiPrefs();
-  }catch(e){ applyUiPrefs(); }
+  }catch(e){ loadViewportPrefs(); applyUiPrefs(); }
 }
 function saveUiPrefs(){ localStorage.setItem('ui_prefs', JSON.stringify(state.ui)); applyUiPrefs(); }
+function loadViewportPrefs(){
+  try{
+    const saved=JSON.parse(localStorage.getItem('viewport_prefs')||'{}');
+    state.viewport={ overview:{zoom:1,panX:0,panY:0}, rooms:{}, ...saved };
+    if(!state.viewport.overview) state.viewport.overview={zoom:1,panX:0,panY:0};
+    if(!state.viewport.rooms) state.viewport.rooms={};
+  }catch(e){ state.viewport={ overview:{zoom:1,panX:0,panY:0}, rooms:{} }; }
+}
+function saveViewportPrefs(){ localStorage.setItem('viewport_prefs', JSON.stringify(state.viewport)); }
+function viewportKey(kind){ return kind==='overview' ? 'overview' : 'room:'+normalizedRoomId(state.selectedRoom); }
+function getViewport(kind){
+  if(kind==='overview') return state.viewport.overview || (state.viewport.overview={zoom:1,panX:0,panY:0});
+  const rid=normalizedRoomId(state.selectedRoom);
+  return state.viewport.rooms[rid] || (state.viewport.rooms[rid]={zoom:1,panX:0,panY:0});
+}
+function setViewport(kind, next, persist=true){
+  const v=getViewport(kind);
+  v.zoom=clamp(Number(next.zoom ?? v.zoom)||1, 0.5, 4);
+  v.panX=clamp(Number(next.panX ?? v.panX)||0, -5000, 5000);
+  v.panY=clamp(Number(next.panY ?? v.panY)||0, -5000, 5000);
+  applyStageTransform(kind);
+  updateZoomControls();
+  if(persist) saveViewportPrefs();
+}
+function resetViewport(kind){ setViewport(kind,{zoom:1,panX:0,panY:0}); }
+function zoomViewport(kind, factor){
+  const v=getViewport(kind);
+  setViewport(kind,{zoom:v.zoom*factor});
+}
+function applyStageTransform(kind){
+  const content=kind==='overview'?el('overview-content'):el('room-content'); if(!content) return;
+  const v=getViewport(kind);
+  const hardware=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5);
+  const scale=hardware*v.zoom;
+  content.style.transformOrigin='0 0';
+  content.style.transform=`translate(${v.panX}px, ${v.panY}px) scale(${scale})`;
+  content.dataset.scale=String(scale);
+}
+function activeStageKind(){ return state.selectedRoom==='overview'?'overview':'room'; }
+function updateZoomControls(){
+  const zv=el('zoom-value'); if(zv){ const v=getViewport(activeStageKind()); const hw=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5); zv.textContent=Math.round(v.zoom*hw*100)+'%'; }
+}
+function fitViewport(kind){ resetViewport(kind); }
 function setPanelHidden(key, value){ state.ui[key]=!!value; saveUiPrefs(); }
 function applyUiPrefs(){
+  document.body.classList.toggle('touch-capable', !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
   document.body.classList.toggle('hide-sidebar', !!state.ui.hideSidebar);
   document.body.classList.toggle('hide-device-panel', !!state.ui.hideDevicePanel);
   document.body.classList.toggle('hide-toolbar', !!state.ui.hideToolbar);
   document.body.classList.toggle('mobile-mode', !!state.ui.mobileMode);
   document.body.classList.toggle('auto-hide-menus', !!state.ui.autoHide);
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
+  document.body.classList.toggle('dark-theme', !!state.ui.darkTheme);
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar);
   const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel);
   const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar);
@@ -70,8 +124,14 @@ function applyUiPrefs(){
   const pm=el('pref-mobile-mode'); if(pm) pm.checked=!!state.ui.mobileMode;
   const pa=el('pref-auto-hide'); if(pa) pa.checked=!!state.ui.autoHide;
   const pc=el('pref-compact-mode'); if(pc) pc.checked=!!state.ui.compact;
+  const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
+  const kw=el('pref-kiosk-widget'); if(kw) kw.checked=!!state.ui.kioskWidget;
+  const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
+  const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
   const ph=el('pref-halo-scale'); if(ph){ ph.value=String(Math.round(Number(state.ui.haloScale ?? 0.50)*100)); const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=ph.value+'%'; }
+  const hw=el('pref-hardware-scale'); if(hw){ hw.value=String(Math.round(Number(state.ui.hardwareScale ?? 1)*100)); const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=hw.value+'%'; }
+  applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
 function normalizedRoomId(id){return id==='boiler'?'laundry':id}
 function roomDevices(id){const rid=normalizedRoomId(id);return devices().filter(d=>normalizedRoomId(d.room)===rid || (rid==='overview' && d.room!=='media'))}
@@ -393,6 +453,7 @@ function fitStage(kind){
   const sw=Math.max(0, stage.clientWidth-pad), sh=Math.max(0, stage.clientHeight-pad), ratio=img.naturalWidth/img.naturalHeight;
   let w=sw,h=w/ratio; if(h>sh){h=sh;w=h*ratio}
   content.style.width=w+'px'; content.style.height=h+'px';
+  applyStageTransform(kind);
 }
 
 function renderNav(){
@@ -415,6 +476,7 @@ function updateEditButtons(){
 }
 function enterEditMode(){
   state.editSnapshot=cloneLayout(state.layout);
+  state.selectedEdit=null;
   state.edit=true;
   setLayoutDirty(false);
   showToast('Режим редактирования: изменения применятся только после сохранения.');
@@ -433,6 +495,7 @@ async function saveEditChanges(){
   await saveLayout(true);
   state.edit=false;
   state.editSnapshot=null;
+  state.selectedEdit=null;
   setLayoutDirty(false);
   showToast('Изменения сохранены');
   render();
@@ -442,6 +505,7 @@ function cancelEditChanges(){
   if(state.editSnapshot) state.layout=cloneLayout(state.editSnapshot);
   state.edit=false;
   state.editSnapshot=null;
+  state.selectedEdit=null;
   setLayoutDirty(false);
   showToast('Изменения отменены');
   render();
@@ -458,10 +522,13 @@ function render(){
   el('overview-view').classList.toggle('active', isOverview);
   el('room-view').classList.toggle('active', !isOverview);
   el('page-title').textContent = isOverview ? 'Общий план' : room(state.selectedRoom).label;
-  el('page-subtitle').textContent = isOverview ? 'Клик по комнате открывает отдельный вид помещения' : 'Отдельная 3D-карта помещения с устройствами и датчиками';
+  el('page-subtitle').textContent = isOverview ? 'Тап по комнате открывает отдельный вид помещения' : 'Тап по устройству — действие, удержание — функции';
   renderNav();
   if(isOverview){ renderOverview(); } else { renderRoom(); }
   renderDevices();
+  renderEditSheet();
+  renderKioskWidget();
+  updateZoomControls();
 }
 
 function renderOverview(){
@@ -476,7 +543,7 @@ function renderOverviewZones(){
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id);
     const z=document.createElement('button');
-    z.className='room-zone'; z.dataset.room=r.id;
+    z.className='room-zone'+(isSelectedEdit('zone', r.id, 'overview')?' edit-selected':''); z.dataset.room=r.id;
     Object.assign(z.style,{left:r.x+'%',top:r.y+'%',width:r.w+'%',height:r.h+'%'});
     z.innerHTML=`<span class="zone-label">${esc(r.label)}</span><span class="zone-handle" data-handle="resize"></span>`;
     z.addEventListener('pointerdown', zoneDown);
@@ -498,7 +565,7 @@ function renderOverviewMetrics(){
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
     const p=state.layout.overviewMetrics?.[r.id] || defaultMetricPos(r);
-    const b=document.createElement('div'); b.className='badge'; b.dataset.kind='overviewMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
+    const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('overviewMetric', r.id, 'overview')?' edit-selected':''); b.dataset.kind='overviewMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
     b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
   })
 }
@@ -529,7 +596,7 @@ function renderRoomMetrics(){
   const layer=el('room-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
   const stored=state.layout.roomMetrics?.[r.id] || {x:16,y:16};
   const p=roomStoredToImagePos(r.id, stored);
-  const b=document.createElement('div'); b.className='badge'; b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
+  const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
   b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
 }
 function renderRoomMarkers(){
@@ -542,11 +609,15 @@ function renderRoomMarkers(){
 function markerEl(d,p,scope){
   const b=document.createElement('button');
   const renderPos = scope==='room' ? roomStoredToImagePos(state.selectedRoom, p) : p;
-  b.className='device-marker '+visualClass(d)+(shouldRenderSensorTextMarker(d, scope)?' text-marker sensor-readout':'');
+  b.className='device-marker '+visualClass(d)+(shouldRenderSensorTextMarker(d, scope)?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
   b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.title=`${displayName(d)}\n${d.entity_id}`;
   b.style.left=renderPos.x+'%'; b.style.top=renderPos.y+'%'; b.style.cssText += visualStyle(d); b.innerHTML=markerInnerHtml(d, scope);
   attachPressActions(b,d,{dragHandler:markerDown});
-  b.addEventListener('contextmenu',e=>{if(!state.edit)return; e.preventDefault(); removeMarker(d.entity_id,scope); setLayoutDirty(true); render()});
+  b.addEventListener('contextmenu',e=>{
+    e.preventDefault();
+    if(state.edit){ selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)}); }
+    else openDeviceModal(d);
+  });
   return b;
 }
 function quickActionsHtml(list){
@@ -595,26 +666,34 @@ function renderDevices(){
 function openDevice(d){ openDeviceModal(d); }
 function shortDeviceAction(d){ if(canPrimaryAction(d)) return toggleDevice(d); openDeviceModal(d); }
 function attachPressActions(node,d,opts={}){
-  let timer=null, longFired=false, sx=0, sy=0;
+  let timer=null, longFired=false, sx=0, sy=0, pointerId=null;
+  const cancelTimer=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
   node.addEventListener('pointerdown', e=>{
-    if(opts.dragHandler && state.edit){ opts.dragHandler(e); return; }
-    if(state.edit){ return; }
-    if(e.button!==0) return;
     if(opts.ignoreSelector && e.target.closest(opts.ignoreSelector)) return;
-    sx=e.clientX; sy=e.clientY; longFired=false;
-    timer=setTimeout(()=>{ longFired=true; openDeviceModal(d); }, 560);
-  });
-  node.addEventListener('pointermove', e=>{ if(timer && (Math.abs(e.clientX-sx)>8 || Math.abs(e.clientY-sy)>8)){ clearTimeout(timer); timer=null; } });
+    if(opts.dragHandler && state.edit){ opts.dragHandler(e); return; }
+    if(state.edit) return;
+    if(e.button !== undefined && e.button !== 0) return;
+    pointerId=e.pointerId; sx=e.clientX; sy=e.clientY; longFired=false;
+    try{ node.setPointerCapture(pointerId); }catch(_){}
+    timer=setTimeout(()=>{ longFired=true; timer=null; openDeviceModal(d); }, LONG_PRESS_MS);
+  }, {passive:false});
+  node.addEventListener('pointermove', e=>{
+    if(pointerId!==null && e.pointerId!==pointerId) return;
+    if(timer && (Math.abs(e.clientX-sx)>GESTURE_MOVE_PX || Math.abs(e.clientY-sy)>GESTURE_MOVE_PX)) cancelTimer();
+  }, {passive:false});
+  node.addEventListener('pointercancel', e=>{ cancelTimer(); pointerId=null; longFired=false; });
   node.addEventListener('pointerup', e=>{
-    if(timer){ clearTimeout(timer); timer=null; }
-    if(longFired){ e.preventDefault(); e.stopPropagation(); return; }
+    if(pointerId!==null && e.pointerId!==pointerId) return;
+    const moved=Math.abs(e.clientX-sx)>GESTURE_MOVE_PX || Math.abs(e.clientY-sy)>GESTURE_MOVE_PX;
+    cancelTimer(); try{ node.releasePointerCapture(e.pointerId); }catch(_){} pointerId=null;
+    if(longFired || moved){ e.preventDefault(); e.stopPropagation(); return; }
     if(state.edit || state.suppressClick){ state.suppressClick=false; return; }
     if(opts.ignoreSelector && e.target.closest(opts.ignoreSelector)) return;
     e.preventDefault(); e.stopPropagation(); shortDeviceAction(d);
-  });
+  }, {passive:false});
   node.addEventListener('contextmenu', e=>{
-    if(state.edit){ e.preventDefault(); return; }
-    e.preventDefault(); openDeviceModal(d);
+    e.preventDefault();
+    if(!state.edit) openDeviceModal(d);
   });
 }
 function modalRow(label,value){return `<div class="device-modal-row"><span>${esc(label)}</span><b>${esc(value??'')}</b></div>`}
@@ -776,6 +855,74 @@ function setMarkerPosition(entityId,scope,p){
     state.layout.roomCoordinateMigrated[roomId]=true;
   }
 }
+
+function isSelectedEdit(kind,id,scope){
+  const s=state.selectedEdit;
+  return !!(s && s.kind===kind && s.id===id && (!scope || s.scope===scope));
+}
+function selectEditObject(obj){
+  if(!state.edit) return;
+  state.selectedEdit = obj;
+  renderEditSheet();
+  qsa('.edit-selected').forEach(x=>x.classList.remove('edit-selected'));
+  const selector = obj.kind==='marker'
+    ? `.device-marker[data-entity="${CSS.escape(obj.id)}"][data-scope="${CSS.escape(obj.scope)}"]`
+    : obj.kind==='zone'
+      ? `.room-zone[data-room="${CSS.escape(obj.id)}"]`
+      : obj.kind==='overviewMetric'
+        ? `.badge[data-kind="overviewMetric"][data-room="${CSS.escape(obj.id)}"]`
+        : `.badge[data-kind="roomMetric"][data-room="${CSS.escape(obj.id)}"]`;
+  document.querySelector(selector)?.classList.add('edit-selected');
+}
+function selectedEditLabel(){
+  const s=state.selectedEdit;
+  if(!s) return 'Ничего не выбрано';
+  if(s.kind==='marker') return s.label || s.id;
+  const r=room(s.id);
+  if(s.kind==='zone') return `Зона: ${r?.label||s.id}`;
+  return `Показатель: ${r?.label||s.id}`;
+}
+function renderEditSheet(){
+  const sheet=el('edit-action-sheet'); if(!sheet) return;
+  sheet.classList.toggle('hidden', !state.edit);
+  const title=el('edit-sheet-title'); if(title) title.textContent=selectedEditLabel();
+  const hint=el('edit-sheet-hint');
+  if(hint) hint.textContent = state.selectedEdit ? 'Перетащите выбранный объект пальцем или мышью. Управление устройствами в редакторе отключено.' : 'Коснитесь зоны, маркера или показателя, чтобы выбрать. Затем перетащите.';
+  const del=el('btn-delete-selected');
+  const reset=el('btn-reset-selected');
+  if(del) del.disabled=!(state.selectedEdit && state.selectedEdit.kind==='marker');
+  if(reset) reset.disabled=!state.selectedEdit;
+}
+function deleteSelectedEditObject(){
+  const s=state.selectedEdit;
+  if(!state.edit || !s) return;
+  if(s.kind!=='marker'){ showToast('Удалять можно только маркеры устройств'); return; }
+  removeMarker(s.id, s.scope);
+  state.selectedEdit=null;
+  setLayoutDirty(true);
+  render();
+}
+function resetSelectedEditObject(){
+  const s=state.selectedEdit;
+  if(!state.edit || !s) return;
+  if(s.kind==='marker'){
+    removeMarker(s.id, s.scope);
+    state.selectedEdit=null;
+    showToast('Маркер убран с плана');
+  } else if(s.kind==='zone'){
+    if(state.layout.zones) delete state.layout.zones[s.id];
+    showToast('Зона возвращена к исходному положению');
+  } else if(s.kind==='overviewMetric'){
+    if(state.layout.overviewMetrics) delete state.layout.overviewMetrics[s.id];
+    showToast('Показатель возвращён к исходному положению');
+  } else if(s.kind==='roomMetric'){
+    if(state.layout.roomMetrics) delete state.layout.roomMetrics[s.id];
+    showToast('Показатель комнаты возвращён к исходному положению');
+  }
+  setLayoutDirty(true);
+  render();
+}
+
 function removeMarker(entityId,scope){
   if(scope==='overview'){
     if(state.layout.overviewMarkers) delete state.layout.overviewMarkers[entityId];
@@ -802,16 +949,87 @@ async function toggleDevice(d){
 }
 
 function percentIn(element,cx,cy){const r=element.getBoundingClientRect();return {x:clamp((cx-r.left)/r.width*100,0,100),y:clamp((cy-r.top)/r.height*100,0,100)}}
-function zoneDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const z=e.currentTarget; const id=z.dataset.room; const r=roomWithLayout(id); const p=percentIn(el('overview-content'),e.clientX,e.clientY); state.dragged={kind:e.target.dataset.handle==='resize'?'zoneResize':'zone',id,start:p,room:{...r},el:z}; bindDrag(); }
-function metricDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const parent=b.dataset.kind==='overviewMetric'?el('overview-content'):el('room-content'); state.dragged={kind:b.dataset.kind,id:b.dataset.room,el:b,parent}; bindDrag(); }
-function markerDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const parent=b.dataset.scope==='overview'?el('overview-content'):el('room-content'); state.dragged={kind:'marker',id:b.dataset.entity,scope:b.dataset.scope,el:b,parent}; bindDrag(); }
+function zoneDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const z=e.currentTarget; const id=z.dataset.room; const r=roomWithLayout(id); selectEditObject({kind:'zone',id,scope:'overview',label:r.label}); const p=percentIn(el('overview-content'),e.clientX,e.clientY); state.dragged={kind:e.target.dataset.handle==='resize'?'zoneResize':'zone',id,start:p,room:{...r},el:z}; bindDrag(); }
+function metricDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const parent=b.dataset.kind==='overviewMetric'?el('overview-content'):el('room-content'); selectEditObject({kind:b.dataset.kind,id:b.dataset.room,scope:b.dataset.kind==='overviewMetric'?'overview':'room',label:room(b.dataset.room)?.label||b.dataset.room}); state.dragged={kind:b.dataset.kind,id:b.dataset.room,el:b,parent}; bindDrag(); }
+function markerDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const d=devices().find(x=>x.entity_id===b.dataset.entity); selectEditObject({kind:'marker',id:b.dataset.entity,scope:b.dataset.scope,label:d?displayName(d):b.dataset.entity}); const parent=b.dataset.scope==='overview'?el('overview-content'):el('room-content'); state.dragged={kind:'marker',id:b.dataset.entity,scope:b.dataset.scope,el:b,parent}; bindDrag(); }
 function bindDrag(){state.dragMoved=false; document.addEventListener('pointermove',dragMove); document.addEventListener('pointerup',dragUp,{once:true})}
 function dragMove(e){ const d=state.dragged; if(!d)return; state.dragMoved=true; if(d.kind==='zone'||d.kind==='zoneResize'){ const p=percentIn(el('overview-content'),e.clientX,e.clientY); const dx=p.x-d.start.x, dy=p.y-d.start.y; let nr={...d.room}; if(d.kind==='zone'){nr.x=clamp(d.room.x+dx,nr.w/2,100-nr.w/2); nr.y=clamp(d.room.y+dy,nr.h/2,100-nr.h/2)} else {nr.w=clamp(d.room.w+dx,4,55); nr.h=clamp(d.room.h+dy,4,55)} state.layout.zones[d.id]={x:nr.x,y:nr.y,w:nr.w,h:nr.h}; Object.assign(d.el.style,{left:nr.x+'%',top:nr.y+'%',width:nr.w+'%',height:nr.h+'%'}); return; }
   const p=percentIn(d.parent,e.clientX,e.clientY);
   if(d.kind==='overviewMetric'){ d.el.style.left=p.x+'%'; d.el.style.top=p.y+'%'; state.layout.overviewMetrics[d.id]=p; }
   else if(d.kind==='roomMetric'){ const stored=roomImageToStoredPos(d.id, p); const renderPos=roomStoredToImagePos(d.id, stored); d.el.style.left=renderPos.x+'%'; d.el.style.top=renderPos.y+'%'; if(!state.layout.roomMetrics)state.layout.roomMetrics={}; state.layout.roomMetrics[d.id]=stored; }
   else if(d.kind==='marker'){ if(d.scope==='room'){ const stored=roomImageToStoredPos(state.selectedRoom, p); const renderPos=roomStoredToImagePos(state.selectedRoom, stored); d.el.style.left=renderPos.x+'%'; d.el.style.top=renderPos.y+'%'; setMarkerPosition(d.id,d.scope,stored); } else { d.el.style.left=p.x+'%'; d.el.style.top=p.y+'%'; setMarkerPosition(d.id,d.scope,p); } } }
-function dragUp(){ if(state.dragMoved){ state.suppressClick=true; setLayoutDirty(true); } state.dragged=null; setTimeout(()=>state.suppressClick=false,80) }
+function dragUp(){ if(state.dragMoved){ state.suppressClick=true; setLayoutDirty(true); renderEditSheet(); } state.dragged=null; setTimeout(()=>state.suppressClick=false,DRAG_SUPPRESS_MS) }
+
+
+function pointerPoint(e){return {id:e.pointerId,x:e.clientX,y:e.clientY}}
+function stageKindFromEl(stage){return stage && stage.id==='overview-stage'?'overview':'room'}
+function isStageInteractiveTarget(target){return !!target.closest('.device-marker,.badge,.room-zone,.zone-handle,button,a,input,textarea,select,label,.device-card,.edit-action-sheet,.quick-overlay')}
+function bindStageGestures(){
+  [[el('overview-stage'),'overview'],[el('room-stage'),'room']].forEach(([stage,kind])=>{
+    if(!stage || stage.dataset.gestureBound) return;
+    stage.dataset.gestureBound='1';
+    stage.addEventListener('pointerdown', e=>{
+      if(e.button !== undefined && e.button !== 0) return;
+      const isInteractive=isStageInteractiveTarget(e.target);
+      if(isInteractive && !state.stageGesture) return;
+      e.preventDefault();
+      if(!state.stageGesture || state.stageGesture.kind!==kind){
+        state.stageGesture={kind, pointers:new Map(), startViewport:{...getViewport(kind)}, moved:false, mode:'pan', startedOnInteractive:isInteractive};
+      }
+      const g=state.stageGesture;
+      g.pointers.set(e.pointerId, pointerPoint(e));
+      try{stage.setPointerCapture(e.pointerId)}catch(_){}
+      const pts=[...g.pointers.values()];
+      g.startViewport={...getViewport(kind)};
+      if(pts.length>=2){
+        g.mode='pinch';
+        g.startDistance=Math.max(1, dist(pts[0],pts[1]));
+        g.startMid=midpoint(pts[0],pts[1]);
+        g.moved=true;
+      } else if(!isInteractive) {
+        g.mode='pan';
+        g.startPoint=pointerPoint(e);
+      }
+    }, {passive:false});
+    stage.addEventListener('pointermove', e=>{
+      const g=state.stageGesture; if(!g || g.kind!==kind || !g.pointers.has(e.pointerId)) return;
+      e.preventDefault();
+      g.pointers.set(e.pointerId, pointerPoint(e));
+      const pts=[...g.pointers.values()];
+      if(pts.length>=2){
+        const mid=midpoint(pts[0],pts[1]);
+        const newDist=Math.max(1, dist(pts[0],pts[1]));
+        const factor=newDist/(g.startDistance||newDist);
+        const nextZoom=clamp((g.startViewport.zoom||1)*factor, .5, 4);
+        const dx=mid.x-(g.startMid?.x||mid.x), dy=mid.y-(g.startMid?.y||mid.y);
+        setViewport(kind,{zoom:nextZoom, panX:(g.startViewport.panX||0)+dx, panY:(g.startViewport.panY||0)+dy}, false);
+        g.moved=true;
+        state.suppressClick=true;
+      } else if(g.mode==='pan' && g.startPoint){
+        const pt=pts[0]; const dx=pt.x-g.startPoint.x, dy=pt.y-g.startPoint.y;
+        if(Math.abs(dx)>2 || Math.abs(dy)>2) g.moved=true;
+        setViewport(kind,{panX:(g.startViewport.panX||0)+dx, panY:(g.startViewport.panY||0)+dy}, false);
+      }
+    }, {passive:false});
+    const end=e=>{
+      const g=state.stageGesture; if(!g || g.kind!==kind || !g.pointers.has(e.pointerId)) return;
+      g.pointers.delete(e.pointerId);
+      try{stage.releasePointerCapture(e.pointerId)}catch(_){}
+      if(g.pointers.size===0){
+        if(g.moved){ saveViewportPrefs(); state.suppressClick=true; setTimeout(()=>state.suppressClick=false,DRAG_SUPPRESS_MS); }
+        state.stageGesture=null;
+      } else {
+        const pts=[...g.pointers.values()];
+        g.startViewport={...getViewport(kind)};
+        g.startPoint=pts[0];
+      }
+    };
+    stage.addEventListener('pointerup', end, {passive:false});
+    stage.addEventListener('pointercancel', end, {passive:false});
+    stage.addEventListener('dblclick', e=>{ if(isStageInteractiveTarget(e.target)) return; e.preventDefault(); resetViewport(kind); });
+    stage.addEventListener('wheel', e=>{ if(!e.ctrlKey && !e.metaKey) return; e.preventDefault(); zoomViewport(kind, e.deltaY<0?1.12:.89); }, {passive:false});
+  });
+}
 
 function bindDrops(){
   [[el('overview-stage'),'overview'],[el('room-stage'),'room']].forEach(([stage,scope])=>{
@@ -947,21 +1165,82 @@ async function readLovelaceRaw(){
   }
 }
 
+
+function formatBytes(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1024*1024) return Math.round(n/102.4)/10+' KB'; return Math.round(n/104857.6)/10+' MB'; }
+function renderKioskWidget(){
+  const clock=el('kiosk-clock'); if(clock){ const d=new Date(); clock.textContent=d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+  const wbox=el('kiosk-weather'); if(!wbox) return;
+  const id=String(state.ui.weatherEntity||'').trim();
+  if(!id){ wbox.textContent=''; return; }
+  const s=getState(id);
+  if(!s){ wbox.textContent=id+' недоступен'; return; }
+  const unit=s.attributes?.unit_of_measurement || (id.startsWith('weather.') ? '' : '');
+  const temp=s.attributes?.temperature;
+  const text = temp!==undefined ? `${s.state}, ${temp}°` : `${s.state}${unit}`;
+  wbox.textContent=text;
+}
+function startClock(){ if(state.clockTimer) clearInterval(state.clockTimer); renderKioskWidget(); state.clockTimer=setInterval(renderKioskWidget, 1000); }
+async function openInfoModal(tab='summary'){
+  state.infoTab=tab; el('info-modal').classList.remove('hidden'); await loadDiagnostics();
+}
+async function loadDiagnostics(){
+  const box=el('info-content'); if(box) box.textContent='Загрузка диагностики...';
+  try{ state.diagnostics=await apiJson('api/diagnostics'); renderInfoModal(); }
+  catch(e){ if(box) box.textContent='Ошибка диагностики: '+e.message; }
+}
+function infoRow(k,v){ return `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`; }
+function renderInfoModal(){
+  const d=state.diagnostics; const box=el('info-content'); if(!box||!d) return;
+  qsa('[data-info-tab]').forEach(b=>b.classList.toggle('active', b.dataset.infoTab===state.infoTab));
+  if(state.infoTab==='summary'){
+    box.innerHTML=`<table class="info-table">${[
+      ['Версия add-on',d.version],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
+    ].map(x=>infoRow(x[0],x[1])).join('')}</table>`;
+  } else if(state.infoTab==='entities'){
+    box.innerHTML=`<h3>Проблемы entity_id</h3><p class="muted">Показаны первые 200 записей каждого типа.</p>`+
+      `<h4>Не найдены в HA (${d.counts?.missingInHa||0})</h4><div class="info-list">${(d.missingInHa||[]).map(x=>`<code>${esc(x.entity_id)}</code> <span>${esc(x.name||'')}</span>`).join('<br>')||'—'}</div>`+
+      `<h4>Дубли (${d.counts?.duplicates||0})</h4><div class="info-list">${(d.duplicates||[]).map(x=>`<code>${esc(x.entity_id)}</code> × ${x.count}`).join('<br>')||'—'}</div>`+
+      `<h4>Без координат (${d.counts?.noCoordinates||0})</h4><div class="info-list">${(d.noCoordinates||[]).map(x=>`<code>${esc(x)}</code>`).join('<br>')||'—'}</div>`;
+  } else if(state.infoTab==='backups'){
+    box.innerHTML=`<h3>Резервные копии layout</h3><p class="muted">Перед каждым сохранением создаётся backup. Хранятся последние 20 копий.</p><div class="backup-list">${(d.backups||[]).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div><button data-restore-backup="${esc(b.name)}">Восстановить</button><button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
+    qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущий layout будет сохранён в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Layout восстановлен'); });
+    qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=async()=>{ await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name:btn.dataset.deleteBackup})}); await loadDiagnostics(); });
+  } else if(state.infoTab==='allowlist'){
+    box.innerHTML=`<h3>Разрешённые команды Home Assistant</h3><p class="muted">Сервер блокирует service calls вне этого списка.</p><div class="info-list">${Object.entries(d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div>`;
+  }
+}
+
 function bindGlobal(){
   loadUiPrefs();
+  document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
   el('btn-settings').onclick=()=>el('settings-modal').classList.remove('hidden');
   el('btn-close-settings').onclick=()=>el('settings-modal').classList.add('hidden');
   el('btn-close-device').onclick=closeDeviceModal;
   el('device-modal').addEventListener('click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
-  el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
+  el('btn-close-info').onclick=()=>el('info-modal').classList.add('hidden');
+  el('info-modal').addEventListener('click',e=>{if(e.target.id==='info-modal')el('info-modal').classList.add('hidden')});
+  el('btn-refresh-info').onclick=loadDiagnostics;
+  qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
+  el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
   el('toggle-zones').onchange=render; el('toggle-devices').onchange=render; el('toggle-sensors').onchange=render;
-  el('btn-edit').onclick=enterEditMode;
+  const editBtn=el('btn-edit');
+  const startEditHold=()=>{ if(state.edit) return; editBtn.classList.add('holding'); showToast('Удерживайте 2 секунды для входа в редактор'); state.editHoldTimer=setTimeout(()=>{ editBtn.classList.remove('holding'); state.editHoldTimer=null; enterEditMode(); },2000); };
+  const cancelEditHold=()=>{ if(state.editHoldTimer){ clearTimeout(state.editHoldTimer); state.editHoldTimer=null; editBtn.classList.remove('holding'); } };
+  editBtn.addEventListener('pointerdown',e=>{ if(e.button!==undefined && e.button!==0) return; startEditHold(); });
+  editBtn.addEventListener('pointerup',cancelEditHold); editBtn.addEventListener('pointercancel',cancelEditHold); editBtn.addEventListener('pointerleave',cancelEditHold);
+  editBtn.onclick=e=>{ e.preventDefault(); };
+  editBtn.title='Удерживайте 2 секунды, чтобы войти в режим редактирования';
   el('btn-save-edit').onclick=()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message));
   el('btn-cancel-edit').onclick=cancelEditChanges;
+  const delSel=el('btn-delete-selected'); if(delSel) delSel.onclick=deleteSelectedEditObject;
+  const resetSel=el('btn-reset-selected'); if(resetSel) resetSel.onclick=resetSelectedEditObject;
+  const closeEdit=el('btn-close-edit-sheet'); if(closeEdit) closeEdit.onclick=()=>{state.selectedEdit=null; render();};
+  const sheetSave=el('btn-sheet-save-edit'); if(sheetSave) sheetSave.onclick=()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message));
+  const sheetCancel=el('btn-sheet-cancel-edit'); if(sheetCancel) sheetCancel.onclick=cancelEditChanges;
   el('device-search').oninput=renderDevices;
   el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
   const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
-  el('overview-image').onload=()=>fitStage('overview'); window.addEventListener('resize',()=>{fitStage('overview');fitStage('room')}); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops();
+  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{fitStage('overview');fitStage('room')}); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops();
 
   el('btn-hide-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-show-sidebar').onclick=()=>setPanelHidden('hideSidebar', false);
@@ -975,11 +1254,19 @@ function bindGlobal(){
   el('pref-mobile-mode').onchange=e=>{state.ui.mobileMode=e.target.checked; saveUiPrefs();};
   el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
+  el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; saveUiPrefs();};
+  el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; saveUiPrefs(); renderKioskWidget();};
+  el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); saveUiPrefs(); renderKioskWidget();};
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; saveUiPrefs(); renderDevices();};
   el('pref-halo-scale').oninput=e=>{state.ui.haloScale=Number(e.target.value)/100; const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=e.target.value+'%'; saveUiPrefs(); render();};
+  const hwScale=el('pref-hardware-scale'); if(hwScale) hwScale.oninput=e=>{state.ui.hardwareScale=Number(e.target.value)/100; const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=e.target.value+'%'; saveUiPrefs(); applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();};
+  const zb=el('btn-zoom-out'); if(zb) zb.onclick=()=>zoomViewport(activeStageKind(), .86);
+  const zi=el('btn-zoom-in'); if(zi) zi.onclick=()=>zoomViewport(activeStageKind(), 1.16);
+  const zf=el('btn-zoom-fit'); if(zf) zf.onclick=()=>fitViewport(activeStageKind());
+  qsa('[data-ha-back]').forEach(a=>a.addEventListener('click',e=>{ if(state.selectedRoom!=='overview'){ e.preventDefault(); selectRoom('overview'); } }));
   el('btn-fullscreen').onclick=async()=>{try{ if(!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen(); }catch(e){showToast('Полный экран недоступен: '+e.message)}};
   el('btn-quick-overlay').onclick=()=>{state.quickOverlayOpen=true; el('quick-overlay').classList.remove('hidden'); renderQuickActions();};
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
 }
 
-(async function init(){await loadLayout(); await loadSourceConfig(); bindGlobal(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else el('settings-modal').classList.remove('hidden')}catch(e){console.error(e);el('settings-modal').classList.remove('hidden')}})();
+(async function init(){await loadLayout(); await loadSourceConfig(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else el('settings-modal').classList.remove('hidden')}catch(e){console.error(e);el('settings-modal').classList.remove('hidden')}})();
