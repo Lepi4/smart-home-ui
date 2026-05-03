@@ -1,0 +1,24 @@
+name: Smart Home UI Local
+slug: smart_home_ui_local
+version: "3.3.0"
+description: Local floor-plan Smart Home UI for Home Assistant
+url: https://github.com/YOUR_GITHUB_USERNAME/smart-home-ui-ha-addon
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8080
+panel_icon: mdi:home-floor-plan
+panel_title: Smart Home UI
+homeassistant_api: true
+host_network: false
+options:
+  pollIntervalMs: 6000
+  dashboardPaths: []
+schema:
+  pollIntervalMs: int(2000,60000)
+  dashboardPaths: [str]

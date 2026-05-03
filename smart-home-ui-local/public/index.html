@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Smart Home UI HA Add-on v3.3.0</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="mobile-menu-bar" class="mobile-menu-bar"><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button><a class="button-link mobile-faq-link" href="/FAQ.html" target="_blank" rel="noopener">FAQ</a></div>
+  <button type="button" id="btn-show-sidebar" class="floating-menu-btn left hidden">☰ Комнаты</button>
+  <button type="button" id="btn-show-device-panel" class="floating-menu-btn right hidden">Устройства</button>
+  <button type="button" id="btn-show-toolbar" class="floating-menu-btn top hidden">Панель</button>
+  <a class="button-link floating-faq-btn" href="/FAQ.html" target="_blank" rel="noopener">FAQ</a>
+  <aside class="sidebar">
+    <div class="brand">SMART HOME LOCAL</div>
+    <div class="top-actions">
+      <button type="button" id="btn-settings">Настройки</button>
+      <button type="button" id="btn-refresh">Обновить</button>
+      <button type="button" id="btn-hide-sidebar" title="Скрыть левое меню">Скрыть</button>
+      <a class="button-link" href="/FAQ.html" target="_blank" rel="noopener">FAQ</a>
+    </div>
+    <div class="connection"><span id="connection-dot" class="dot disconnected"></span><span id="connection-text">Не подключено</span></div>
+    <nav id="room-nav" class="room-nav"></nav>
+  </aside>
+
+  <main class="main">
+    <header class="toolbar">
+      <div>
+        <h1 id="page-title">Общий план</h1>
+        <p id="page-subtitle">Обзор квартиры и отдельные 3D-карты помещений</p>
+      </div>
+      <div class="toolbar-actions">
+        <button type="button" id="btn-overview">Общий план</button>
+        <label><input type="checkbox" id="toggle-zones" checked> Зоны</label>
+        <label><input type="checkbox" id="toggle-devices" checked> Маркеры</label>
+        <label><input type="checkbox" id="toggle-sensors" checked> Датчики</label>
+        <button type="button" id="btn-toggle-toolbar" title="Скрыть верхнее меню">Скрыть верх</button>
+        <button type="button" id="btn-toggle-devices-panel" title="Скрыть список устройств">Скрыть список</button>
+        <button type="button" id="btn-fullscreen">Полный экран</button>
+        <a class="button-link toolbar-faq" href="/FAQ.html" target="_blank" rel="noopener">FAQ</a>
+        <button type="button" id="btn-edit">Редактировать</button>
+        <button type="button" id="btn-save-edit" class="hidden">Сохранить изменения</button>
+        <button type="button" id="btn-cancel-edit" class="hidden">Отменить изменения</button>
+        <span id="edit-mode-badge" class="edit-mode-badge">Просмотр</span>
+        <label class="range-label">Шрифт устройств <input id="card-font-size" type="range" min="10" max="18" value="13"></label>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <div class="canvas-card">
+        <div id="overview-view" class="view active">
+          <div id="overview-stage" class="plan-stage">
+            <div id="overview-content" class="plan-content">
+              <img id="overview-image" src="/assets/overview-plan.png" alt="Общий план">
+              <div id="overview-zones" class="overlay"></div>
+              <div id="overview-metrics" class="overlay"></div>
+              <div id="overview-markers" class="overlay"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="room-view" class="view">
+          <div class="room-layout">
+            <div class="room-image-wrap" id="room-stage">
+              <div id="room-content" class="room-content">
+                <img id="room-image" src="" alt="Комната">
+                <div id="room-metrics" class="overlay"></div>
+                <div id="room-markers" class="overlay"></div>
+              </div>
+            </div>
+            <div class="room-details">
+              <div class="detail-card">
+                <h2 id="room-title">Комната</h2>
+                <div id="room-climate-line" class="climate-line"></div>
+                <p class="muted">Маркеры можно перетаскивать из списка справа. В режиме редактирования двигаются зоны, показатели и устройства.</p>
+              </div>
+              <div class="detail-card">
+                <h3>Быстрые действия</h3>
+                <div id="quick-actions" class="quick-actions"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" id="btn-quick-overlay" class="quick-overlay-button hidden">Быстрые действия</button>
+        <div id="quick-overlay" class="quick-overlay hidden">
+          <div class="quick-overlay-head">
+            <strong>Быстрые действия</strong>
+            <button type="button" id="btn-close-quick-overlay">× Закрыть</button>
+          </div>
+          <div id="quick-overlay-list" class="quick-actions quick-actions-overlay"></div>
+        </div>
+
+      </div>
+
+      <aside class="device-panel">
+        <div class="panel-head">
+          <h2 id="devices-title">Все устройства</h2>
+          <span id="device-count"></span>
+        </div>
+        <input id="device-search" class="search" placeholder="Поиск устройства...">
+        <label class="settings-check device-filter-check"><input type="checkbox" id="pref-show-all-devices-room"> В редактировании показывать все устройства</label>
+        <div id="device-list" class="device-list"></div>
+      </aside>
+    </section>
+  </main>
+
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Настройки</h2>
+        <button type="button" id="btn-close-settings" class="close-word">× Закрыть</button>
+      </div>
+      <div class="form-grid">
+        <div class="addon-note">Home Assistant подключается автоматически через Supervisor API. URL и long-lived token вводить не нужно.</div>
+        <input id="ha-url" type="hidden">
+        <textarea id="ha-token" class="hidden" rows="1"></textarea>
+        <label>Адрес панели относительно Home Assistant<textarea id="ha-dashboard-paths" rows="3" placeholder="dashboard-unknown/0&#10;dashboard-unknown/1&#10;dashboard-unknown/media"></textarea></label>
+        <label>Интервал опроса, сек<input id="poll-interval" type="number" value="6" min="2"></label>
+        <label class="settings-check"><input type="checkbox" id="pref-mobile-mode"> Мобильная версия</label>
+        <label class="settings-check"><input type="checkbox" id="pref-auto-hide"> Автоскрытие меню в мобильной версии</label>
+        <label class="settings-check"><input type="checkbox" id="pref-compact-mode"> Компактные панели</label>
+        <label>Размер ореолов <input id="pref-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-halo-scale-value">50%</span></label>
+      </div>
+      <div class="source-tools">
+        <h3>Источники устройств из панели</h3>
+        <p class="muted">Структура и названия берутся из RAW Lovelace / device.txt, состояние — из Home Assistant API. Адрес панели можно указывать как dashboard-unknown или dashboard-unknown/0.</p>
+        <div class="source-buttons">
+          <button type="button" id="btn-select-safe-sources">Безопасные источники</button>
+          <button type="button" id="btn-select-all-sources">Выбрать все</button>
+          <button type="button" id="btn-read-lovelace-raw">Перечитать RAW панели и устройства</button>
+          <button type="button" id="btn-save-source-config">Сохранить источники</button>
+        </div>
+        <div id="source-settings" class="source-settings"></div>
+      </div>
+      <div id="settings-status" class="status"></div>
+      <div class="modal-actions">
+        <button type="button" id="btn-save-config">Сохранить настройки</button>
+        <button type="button" id="btn-clear-config">Сбросить настройки</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="device-modal" class="modal hidden">
+    <div class="modal-card device-modal-card">
+      <div class="modal-head">
+        <h2 id="device-modal-title">Устройство</h2>
+        <button type="button" id="btn-close-device" class="close-word">× Закрыть</button>
+      </div>
+      <div id="device-modal-body" class="device-modal-body"></div>
+    </div>
+  </div>
+
+  <script src="/config.js"></script>
+  <script src="/lovelace-source.js"></script>
+  <script src="/devices.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
