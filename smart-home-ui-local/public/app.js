@@ -673,7 +673,7 @@ function openDeviceModal(d){
   modal.classList.remove('hidden'); bindDeviceModalActions(d);
 }
 function closeDeviceModal(){el('device-modal').classList.add('hidden')}
-async function callService(domain,service,data){ await apiJson('/api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data})}); await loadStates(); }
+async function callService(domain,service,data){ await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data})}); await loadStates(); }
 function bindDeviceModalActions(d){
   const body=el('device-modal-body');
   qsa('[data-action]',body).forEach(ctrl=>{
@@ -797,7 +797,7 @@ async function toggleDevice(d){
   else if(domain==='script') { service='turn_on'; }
   else if(domain==='automation') { service=st==='on' ? 'trigger' : 'turn_on'; }
   else { openDevice(d); return; }
-  try{ await apiJson('/api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data})}); showToast(`${displayName(d)}: команда отправлена`); await loadStates(); }
+  try{ await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data})}); showToast(`${displayName(d)}: команда отправлена`); await loadStates(); }
   catch(e){showToast('Ошибка управления: '+e.message)}
 }
 
@@ -841,7 +841,7 @@ function selectRoom(id){
 }
 function setConnection(ok,text){el('connection-dot').className='dot '+(ok?'connected':'disconnected');el('connection-text').textContent=text}
 async function apiJson(url,opt={}){const res=await fetch(url,{headers:{'Content-Type':'application/json'},...opt});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||data.message||res.status);return data}
-async function loadLayout(){try{const l=await apiJson('/api/layout'); state.layout={version:8,coordinateSpace:'room-content-box',overviewRoomSync:false,roomCoordinateMigrated:{},overviewMarkers:{},roomMarkers:{},overviewMetrics:{},roomMetrics:{},zones:{},customNames:{},...l}; if(!('coordinateSpace' in (l||{}))) state.layout.coordinateSpace='legacy-stage'; if(!('roomCoordinateMigrated' in (l||{}))) state.layout.roomCoordinateMigrated={}; if(!state.layout.overviewMarkers&&state.layout.markers)state.layout.overviewMarkers=state.layout.markers; migrateLayout();}catch(e){console.warn('layout load failed',e)}}
+async function loadLayout(){try{const l=await apiJson('api/layout'); state.layout={version:8,coordinateSpace:'room-content-box',overviewRoomSync:false,roomCoordinateMigrated:{},overviewMarkers:{},roomMarkers:{},overviewMetrics:{},roomMetrics:{},zones:{},customNames:{},...l}; if(!('coordinateSpace' in (l||{}))) state.layout.coordinateSpace='legacy-stage'; if(!('roomCoordinateMigrated' in (l||{}))) state.layout.roomCoordinateMigrated={}; if(!state.layout.overviewMarkers&&state.layout.markers)state.layout.overviewMarkers=state.layout.markers; migrateLayout();}catch(e){console.warn('layout load failed',e)}}
 function migrateLayout(){
   if(!state.layout.roomMarkers)state.layout.roomMarkers={};
   if(state.layout.roomMarkers.boiler){
@@ -860,14 +860,14 @@ function migrateLayout(){
   // v3.2.3: positions on the overview and inside rooms are independent.
   state.layout.overviewRoomSync=false;
 }
-async function saveLayout(show=true){try{await apiJson('/api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
-async function loadConfig(){const cfg=await apiJson('/api/config');state.config=cfg;const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
+async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
+async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
 async function saveConfig(){
   const status=el('settings-status');
   try{
     status.textContent='Сохраняю настройки add-on...';
     const payload={dashboardPathText:(el('ha-dashboard-paths')?.value||'').trim(),pollIntervalMs:Math.max(2000,Number(el('poll-interval').value||6)*1000)};
-    const res=await apiJson('/api/config',{method:'POST',body:JSON.stringify(payload)});
+    const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
     status.textContent='Настройки сохранены. Проверяю подключение к Home Assistant...';
     await testConnection({keepModal:true});
@@ -880,7 +880,7 @@ async function clearConfig(){
   const status=el('settings-status');
   try{
     status.textContent='Сбрасываю настройки add-on...';
-    const res=await apiJson('/api/config/clear',{method:'POST'});
+    const res=await apiJson('api/config/clear',{method:'POST'});
     state.config=res.config||{configured:true,haUrl:'Home Assistant Supervisor API',hasToken:true,pollIntervalMs:6000,dashboardPaths:[]};
     const dp=el('ha-dashboard-paths'); if(dp) dp.value=''; el('poll-interval').value='6';
     status.textContent='Настройки сброшены.';
@@ -890,8 +890,8 @@ async function clearConfig(){
     status.textContent='Ошибка сброса настроек: '+e.message;
   }
 }
-async function testConnection(options={}){try{await apiJson('/api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)el('settings-modal').classList.add('hidden');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){try{const data=await apiJson('/api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();render();setConnection(true,'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
+async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)el('settings-modal').classList.add('hidden');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();render();setConnection(true,'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
 function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer);state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
 
 function defaultSourceConfig(){return{version:1,selectedCards:{},defaultInclude:true,excludedCards:{'Физические устройства::Системные':true,'Вирт.устройства::Вирт.устройства':true},includeUnknownFromApi:false}}
@@ -923,8 +923,8 @@ function applySourceConfig(){
   }
   window.DEVICES=list;
 }
-async function loadSourceConfig(){try{state.sourceConfig=await apiJson('/api/source-config')}catch(e){state.sourceConfig=defaultSourceConfig()} applySourceConfig()}
-async function saveSourceConfig(){await apiJson('/api/source-config',{method:'POST',body:JSON.stringify(state.sourceConfig||defaultSourceConfig())});applySourceConfig();renderSourceSettings();render();el('settings-status').textContent=`Источники сохранены. Активно: ${devices().length} из ${allDevices().length}`}
+async function loadSourceConfig(){try{state.sourceConfig=await apiJson('api/source-config')}catch(e){state.sourceConfig=defaultSourceConfig()} applySourceConfig()}
+async function saveSourceConfig(){await apiJson('api/source-config',{method:'POST',body:JSON.stringify(state.sourceConfig||defaultSourceConfig())});applySourceConfig();renderSourceSettings();render();el('settings-status').textContent=`Источники сохранены. Активно: ${devices().length} из ${allDevices().length}`}
 function setSourceKeyEnabled(k,v){if(!state.sourceConfig)state.sourceConfig=defaultSourceConfig(); if(!state.sourceConfig.selectedCards)state.sourceConfig.selectedCards={}; state.sourceConfig.selectedCards[k]=!!v}
 function setAllSources(v){(window.LOVELACE_SOURCE?.views||[]).forEach(view=>(view.cards||[]).forEach(c=>setSourceKeyEnabled(c.sourceKey,v)));applySourceConfig();renderSourceSettings();render()}
 function setSafeSources(){setAllSources(false);const excluded=new Set(['Хрень всякая','Системные']);(window.LOVELACE_SOURCE?.views||[]).forEach(v=>(v.cards||[]).forEach(c=>{const ok=(v.title==='Физические устройства'||v.title==='Медиа')&&!excluded.has(c.title);setSourceKeyEnabled(c.sourceKey,ok)}));applySourceConfig();renderSourceSettings();render()}
@@ -936,7 +936,7 @@ async function readLovelaceRaw(){
   try{
     status.textContent='Читаю RAW панели из Home Assistant и пересобираю устройства...';
     const dashboardPathText=(el('ha-dashboard-paths')?.value||'').trim();
-    const data=await apiJson('/api/ha/lovelace/import',{method:'POST',body:JSON.stringify({dashboardPathText})});
+    const data=await apiJson('api/ha/lovelace/import',{method:'POST',body:JSON.stringify({dashboardPathText})});
     const ok=(data.results||[]).filter(x=>x.ok).length;
     const bad=(data.results||[]).filter(x=>!x.ok).length;
     const imp=data.import||{};

@@ -128,7 +128,7 @@ smart-home-ui-repo/smart-home-ui-local/config.yaml
 
 В GitHub не должно быть лишней верхней папки.
 
-## v3.3.3 fix
+## v3.3.4 fix
 
 This version fixes add-on startup errors like:
 
