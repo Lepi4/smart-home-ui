@@ -1155,3 +1155,45 @@ body.overview-editing:not(.hide-device-panel) .device-list{gap:0!important}
   body.mobile-mode.overview-editing:not(.hide-device-panel) .device-panel{width:min(28vw,360px)!important;min-width:300px!important}
   body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-head{min-height:34px!important;font-size:12px!important}
 }
+
+
+/* v3.4.22: mobile edit device accordion scroll fix */
+body.mobile-mode .device-list,
+body.mobile-mode .device-groups,
+body.mobile-mode .device-group-items{
+  min-height:0!important;
+  overscroll-behavior:contain!important;
+  -webkit-overflow-scrolling:touch!important;
+  touch-action:pan-y!important;
+}
+body.mobile-mode .device-card,
+body.mobile-mode .device-card[draggable="true"]{
+  touch-action:pan-y!important;
+  -webkit-user-drag:none!important;
+}
+body.mobile-mode.editing .device-card,
+body.mobile-mode.editing .device-card[draggable="true"]{
+  touch-action:pan-y!important;
+}
+body.mobile-mode .device-group.open .device-group-items{
+  overflow-y:auto!important;
+  max-height:min(46dvh,420px)!important;
+}
+@media (orientation:landscape) and (max-height:920px){
+  body.mobile-mode.editing:not(.hide-device-panel) .device-panel{
+    display:flex!important;
+    flex-direction:column!important;
+    min-height:0!important;
+  }
+  body.mobile-mode.editing:not(.hide-device-panel) .device-list{
+    flex:1 1 auto!important;
+    min-height:0!important;
+    overflow-y:auto!important;
+    touch-action:pan-y!important;
+  }
+  body.mobile-mode.editing:not(.hide-device-panel) .device-group.open .device-group-items{
+    max-height:calc(100dvh - 245px)!important;
+    overflow-y:auto!important;
+    touch-action:pan-y!important;
+  }
+}
