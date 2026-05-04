@@ -95,6 +95,43 @@ function saveUiPrefs(){
   persistUiStateSoon();
 }
 
+
+function applyDisplayPrefsOnly(){
+  const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
+  const mobileMarkerFactor = isNarrowMobile ? 0.84 : 1;
+  const mobileSensorFactor = isNarrowMobile ? 0.72 : 1;
+  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .1, 2) * mobileMarkerFactor));
+  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .1, 2) * mobileSensorFactor));
+  document.documentElement.style.setProperty('--room-label-scale', String(clamp(Number(state.ui.roomLabelScale ?? 1), .1, 2)));
+  document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(state.ui.markerOpacity ?? 0), 0, 1)));
+  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(state.ui.sensorOpacity ?? 0), 0, 1)));
+}
+function previewUiPrefsSoon(){
+  if(state.previewPrefsRaf) cancelAnimationFrame(state.previewPrefsRaf);
+  state.previewPrefsRaf=requestAnimationFrame(()=>{
+    applyDisplayPrefsOnly();
+    applyStageTransform('overview');
+    applyStageTransform('room');
+    updateZoomControls();
+  });
+  clearTimeout(state.previewPrefsSaveTimer);
+  state.previewPrefsSaveTimer=setTimeout(()=>saveUiPrefs(), 900);
+}
+function bindRangePreview(id, key, valueId, opts={}){
+  const input=el(id);
+  if(!input) return;
+  const out=valueId ? el(valueId) : null;
+  const update=e=>{
+    const n=Number(e.target.value)/100;
+    state.ui[key]=n;
+    if(out) out.textContent=e.target.value+'%';
+    previewUiPrefsSoon();
+    if(opts.render) opts.render();
+  };
+  input.oninput=update;
+  input.onchange=()=>saveUiPrefs();
+}
+
 function shouldUseMobileMode(){
   if(!window.matchMedia) return false;
   const coarsePointer = window.matchMedia('(pointer: coarse)').matches || !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
@@ -1210,6 +1247,7 @@ async function saveConfig(){
   const status=el('settings-status');
   try{
     status.textContent='Сохраняю настройки add-on...';
+    saveUiPrefs();
     const payload={dashboardPathText:(el('ha-dashboard-paths')?.value||'').trim(),pollIntervalMs:Math.max(2000,Number(el('poll-interval').value||6)*1000)};
     const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
@@ -1406,13 +1444,13 @@ function bindGlobal(){
   el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render();};
   el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); saveUiPrefs(); renderKioskWidget();};
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; saveUiPrefs(); renderDevices();};
-  el('pref-halo-scale').oninput=e=>{state.ui.haloScale=Number(e.target.value)/100; const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=e.target.value+'%'; saveUiPrefs(); render();};
-  const hwScale=el('pref-hardware-scale'); if(hwScale) hwScale.oninput=e=>{state.ui.hardwareScale=Number(e.target.value)/100; const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=e.target.value+'%'; saveUiPrefs(); applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();};
-  const markerScale=el('pref-marker-scale'); if(markerScale) markerScale.oninput=e=>{state.ui.markerScale=Number(e.target.value)/100; const v=el('pref-marker-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
-  const sensorScale=el('pref-sensor-scale'); if(sensorScale) sensorScale.oninput=e=>{state.ui.sensorScale=Number(e.target.value)/100; const v=el('pref-sensor-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
-  const roomLabelScale=el('pref-room-label-scale'); if(roomLabelScale) roomLabelScale.oninput=e=>{state.ui.roomLabelScale=Number(e.target.value)/100; const v=el('pref-room-label-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
-  const markerOpacity=el('pref-marker-opacity'); if(markerOpacity) markerOpacity.oninput=e=>{state.ui.markerOpacity=Number(e.target.value)/100; const v=el('pref-marker-opacity-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
-  const sensorOpacity=el('pref-sensor-opacity'); if(sensorOpacity) sensorOpacity.oninput=e=>{state.ui.sensorOpacity=Number(e.target.value)/100; const v=el('pref-sensor-opacity-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
+  bindRangePreview('pref-halo-scale','haloScale','pref-halo-scale-value');
+  bindRangePreview('pref-hardware-scale','hardwareScale','pref-hardware-scale-value');
+  bindRangePreview('pref-marker-scale','markerScale','pref-marker-scale-value');
+  bindRangePreview('pref-sensor-scale','sensorScale','pref-sensor-scale-value');
+  bindRangePreview('pref-room-label-scale','roomLabelScale','pref-room-label-scale-value');
+  bindRangePreview('pref-marker-opacity','markerOpacity','pref-marker-opacity-value');
+  bindRangePreview('pref-sensor-opacity','sensorOpacity','pref-sensor-opacity-value');
   const zb=el('btn-zoom-out'); if(zb) zb.onclick=()=>zoomViewport(activeStageKind(), .86);
   const zi=el('btn-zoom-in'); if(zi) zi.onclick=()=>zoomViewport(activeStageKind(), 1.16);
   const zf=el('btn-zoom-fit'); if(zf) zf.onclick=()=>fitViewport(activeStageKind());
@@ -1430,7 +1468,7 @@ window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(
 document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});
 
 
-/* v3.4.10: keep mobile bottom bar and kiosk controls from covering open modals */
+/* v3.4.11: keep mobile bottom bar and kiosk controls from covering open modals */
 function syncModalOpenClass(){
   const anyOpen = Array.from(document.querySelectorAll('.modal')).some(m=>!m.classList.contains('hidden'));
   document.body.classList.toggle('modal-open', anyOpen);

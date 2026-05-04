@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.10</title>
+  <title>Smart Home UI HA Add-on v3.4.11</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -146,6 +146,7 @@
         <h2>Настройки</h2>
         <button type="button" id="btn-close-settings" class="close-word">× Закрыть</button>
       </div>
+      <div class="settings-scroll">
       <div class="form-grid">
         <div class="addon-note">Home Assistant подключается автоматически через Supervisor API. URL и long-lived token вводить не нужно.</div>
         <input id="ha-url" type="hidden">
@@ -180,6 +181,7 @@
         <div id="source-settings" class="source-settings"></div>
       </div>
       <div id="settings-status" class="status"></div>
+      </div>
       <div class="modal-actions">
         <button type="button" id="btn-info-settings">Информация / диагностика</button>
         <button type="button" id="btn-save-config">Сохранить настройки</button>
