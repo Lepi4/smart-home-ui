@@ -589,3 +589,26 @@ body.kiosk-mode .kiosk-room-overlay.hidden{display:none!important}
 .kiosk-room-head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#eef6ff;margin-bottom:8px}.kiosk-room-head button{min-width:34px;min-height:34px;border-radius:999px;font-size:18px;padding:4px 8px}
 .kiosk-room-list{display:grid;gap:6px}.kiosk-room-item{width:100%;text-align:left;border-radius:12px;padding:10px 12px;background:rgba(27,34,45,.94);border:1px solid rgba(255,255,255,.08);color:#eef3fb;font-weight:750}.kiosk-room-item.active{background:#1c3558;border-color:rgba(115,168,255,.45)}.kiosk-overview-item{margin-bottom:8px;background:#223a5f!important}
 @media(max-width:560px){body.kiosk-mode .kiosk-rooms-btn{left:10px;bottom:14px;min-height:42px;padding:8px 12px}body.kiosk-mode .kiosk-exit-btn{right:10px;bottom:14px}body.kiosk-mode .kiosk-room-overlay{left:8px;bottom:64px;width:min(84vw,292px);max-height:52vh}}
+
+/* v3.4.5 mobile hotfix: keep kiosk reachable, avoid floating Devices overlay, keep HA sidebar icon compatible */
+@media(max-width:760px){
+  /* The bottom mobile bar already has a Devices button, so the floating Devices button must not cover the toolbar Kiosk button. */
+  #btn-show-device-panel.floating-menu-btn,
+  #btn-show-sidebar.floating-menu-btn,
+  #btn-show-toolbar.floating-menu-btn{display:none!important}
+  .toolbar-actions{display:flex!important;flex-wrap:wrap!important;gap:7px!important;align-items:center!important;overflow:visible!important}
+  .toolbar-actions #btn-toggle-devices-panel,
+  .toolbar-actions #btn-fullscreen{display:none!important}
+  .toolbar-actions #btn-toolbar-kiosk{display:inline-flex!important;order:70;min-width:86px;justify-content:center;background:#1d3557!important;border-color:rgba(115,168,255,.38)!important;color:#eef6ff!important}
+  .toolbar-actions #btn-edit{order:72}
+  .toolbar-actions #edit-mode-badge{order:74}
+  .toolbar-actions .range-label{display:none!important}
+  .mobile-menu-bar{z-index:1500}
+  body.mobile-mode:not(.hide-device-panel) .device-panel{z-index:1450;bottom:72px}
+  body.mobile-mode:not(.hide-sidebar) .sidebar{z-index:1450;bottom:72px}
+}
+@media(max-width:420px){
+  .mobile-menu-bar{gap:6px;padding:7px 6px}
+  .mobile-menu-bar button,.mobile-menu-bar .button-link{font-size:12px;padding:9px 6px;min-width:0}
+  .toolbar-actions #btn-toolbar-kiosk{min-width:78px}
+}

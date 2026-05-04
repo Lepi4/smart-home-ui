@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FAQ — Smart Home UI Local v3.4.4</title><link rel="stylesheet" href="style.css"></head><body style="display:block;overflow:auto;padding:24px;max-width:980px;margin:auto">
-<h1>FAQ — Smart Home UI Local v3.4.4</h1>
-<p>Версия 3.4.4 продолжает стабилизацию Home Assistant add-on: данные вынесены в <code>/data</code>, вид панели восстанавливается после переустановки add-on, добавлены kiosk mode, масштаб/прозрачность датчиков и маркеров.</p>
-<h2>Что изменено в v3.4.4</h2>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FAQ — Smart Home UI Local v3.4.5</title><link rel="stylesheet" href="style.css"></head><body style="display:block;overflow:auto;padding:24px;max-width:980px;margin:auto">
+<h1>FAQ — Smart Home UI Local v3.4.5</h1>
+<p>Версия 3.4.5 продолжает стабилизацию Home Assistant add-on: данные вынесены в <code>/data</code>, вид панели восстанавливается после переустановки add-on, добавлены kiosk mode, масштаб/прозрачность датчиков и маркеров.</p>
+<h2>Что изменено в v3.4.5</h2>
 <ul>
   <li>Кнопка выхода из киоска перенесена вниз, чтобы не перекрывать управление масштабом.</li>
   <li>Верхняя вторая кнопка FAQ заменена на кнопку <b>Киоск</b>.</li>
@@ -48,4 +48,4 @@ views:
           - entity: cover.living_room_curtain
             name: Шторы</code></pre>
 <h2>16. Что делать, если устройство не работает?</h2><p>Сначала откройте диагностику. Если entity попал в список “Не найдены в HA”, проверьте переименование в Home Assistant или перечитайте RAW панели.</p>
-<h2>v3.4.4: навигация в режиме киоска</h2><p>В режиме киоска остаётся компактная кнопка <b>Комнаты</b> внизу слева. Она открывает список комнат поверх карты на 10 секунд и содержит пункт <b>Общий план</b>, чтобы можно было выйти из отдельной комнаты без отключения киоска.</p></body></html>
+<h2>v3.4.5: навигация в режиме киоска</h2><p>В режиме киоска остаётся компактная кнопка <b>Комнаты</b> внизу слева. Она открывает список комнат поверх карты на 10 секунд и содержит пункт <b>Общий план</b>, чтобы можно было выйти из отдельной комнаты без отключения киоска.</p><h2>v3.4.5: мобильная панель и иконка HA</h2><p>На мобильной версии плавающая кнопка <b>Устройства</b> скрыта, потому что список устройств открывается из нижней панели и не должен перекрывать кнопку <b>Киоск</b> в верхней панели. Для пункта бокового меню Home Assistant используется совместимая MDI-иконка <code>mdi:floor-plan</code>; если иконка не появилась сразу, обновите репозиторий add-on и перезапустите Home Assistant frontend/приложение.</p></body></html>
