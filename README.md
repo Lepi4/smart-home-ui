@@ -3,13 +3,13 @@
 Репозиторий подготовлен под `https://github.com/Lepi4/smart-home-ui` и GHCR images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.1
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.1
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.2
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.2
 ```
 
 Этот вариант рассчитан на установку Home Assistant add-on через готовые Docker images из GitHub Container Registry.
 
-## Что нового в v3.4.1
+## Что нового в v3.4.2
 
 - Нормализовано хранение runtime-данных в `/data`.
 - Добавлен `/data/ui_state.json`: последний вид, скрытые панели, kiosk mode, масштаб и pan.
@@ -18,7 +18,7 @@ ghcr.io/lepi4/smart-home-ui-aarch64:3.4.1
 - Добавлен kiosk mode: скрывает панели и оставляет только план/комнату.
 - Добавлены настройки масштаба и прозрачности маркеров/датчиков.
 - Добавлены `icon.png` и `logo.png` для add-on.
-- FAQ обновлён под v3.4.1.
+- FAQ обновлён под v3.4.2.
 
 ## Как загрузить на GitHub
 
@@ -35,7 +35,7 @@ smart-home-ui-local/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.1"
+git commit -m "Update Smart Home UI add-on to v3.4.2"
 git push
 ```
 

@@ -63,7 +63,13 @@ function loadUiPrefs(){
     const last=JSON.parse(localStorage.getItem('last_view')||'{}');
     const autoMobile = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
     state.ui = { ...state.ui, ...(server.ui||{}), ...saved };
-    if(autoMobile && saved.mobileMode === undefined && !(server.ui&&server.ui.mobileMode!==undefined)) state.ui.mobileMode = true;
+    if(autoMobile){
+      state.ui.mobileMode = true;
+      // На телефоне панели должны стартовать закрытыми. Иначе их может заблокировать CSS/Ingress,
+      // а нижние кнопки выглядят нерабочими.
+      state.ui.hideSidebar = true;
+      state.ui.hideDevicePanel = true;
+    }
     if(last.selectedRoom || server.selectedRoom) state.selectedRoom = last.selectedRoom || server.selectedRoom || state.selectedRoom;
     if(state.selectedRoom !== 'overview' && !ROOM_MAP[state.selectedRoom]) state.selectedRoom='overview';
     loadViewportPrefs();
@@ -138,10 +144,13 @@ function applyUiPrefs(){
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
   document.body.classList.toggle('dark-theme', !!state.ui.darkTheme);
   document.body.classList.toggle('kiosk-mode', !!state.ui.kioskMode);
-  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .5, 2)));
-  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .5, 2)));
+  const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
+  const mobileMarkerFactor = isNarrowMobile ? 0.84 : 1;
+  const mobileSensorFactor = isNarrowMobile ? 0.72 : 1;
+  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .5, 2) * mobileMarkerFactor));
+  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .5, 2) * mobileSensorFactor));
   document.documentElement.style.setProperty('--marker-opacity', String(clamp(Number(state.ui.markerOpacity ?? 1), .2, 1)));
-  document.documentElement.style.setProperty('--sensor-opacity', String(clamp(Number(state.ui.sensorOpacity ?? 1), .2, 1)));
+  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(Number(state.ui.sensorOpacity ?? 1), .2, 1)));
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
   const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel || state.ui.kioskMode);
   const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar || state.ui.kioskMode);
@@ -1284,6 +1293,8 @@ function bindGlobal(){
   el('btn-mobile-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-mobile-devices').onclick=()=>setPanelHidden('hideDevicePanel', !state.ui.hideDevicePanel);
   el('btn-mobile-settings').onclick=()=>el('settings-modal').classList.remove('hidden');
+  const exitKiosk=el('btn-exit-kiosk');
+  if(exitKiosk) exitKiosk.onclick=()=>{ state.ui.kioskMode=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
   el('pref-mobile-mode').onchange=e=>{state.ui.mobileMode=e.target.checked; saveUiPrefs();};
   el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
