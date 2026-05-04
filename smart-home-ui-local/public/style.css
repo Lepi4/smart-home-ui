@@ -1145,3 +1145,13 @@ body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group:not(.ope
   body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-head b{font-size:8.5px}
   body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-items{padding:4px;gap:4px}
 }
+
+/* v3.4.18: overview edit device groups are always accordion, not a flat list */
+body.overview-editing:not(.hide-device-panel) .device-groups{display:flex!important;flex-direction:column!important;gap:6px!important;min-height:0!important}
+body.overview-editing:not(.hide-device-panel) .device-group:not(.open) .device-group-items{display:none!important}
+body.overview-editing:not(.hide-device-panel) .device-group-head{cursor:pointer!important}
+body.overview-editing:not(.hide-device-panel) .device-list{gap:0!important}
+@media (orientation:landscape){
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-panel{width:min(28vw,360px)!important;min-width:300px!important}
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-head{min-height:34px!important;font-size:12px!important}
+}

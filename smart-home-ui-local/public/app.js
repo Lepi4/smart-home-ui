@@ -860,50 +860,111 @@ function roomGroupLabel(roomId){
   if(roomId==='__noroom') return 'Без комнаты';
   return ROOM_MAP[normalizedRoomId(roomId)]?.label || roomId || 'Без комнаты';
 }
-function renderOverviewEditDeviceGroups(list, filtered, q, current){
-  const overviewMarkers = state.layout.overviewMarkers || {};
+const CLIENT_ROOM_PATTERNS = [
+  [/гостин|living|зал|тв гост/i, 'living'],
+  [/кухн|kitchen/i, 'kitchen'],
+  [/левая.*спаль|спальня левая|left.*bedroom|bedroom1/i, 'bedroom1'],
+  [/правая.*спаль|спальня правая|right.*bedroom|bedroom2/i, 'bedroom2'],
+  [/кабинет|office/i, 'office'],
+  [/гардер|wardrobe/i, 'wardrobe'],
+  [/постир|котель|laundry|boiler/i, 'laundry'],
+  [/основ.*сан|санузел основ|main.*bath/i, 'mainbath'],
+  [/гост.*сан|guest.*bath/i, 'guestbath'],
+  [/прихож|entrance/i, 'entrance'],
+  [/коридор|corridor/i, 'corridor'],
+  [/сантех|протеч|кран|plumb/i, 'plumbing'],
+  [/систем|system/i, 'system']
+];
+function inferRoomIdFromDevice(d){
+  const text=[displayName(d), d.name, d.panelName, d.label, d.cardTitle, d.category, d.entity_id].filter(Boolean).join(' ');
+  for(const [re,rid] of CLIENT_ROOM_PATTERNS){ if(re.test(text)) return rid; }
+  return '';
+}
+function effectiveDeviceRoomId(d){
+  const direct=normalizedRoomId(d?.room);
+  if(direct && direct!=='unassigned' && direct!=='__noroom'){
+    if(direct==='media'){
+      const inferred=inferRoomIdFromDevice(d);
+      const haRoom=normalizedRoomId(d?.haArea?.room);
+      return inferred || (haRoom && haRoom!=='unassigned' ? haRoom : '') || direct;
+    }
+    return direct;
+  }
+  const inferred=inferRoomIdFromDevice(d);
+  if(inferred) return inferred;
+  const haRoom=normalizedRoomId(d?.haArea?.room);
+  if(haRoom && haRoom!=='unassigned') return haRoom;
+  return direct || '__noroom';
+}
+function markerMapForCurrentEditScope(){
+  if(state.selectedRoom==='overview') return state.layout.overviewMarkers || {};
+  return (state.layout.roomMarkers||{})[normalizedRoomId(state.selectedRoom)] || {};
+}
+function renderEditDeviceGroups(list, filtered, q, current){
+  const currentMarkers = markerMapForCurrentEditScope();
   const byRoom = new Map();
   const unplaced = [];
   filtered.forEach(d=>{
-    const rid = normalizedRoomId(d.room) || '__noroom';
-    if(!overviewMarkers[d.entity_id]) unplaced.push(d);
+    const rid = effectiveDeviceRoomId(d) || '__noroom';
+    if(state.selectedRoom==='overview' && !currentMarkers[d.entity_id]) unplaced.push(d);
     if(!byRoom.has(rid)) byRoom.set(rid, []);
     byRoom.get(rid).push(d);
   });
   const ordered = [];
-  if(unplaced.length) ordered.push({id:'__unplaced', label:'Неразмещённые', items:unplaced});
-  ROOMS.forEach(r=>{ const arr=byRoom.get(normalizedRoomId(r.id)); if(arr?.length) ordered.push({id:normalizedRoomId(r.id), label:r.label, items:arr}); });
-  [...byRoom.entries()].filter(([rid])=>!ROOM_MAP[rid]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))).forEach(([rid,arr])=>ordered.push({id:rid, label:roomGroupLabel(rid), items:arr}));
-  if(!ordered.length){ list.innerHTML='<p class="muted device-empty">Нет устройств по текущему фильтру</p>'; return; }
-  if(!state.openDeviceRoomGroup || !ordered.some(g=>g.id===state.openDeviceRoomGroup)){
-    state.openDeviceRoomGroup = ordered[0].id;
+  if(state.selectedRoom==='overview' && unplaced.length) ordered.push({id:'__unplaced', label:'Неразмещённые', items:unplaced});
+  const selectedRid = normalizedRoomId(state.selectedRoom);
+  if(state.selectedRoom!=='overview'){
+    const currentRoomItems = byRoom.get(selectedRid);
+    if(currentRoomItems?.length) ordered.push({id:selectedRid, label:ROOM_MAP[selectedRid]?.label || selectedRid, items:currentRoomItems});
   }
-  const totalVisible = ordered.reduce((sum,g)=>sum + (g.id===state.openDeviceRoomGroup ? g.items.length : 0), 0);
-  el('devices-title').textContent='Добавить на общий план';
-  el('device-count').textContent=q ? `${filtered.length} найдено · ${current.length} всего` : `${ordered.length} групп · ${current.length} всего`;
-  list.innerHTML = `<div class="device-groups">${ordered.map(g=>{
+  ROOMS.forEach(r=>{
+    const rid=normalizedRoomId(r.id);
+    if(rid===selectedRid && state.selectedRoom!=='overview') return;
+    const arr=byRoom.get(rid);
+    if(arr?.length) ordered.push({id:rid, label:r.label, items:arr});
+  });
+  [...byRoom.entries()]
+    .filter(([rid])=>!ROOM_MAP[rid] && !(rid===selectedRid && state.selectedRoom!=='overview'))
+    .sort((a,b)=>String(a[0]).localeCompare(String(b[0]),'ru'))
+    .forEach(([rid,arr])=>ordered.push({id:rid, label:roomGroupLabel(rid), items:arr}));
+  if(!ordered.length){ list.innerHTML='<p class="muted device-empty">Нет устройств по текущему фильтру</p>'; return; }
+  if(state.openDeviceRoomGroup && !ordered.some(g=>g.id===state.openDeviceRoomGroup)) state.openDeviceRoomGroup='';
+  if(state.selectedRoom!=='overview'){
+    const selectedGroup = ordered.find(g=>g.id===selectedRid);
+    if(!state.openDeviceRoomGroup && selectedGroup) state.openDeviceRoomGroup = selectedRid;
+  }
+  // В edit mode всегда показываем группы. Для конкретной комнаты текущая группа открыта сразу.
+  el('devices-title').textContent=state.selectedRoom==='overview' ? 'Добавить на общий план' : `Добавить в комнату: ${room(state.selectedRoom)?.label || state.selectedRoom}`;
+  el('device-count').textContent=q ? `${ordered.length} групп · ${filtered.length} найдено` : `${ordered.length} групп · ${current.length} всего`;
+  list.innerHTML = `<div class="device-groups edit-accordion">${ordered.map(g=>{
     const open = g.id===state.openDeviceRoomGroup;
-    const placed = g.items.filter(d=>overviewMarkers[d.entity_id]).length;
+    const placed = g.items.filter(d=>currentMarkers[d.entity_id]).length;
     const unp = g.items.length - placed;
-    const items = open ? g.items.slice(0, q ? 90 : 80).map(d=>deviceCardHtml(d,false)).join('') : '';
-    const more = open && g.items.length > (q?90:80) ? `<div class="device-group-more">Показано ${q?90:80} из ${g.items.length}. Используйте поиск.</div>` : '';
-    const sub = g.id==='__unplaced' ? `${g.items.length} без маркера` : `${g.items.length} устройств${unp?`, ${unp} без маркера`:''}`;
+    const limit = q ? 90 : 80;
+    const items = open ? g.items.slice(0, limit).map(d=>deviceCardHtml(d, state.selectedRoom!=='overview')).join('') : '';
+    const more = open && g.items.length > limit ? `<div class="device-group-more">Показано ${limit} из ${g.items.length}. Используйте поиск.</div>` : '';
+    let sub = `${g.items.length} устройств`;
+    if(g.id==='__unplaced') sub = `${g.items.length} без маркера`;
+    else if(unp) sub += `, ${unp} без маркера`;
     return `<section class="device-group ${open?'open':''}" data-group="${esc(g.id)}"><button type="button" class="device-group-head" data-device-group="${esc(g.id)}"><span>${open?'▾':'▸'} ${esc(g.label)}</span><b>${esc(sub)}</b></button>${open?`<div class="device-group-items">${items}${more}</div>`:''}</section>`;
   }).join('')}</div>`;
-  qsa('[data-device-group]',list).forEach(btn=>btn.onclick=()=>{ state.openDeviceRoomGroup=btn.dataset.deviceGroup; renderDevices(); });
+  qsa('[data-device-group]',list).forEach(btn=>btn.onclick=()=>{
+    state.openDeviceRoomGroup = state.openDeviceRoomGroup===btn.dataset.deviceGroup ? '' : btn.dataset.deviceGroup;
+    renderDevices();
+  });
   bindDeviceCards(list);
 }
 function renderDevices(){
   const list=el('device-list');
   const q=(el('device-search').value||'').toLowerCase();
+  const editGrouped = !!state.edit;
   const showAllInRoom = state.selectedRoom!=='overview' && state.edit && !!state.ui.showAllDevicesInRoom;
-  const current=state.selectedRoom==='overview'||showAllInRoom?devices():roomDevices(state.selectedRoom);
-  const overviewEditLite = state.selectedRoom==='overview' && state.edit && isMobilePanelMode();
+  const current=editGrouped ? devices() : (state.selectedRoom==='overview'||showAllInRoom?devices():roomDevices(state.selectedRoom));
   let filtered=current
     .filter(d=>IMPORTANT_DOMAINS.has(d.domain))
-    .filter(d=>(displayName(d)+' '+d.entity_id+' '+(d.category||'')+' '+(ROOM_MAP[normalizedRoomId(d.room)]?.label||'')).toLowerCase().includes(q));
-  if(overviewEditLite){
-    renderOverviewEditDeviceGroups(list, filtered, q, current);
+    .filter(d=>(displayName(d)+' '+d.entity_id+' '+(d.category||'')+' '+(ROOM_MAP[effectiveDeviceRoomId(d)]?.label||'')+' '+(ROOM_MAP[normalizedRoomId(d.room)]?.label||'')).toLowerCase().includes(q));
+  if(editGrouped){
+    renderEditDeviceGroups(list, filtered, q, current);
     return;
   }
   let countSuffix = `${filtered.length} из ${current.length}`;

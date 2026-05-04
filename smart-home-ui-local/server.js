@@ -483,6 +483,40 @@ function haWsCommand(type, payload={}){
     });
   });
 }
+
+async function loadHaEntityAreaMap(){
+  const meta = { ok:false, entityAreas:0, areas:0, devices:0, error:null };
+  try{
+    const [areasRaw, entitiesRaw, devicesRaw] = await Promise.all([
+      haWsCommand('config/area_registry/list').catch(e=>{ throw new Error('area_registry: '+e.message); }),
+      haWsCommand('config/entity_registry/list').catch(e=>{ throw new Error('entity_registry: '+e.message); }),
+      haWsCommand('config/device_registry/list').catch(()=>[])
+    ]);
+    const areas = Array.isArray(areasRaw) ? areasRaw : [];
+    const entities = Array.isArray(entitiesRaw) ? entitiesRaw : [];
+    const devices = Array.isArray(devicesRaw) ? devicesRaw : [];
+    const areaById = new Map(areas.map(a=>[a.area_id || a.id, a.name || a.area_id || a.id]).filter(x=>x[0]));
+    const deviceAreaById = new Map();
+    for(const d of devices){
+      const aid = d.area_id;
+      if((d.id || d.device_id) && aid) deviceAreaById.set(d.id || d.device_id, aid);
+    }
+    const entityArea = new Map();
+    for(const e of entities){
+      const eid = e.entity_id;
+      if(!eid) continue;
+      let aid = e.area_id || '';
+      if(!aid && e.device_id) aid = deviceAreaById.get(e.device_id) || '';
+      const areaName = aid ? (areaById.get(aid) || aid) : '';
+      if(areaName) entityArea.set(eid, { areaId: aid, areaName, room: canonicalRoomFromText(areaName) });
+    }
+    meta.ok=true; meta.entityAreas=entityArea.size; meta.areas=areas.length; meta.devices=devices.length;
+    return { entityArea, meta };
+  }catch(e){
+    meta.error = e.message;
+    return { entityArea: new Map(), meta };
+  }
+}
 async function readLovelaceRawFromHa(paths){
   const normalized = normalizeDashboardPaths(paths);
   const requested = normalized.length ? normalized : ['lovelace'];
@@ -597,13 +631,23 @@ function selectViews(config, viewFilters){
 function cardTitle(card, fallback){
   return String(card?.title || card?.name || card?.label || fallback || card?.type || 'Без группы');
 }
+function headingTitle(card){ return String(card?.heading || card?.title || card?.name || '').trim(); }
 function getCardsFromView(view){
   const cards=[];
   if(Array.isArray(view.cards)) cards.push(...view.cards);
   if(Array.isArray(view.sections)){
     for(const section of view.sections){
+      let currentHeading = section.title || '';
       if(Array.isArray(section.cards)){
-        for(const card of section.cards) cards.push({ ...card, title: card.title || section.title || card.name });
+        for(const card of section.cards){
+          if(card?.type === 'heading'){
+            currentHeading = headingTitle(card) || currentHeading;
+            continue;
+          }
+          // В sections dashboard карточки часто идут под heading без title. Сохраняем heading как группу,
+          // но name самой карточки оставляем для имени устройства и определения комнаты.
+          cards.push({ ...card, title: card.title || currentHeading || section.title || card.name });
+        }
       }
     }
   }
@@ -670,8 +714,11 @@ function flattenCardForEntityCollection(card, config, stats){
 function makeDevice(ref, ctx){
   const domain = domainOf(ref.entity_id);
   const category = ctx.cardTitle || 'Без группы';
-  const room = canonicalRoomFromText(category, ctx.viewTitle, ref.entity_id);
   const name = ref.name || friendlyFromEntityId(ref.entity_id);
+  const haArea = ctx.haArea || null;
+  const panelRoom = canonicalRoomFromText(name, category, ctx.viewTitle, ref.entity_id);
+  const haRoom = haArea?.room && haArea.room !== 'unassigned' ? haArea.room : '';
+  const room = panelRoom !== 'unassigned' ? panelRoom : (haRoom || 'unassigned');
   const sourceKey = `${ctx.viewTitle || 'RAW'}::${category}`;
   return {
     entity_id: ref.entity_id,
@@ -685,6 +732,8 @@ function makeDevice(ref, ctx){
     label: name,
     category,
     room,
+    haArea: haArea ? { areaId: haArea.areaId || '', areaName: haArea.areaName || '', room: haArea.room || '' } : null,
+    roomSource: panelRoom !== 'unassigned' ? 'lovelace-card-or-name' : (haRoom ? 'ha-area' : 'unassigned'),
     zone: null,
     emoji: DOMAIN_EMOJI[domain] || '•',
     sourceKey,
@@ -692,11 +741,11 @@ function makeDevice(ref, ctx){
     nameSource: ref.name ? 'panel-name' : 'entity-id'
   };
 }
-function parseLovelaceRawBundle(bundle){
+function parseLovelaceRawBundle(bundle, haRegistry={}){
   const generatedAt = new Date().toISOString();
   const devicesById = new Map();
   const viewsOut = [];
-  const stats = { generatedAt, dashboards:0, views:0, cards:0, entitiesFound:0, templatesUsed:new Set(), templateWarnings:[], skippedViews:[] };
+  const stats = { generatedAt, dashboards:0, views:0, cards:0, entitiesFound:0, templatesUsed:new Set(), templateWarnings:[], skippedViews:[], haRegistry: haRegistry.meta || null };
   const results = bundle?.results || [];
   for(const result of results){
     if(!result.ok) continue;
@@ -722,7 +771,7 @@ function parseLovelaceRawBundle(bundle){
         const cardDevices = [];
         for(const ref of uniqueRefs){
           const existing = devicesById.get(ref.entity_id);
-          const device = existing || makeDevice(ref, { viewTitle, cardTitle:cTitle, cardType:originalCard.type || resolved.type || '' });
+          const device = existing || makeDevice(ref, { viewTitle, cardTitle:cTitle, cardType:originalCard.type || resolved.type || '', haArea: haRegistry.entityArea?.get(ref.entity_id) });
           if(!existing) devicesById.set(ref.entity_id, device);
           cardDevices.push(device);
         }
@@ -733,7 +782,7 @@ function parseLovelaceRawBundle(bundle){
   }
   const devices = [...devicesById.values()].sort((a,b)=>String(a.sourceKey).localeCompare(String(b.sourceKey),'ru') || a.entity_id.localeCompare(b.entity_id));
   stats.entitiesFound = devices.length;
-  const source = { version:2, generatedAt, generatedFrom:'ha-lovelace-raw', views:viewsOut };
+  const source = { version:2, generatedAt, generatedFrom:'ha-lovelace-raw', haRegistry: haRegistry.meta || null, views:viewsOut };
   return { devices, source, stats: { ...stats, templatesUsed:[...stats.templatesUsed] } };
 }
 function writeDeviceOutputs(parsed){
@@ -769,17 +818,19 @@ function writeDeviceOutputs(parsed){
 
 async function importLovelaceRaw(paths){
   const rawBundle = await readLovelaceRawFromHa(paths);
-  const parsed = parseLovelaceRawBundle(rawBundle);
+  const registry = await loadHaEntityAreaMap();
+  const parsed = parseLovelaceRawBundle(rawBundle, registry);
   writeDeviceOutputs(parsed);
-  return { ...rawBundle, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length } };
+  return { ...rawBundle, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
-function importStoredLovelaceRaw(){
+async function importStoredLovelaceRaw(){
   const file = path.join(DATA_DIR,'lovelace_raw.json');
   if(!fs.existsSync(file)) throw new Error('data/lovelace_raw.json не найден. Сначала перечитайте RAW панели из HA.');
   const rawBundle = JSON.parse(fs.readFileSync(file,'utf8'));
-  const parsed = parseLovelaceRawBundle(rawBundle);
+  const registry = await loadHaEntityAreaMap();
+  const parsed = parseLovelaceRawBundle(rawBundle, registry);
   writeDeviceOutputs(parsed);
-  return { ok:true, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length } };
+  return { ok:true, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
 
 app.use('/media', express.static(DATA_IMAGES_DIR, {fallthrough:true}));
@@ -829,8 +880,8 @@ app.post('/api/ha/lovelace/import', async (req,res)=>{
     res.json({ ok:true, ...data });
   } catch(e){ res.status(500).json({error:e.message}); }
 });
-app.post('/api/ha/lovelace/import-stored', (req,res)=>{
-  try { res.json(importStoredLovelaceRaw()); }
+app.post('/api/ha/lovelace/import-stored', async (req,res)=>{
+  try { res.json(await importStoredLovelaceRaw()); }
   catch(e){ res.status(500).json({error:e.message}); }
 });
 app.get('/api/ha/states', async (req,res)=> { try { const states = await haFetch('/states'); res.json({ ok:true, states }); } catch(e){ res.status(500).json({error:e.message}); } });
