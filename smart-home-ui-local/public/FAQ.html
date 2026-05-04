@@ -1,17 +1,43 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FAQ — Smart Home UI Local v3.4.0</title><link rel="stylesheet" href="style.css"></head><body style="display:block;overflow:auto;padding:24px;max-width:980px;margin:auto">
-<h1>FAQ — Smart Home UI Local v3.4.0</h1>
-<p>Версия 3.4.0 завершает блок стабилизации Home Assistant add-on: диагностика, backup manager, allowlist команд, touch-first управление и kiosk-friendly интерфейс.</p>
-<h2>1. Как подключается Home Assistant?</h2><p>Адрес и long-lived token больше не вводятся. Add-on использует Supervisor API и <code>SUPERVISOR_TOKEN</code>. В <code>config.yaml</code> включено <code>homeassistant_api: true</code>.</p>
-<h2>2. Как войти в режим редактирования?</h2><p>Кнопку <b>Редактировать</b> нужно нажать и удерживать 2 секунды. Это защита от случайного входа на планшете или настенной панели.</p>
-<h2>3. Как сохраняется layout?</h2><p>В редакторе есть <b>Сохранить изменения</b> и <b>Отменить изменения</b>. Перетаскивание не пишет layout сразу. Перед сохранением сервер создаёт backup.</p>
-<h2>4. Где посмотреть состояние системы?</h2><p>Откройте <b>Настройки → Информация / диагностика</b>. Там видны версия, DATA_DIR, состояние HA API, количество устройств, missing entity_id, дубли, объекты без координат, backups и список разрешённых команд.</p>
-<h2>5. Что такое проверка entity_id?</h2><p>Диагностика сравнивает устройства из Lovelace/device.txt с сущностями Home Assistant. Она показывает entity, которых нет в HA, дубли, устройства без комнаты и без координат.</p>
-<h2>6. Как восстановить layout?</h2><p>В <b>Информация / диагностика → Backups</b> можно восстановить или удалить резервные копии layout. При восстановлении текущий layout также сохраняется в backup.</p>
-<h2>7. Какие команды разрешены?</h2><p>Сервер использует allowlist service calls. Разрешены только ожидаемые команды для light, switch, cover, climate, fan, media_player, humidifier, valve, scene, script, automation и button. Остальные вызовы блокируются.</p>
-<h2>8. Как работает управление на телефоне?</h2><p>Короткий тап выполняет главное действие, удержание открывает меню функций, drag работает только в режиме редактирования. Правый клик не обязателен и нужен только как desktop-shortcut.</p>
-<h2>9. Как работает масштабирование?</h2><p>Двумя пальцами можно увеличить/уменьшить карту и сдвинуть её. Кнопки <b>− / + / ⛶</b> делают то же самое. Аппаратный масштаб 30–150% задаётся в настройках и применяется как базовый масштаб под конкретный экран.</p>
-<h2>10. Что добавлено для kiosk/fullscreen?</h2><p>Интерфейс не выделяет текст при long press, не показывает контекстное меню браузера на карте, не скроллит страницу при drag/pinch и поддерживает тёмную тему. Опционально можно включить крупные часы/погоду на плане.</p>
-<h2>11. Как показать погоду?</h2><p>В настройках включите <b>Крупные часы / погода</b> и укажите entity, например <code>weather.home</code> или <code>sensor.outdoor_temperature</code>.</p>
-<h2>12. Что делать, если устройство не работает?</h2><p>Сначала откройте диагностику. Если entity попал в список “Не найдены в HA”, проверьте переименование в Home Assistant или перечитайте RAW панели.</p>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FAQ — Smart Home UI Local v3.4.1</title><link rel="stylesheet" href="style.css"></head><body style="display:block;overflow:auto;padding:24px;max-width:980px;margin:auto">
+<h1>FAQ — Smart Home UI Local v3.4.1</h1>
+<p>Версия 3.4.1 продолжает стабилизацию Home Assistant add-on: данные вынесены в <code>/data</code>, вид панели восстанавливается после переустановки add-on, добавлены kiosk mode, масштаб/прозрачность датчиков и маркеров.</p>
+<h2>1. Где хранятся данные?</h2><p>Все runtime-данные хранятся вне контейнера, в папке данных add-on: <code>/data</code>. При удалении add-on Home Assistant спрашивает, удалять ли данные. Если отказаться от удаления данных, после установки заново layout, импортированные устройства, source config, backups и состояние вида восстанавливаются.</p>
+<h2>2. Какие файлы важны в /data?</h2><ul><li><code>/data/layout.json</code> — расположение зон, датчиков и маркеров.</li><li><code>/data/backups/</code> — резервные копии layout.</li><li><code>/data/addon_config.json</code> — настройки add-on и источников панели.</li><li><code>/data/source_config.json</code> — включённые/исключённые источники Lovelace.</li><li><code>/data/ui_state.json</code> — последний вид, скрытые панели, kiosk mode, масштаб и pan.</li><li><code>/data/devices.js</code> и <code>/data/lovelace-source.js</code> — импортированные устройства и источник.</li></ul>
+<h2>3. Как подключается Home Assistant?</h2><p>Адрес и long-lived token не вводятся. Add-on использует Supervisor API и <code>SUPERVISOR_TOKEN</code>. В <code>config.yaml</code> включено <code>homeassistant_api: true</code>.</p>
+<h2>4. Как войти в режим редактирования?</h2><p>Кнопку <b>Редактировать</b> нужно нажать и удерживать 2 секунды. Это защита от случайного входа на планшете или настенной панели.</p>
+<h2>5. Как сохраняется layout?</h2><p>В редакторе есть <b>Сохранить изменения</b> и <b>Отменить изменения</b>. Перетаскивание не пишет layout сразу. Перед сохранением сервер создаёт backup.</p>
+<h2>6. Как восстановить layout?</h2><p>В <b>Настройки → Информация / диагностика → Backups</b> можно восстановить или удалить резервные копии layout. При восстановлении текущий layout также сохраняется в backup.</p>
+<h2>7. Где посмотреть состояние системы?</h2><p>Откройте <b>Настройки → Информация / диагностика</b>. Там видны версия, DATA_DIR, наличие файлов в <code>/data</code>, состояние HA API, количество устройств, missing entity_id, дубли, объекты без координат, backups и список разрешённых команд.</p>
+<h2>8. Что такое проверка entity_id?</h2><p>Диагностика сравнивает устройства из Lovelace/device.txt с сущностями Home Assistant. Она показывает entity, которых нет в HA, дубли, устройства без комнаты и без координат.</p>
+<h2>9. Какие команды разрешены?</h2><p>Сервер использует allowlist service calls. Разрешены только ожидаемые команды для light, switch, cover, climate, fan, media_player, humidifier, valve, scene, script, automation и button. Остальные вызовы блокируются.</p>
+<h2>10. Как работает управление на телефоне?</h2><p>Короткий тап выполняет главное действие, удержание открывает меню функций, drag работает только в режиме редактирования. Правый клик не обязателен и нужен только как desktop-shortcut.</p>
+<h2>11. Как работает масштабирование карты?</h2><p>Двумя пальцами можно увеличить/уменьшить карту и сдвинуть её. Кнопки <b>− / + / ⛶</b> делают то же самое. Аппаратный масштаб 30–150% задаётся в настройках и применяется как базовый масштаб под конкретный экран.</p>
+<h2>12. Как менять размер и прозрачность датчиков?</h2><p>В настройках есть отдельные слайдеры: <b>Масштаб маркеров устройств</b>, <b>Прозрачность маркеров устройств</b>, <b>Масштаб датчиков</b>, <b>Прозрачность датчиков</b>. Они применяются сразу и сохраняются в <code>/data/ui_state.json</code>.</p>
+<h2>13. Что такое режим киоска?</h2><p><b>Режим киоска</b> скрывает боковое меню, список устройств, верхнюю панель и мобильную нижнюю панель. Остаётся только план/комната, zoom controls и опционально часы/погода. Это режим для настенной панели.</p>
+<h2>14. Как показать погоду?</h2><p>В настройках включите <b>Крупные часы / погода</b> и укажите entity, например <code>weather.home</code> или <code>sensor.outdoor_temperature</code>.</p>
+<h2>15. Какая Lovelace-панель нужна для сканирования?</h2><p>Создайте отдельную панель, например <b>Smart Home UI Source</b>. Каждая карточка <code>entities</code> — это комната, <code>card.title</code> — название комнаты, а <code>entity</code>/<code>name</code> внутри карточки — устройство и его имя.</p><pre><code>title: Smart Home UI Source
+views:
+  - title: Комнаты
+    path: smart-home-ui-source
+    cards:
+      - type: entities
+        title: Кухня
+        entities:
+          - entity: light.kitchen_ceiling
+            name: Люстра
+          - entity: switch.kitchen_led
+            name: Подсветка
+          - entity: sensor.kitchen_temperature
+            name: Температура
+      - type: entities
+        title: Гостиная
+        entities:
+          - entity: light.living_room_main
+            name: Основной свет
+          - entity: climate.living_room_ac
+            name: Кондиционер
+          - entity: cover.living_room_curtain
+            name: Шторы</code></pre>
+<h2>16. Что делать, если устройство не работает?</h2><p>Сначала откройте диагностику. Если entity попал в список “Не найдены в HA”, проверьте переименование в Home Assistant или перечитайте RAW панели.</p>
 </body></html>

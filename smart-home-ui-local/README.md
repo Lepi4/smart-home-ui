@@ -1,4 +1,4 @@
-# Smart Home UI Local
+# Smart Home UI Local add-on
 
 Home Assistant add-on для локального UI-плана квартиры.
 
@@ -7,10 +7,12 @@ Home Assistant add-on для локального UI-плана квартиры
 - Использует Supervisor API через `homeassistant_api: true`.
 - Layout сохраняется в `/data/layout.json`.
 - Перед сохранением layout создаётся backup в `/data/backups`.
+- Состояние вида, скрытые панели, kiosk mode и масштаб сохраняются в `/data/ui_state.json`.
+- Импортированные устройства сохраняются в `/data/devices.js` и не теряются при обновлении контейнера.
 
-## Layout editing
+## Редактирование
 
-Обычный режим: **Редактировать**.
+Обычный режим: удерживайте **Редактировать** 2 секунды.
 
 Режим редактирования: **Сохранить изменения** и **Отменить изменения**.
 

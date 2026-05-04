@@ -13,9 +13,10 @@ const state = {
   selectedEdit: null,
   suppressClick: false,
   quickOverlayOpen: false,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, weatherEntity:'' },
+  serverUiState: null,
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, markerOpacity:1.00, sensorOpacity:1.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -51,26 +52,47 @@ function roomImageToStoredPos(roomId,p){
 }
 function devices(){return window.DEVICES || []}
 function allDevices(){return window.ALL_DEVICES || []}
+async function loadPersistedUiState(){
+  try{ state.serverUiState = await apiJson('api/ui-state'); }
+  catch(e){ console.warn('server ui-state load failed', e); state.serverUiState = null; }
+}
 function loadUiPrefs(){
   try{
+    const server = state.serverUiState || {};
     const saved=JSON.parse(localStorage.getItem('ui_prefs')||'{}');
+    const last=JSON.parse(localStorage.getItem('last_view')||'{}');
     const autoMobile = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
-    state.ui = { ...state.ui, ...saved };
-    if(autoMobile && saved.mobileMode === undefined) state.ui.mobileMode = true;
+    state.ui = { ...state.ui, ...(server.ui||{}), ...saved };
+    if(autoMobile && saved.mobileMode === undefined && !(server.ui&&server.ui.mobileMode!==undefined)) state.ui.mobileMode = true;
+    if(last.selectedRoom || server.selectedRoom) state.selectedRoom = last.selectedRoom || server.selectedRoom || state.selectedRoom;
+    if(state.selectedRoom !== 'overview' && !ROOM_MAP[state.selectedRoom]) state.selectedRoom='overview';
     loadViewportPrefs();
     applyUiPrefs();
   }catch(e){ loadViewportPrefs(); applyUiPrefs(); }
 }
-function saveUiPrefs(){ localStorage.setItem('ui_prefs', JSON.stringify(state.ui)); applyUiPrefs(); }
+function currentUiStatePayload(){ return { selectedRoom: state.selectedRoom, ui: state.ui, viewport: state.viewport }; }
+function persistUiStateSoon(){
+  clearTimeout(state.persistTimer);
+  state.persistTimer=setTimeout(()=>{
+    fetch('api/ui-state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentUiStatePayload())}).catch(()=>{});
+  }, 500);
+}
+function saveUiPrefs(){
+  localStorage.setItem('ui_prefs', JSON.stringify(state.ui));
+  localStorage.setItem('last_view', JSON.stringify({selectedRoom:state.selectedRoom, updatedAt:new Date().toISOString()}));
+  applyUiPrefs();
+  persistUiStateSoon();
+}
 function loadViewportPrefs(){
   try{
+    const server = state.serverUiState?.viewport || {};
     const saved=JSON.parse(localStorage.getItem('viewport_prefs')||'{}');
-    state.viewport={ overview:{zoom:1,panX:0,panY:0}, rooms:{}, ...saved };
-    if(!state.viewport.overview) state.viewport.overview={zoom:1,panX:0,panY:0};
-    if(!state.viewport.rooms) state.viewport.rooms={};
+    state.viewport={ overview:{zoom:1,panX:0,panY:0}, rooms:{}, ...server, ...saved };
+    state.viewport.overview={zoom:1,panX:0,panY:0, ...(server.overview||{}), ...(saved.overview||{})};
+    state.viewport.rooms={...(server.rooms||{}), ...(saved.rooms||{})};
   }catch(e){ state.viewport={ overview:{zoom:1,panX:0,panY:0}, rooms:{} }; }
 }
-function saveViewportPrefs(){ localStorage.setItem('viewport_prefs', JSON.stringify(state.viewport)); }
+function saveViewportPrefs(){ localStorage.setItem('viewport_prefs', JSON.stringify(state.viewport)); persistUiStateSoon(); }
 function viewportKey(kind){ return kind==='overview' ? 'overview' : 'room:'+normalizedRoomId(state.selectedRoom); }
 function getViewport(kind){
   if(kind==='overview') return state.viewport.overview || (state.viewport.overview={zoom:1,panX:0,panY:0});
@@ -115,9 +137,14 @@ function applyUiPrefs(){
   document.body.classList.toggle('auto-hide-menus', !!state.ui.autoHide);
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
   document.body.classList.toggle('dark-theme', !!state.ui.darkTheme);
-  const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar);
-  const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel);
-  const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar);
+  document.body.classList.toggle('kiosk-mode', !!state.ui.kioskMode);
+  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .5, 2)));
+  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .5, 2)));
+  document.documentElement.style.setProperty('--marker-opacity', String(clamp(Number(state.ui.markerOpacity ?? 1), .2, 1)));
+  document.documentElement.style.setProperty('--sensor-opacity', String(clamp(Number(state.ui.sensorOpacity ?? 1), .2, 1)));
+  const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
+  const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel || state.ui.kioskMode);
+  const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar || state.ui.kioskMode);
   const hs=el('btn-hide-sidebar'); if(hs) hs.textContent=state.ui.hideSidebar?'Показать':'Скрыть';
   const td=el('btn-toggle-devices-panel'); if(td) td.textContent=state.ui.hideDevicePanel?'Показать список':'Скрыть список';
   const tt=el('btn-toggle-toolbar'); if(tt) tt.textContent=state.ui.hideToolbar?'Показать верх':'Скрыть верх';
@@ -126,11 +153,16 @@ function applyUiPrefs(){
   const pc=el('pref-compact-mode'); if(pc) pc.checked=!!state.ui.compact;
   const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
   const kw=el('pref-kiosk-widget'); if(kw) kw.checked=!!state.ui.kioskWidget;
+  const km=el('pref-kiosk-mode'); if(km) km.checked=!!state.ui.kioskMode;
   const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
   const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
   const ph=el('pref-halo-scale'); if(ph){ ph.value=String(Math.round(Number(state.ui.haloScale ?? 0.50)*100)); const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=ph.value+'%'; }
   const hw=el('pref-hardware-scale'); if(hw){ hw.value=String(Math.round(Number(state.ui.hardwareScale ?? 1)*100)); const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=hw.value+'%'; }
+  const ms=el('pref-marker-scale'); if(ms){ ms.value=String(Math.round(Number(state.ui.markerScale ?? 1)*100)); const mv=el('pref-marker-scale-value'); if(mv) mv.textContent=ms.value+'%'; }
+  const ss=el('pref-sensor-scale'); if(ss){ ss.value=String(Math.round(Number(state.ui.sensorScale ?? 1)*100)); const sv=el('pref-sensor-scale-value'); if(sv) sv.textContent=ss.value+'%'; }
+  const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 1)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
+  const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 1)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
 function normalizedRoomId(id){return id==='boiler'?'laundry':id}
@@ -610,7 +642,7 @@ function markerEl(d,p,scope){
   const b=document.createElement('button');
   const renderPos = scope==='room' ? roomStoredToImagePos(state.selectedRoom, p) : p;
   b.className='device-marker '+visualClass(d)+(shouldRenderSensorTextMarker(d, scope)?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
-  b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.title=`${displayName(d)}\n${d.entity_id}`;
+  b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.dataset.domain=d.domain||domainOf(d.entity_id); b.title=`${displayName(d)}\n${d.entity_id}`;
   b.style.left=renderPos.x+'%'; b.style.top=renderPos.y+'%'; b.style.cssText += visualStyle(d); b.innerHTML=markerInnerHtml(d, scope);
   attachPressActions(b,d,{dragHandler:markerDown});
   b.addEventListener('contextmenu',e=>{
@@ -1053,8 +1085,9 @@ function bindDrops(){
 function selectRoom(id){
   state.selectedRoom=id;
   if(state.ui.autoHide && state.ui.mobileMode){
-    state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs();
+    state.ui.hideSidebar=true; state.ui.hideDevicePanel=true;
   }
+  saveUiPrefs();
   render();
 }
 function setConnection(ok,text){el('connection-dot').className='dot '+(ok?'connected':'disconnected');el('connection-text').textContent=text}
@@ -1194,7 +1227,7 @@ function renderInfoModal(){
   qsa('[data-info-tab]').forEach(b=>b.classList.toggle('active', b.dataset.infoTab===state.infoTab));
   if(state.infoTab==='summary'){
     box.innerHTML=`<table class="info-table">${[
-      ['Версия add-on',d.version],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
+      ['Версия add-on',d.version],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
     ].map(x=>infoRow(x[0],x[1])).join('')}</table>`;
   } else if(state.infoTab==='entities'){
     box.innerHTML=`<h3>Проблемы entity_id</h3><p class="muted">Показаны первые 200 записей каждого типа.</p>`+
@@ -1256,10 +1289,15 @@ function bindGlobal(){
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
   el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; saveUiPrefs();};
   el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; saveUiPrefs(); renderKioskWidget();};
+  el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render();};
   el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); saveUiPrefs(); renderKioskWidget();};
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; saveUiPrefs(); renderDevices();};
   el('pref-halo-scale').oninput=e=>{state.ui.haloScale=Number(e.target.value)/100; const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=e.target.value+'%'; saveUiPrefs(); render();};
   const hwScale=el('pref-hardware-scale'); if(hwScale) hwScale.oninput=e=>{state.ui.hardwareScale=Number(e.target.value)/100; const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=e.target.value+'%'; saveUiPrefs(); applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();};
+  const markerScale=el('pref-marker-scale'); if(markerScale) markerScale.oninput=e=>{state.ui.markerScale=Number(e.target.value)/100; const v=el('pref-marker-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
+  const sensorScale=el('pref-sensor-scale'); if(sensorScale) sensorScale.oninput=e=>{state.ui.sensorScale=Number(e.target.value)/100; const v=el('pref-sensor-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
+  const markerOpacity=el('pref-marker-opacity'); if(markerOpacity) markerOpacity.oninput=e=>{state.ui.markerOpacity=Number(e.target.value)/100; const v=el('pref-marker-opacity-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
+  const sensorOpacity=el('pref-sensor-opacity'); if(sensorOpacity) sensorOpacity.oninput=e=>{state.ui.sensorOpacity=Number(e.target.value)/100; const v=el('pref-sensor-opacity-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
   const zb=el('btn-zoom-out'); if(zb) zb.onclick=()=>zoomViewport(activeStageKind(), .86);
   const zi=el('btn-zoom-in'); if(zi) zi.onclick=()=>zoomViewport(activeStageKind(), 1.16);
   const zf=el('btn-zoom-fit'); if(zf) zf.onclick=()=>fitViewport(activeStageKind());
@@ -1269,4 +1307,4 @@ function bindGlobal(){
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
 }
 
-(async function init(){await loadLayout(); await loadSourceConfig(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else el('settings-modal').classList.remove('hidden')}catch(e){console.error(e);el('settings-modal').classList.remove('hidden')}})();
+(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else el('settings-modal').classList.remove('hidden')}catch(e){console.error(e);el('settings-modal').classList.remove('hidden')}})();

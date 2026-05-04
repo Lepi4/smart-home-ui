@@ -14,11 +14,13 @@ const HA_TOKEN = process.env.SUPERVISOR_TOKEN || process.env.HA_TOKEN || '';
 const LAYOUT_PATH = path.join(DATA_DIR, 'layout.json');
 const LAYOUT_BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const SOURCE_CONFIG_PATH = path.join(DATA_DIR, 'source_config.json');
+const UI_STATE_PATH = path.join(DATA_DIR, 'ui_state.json');
+const DATA_IMAGES_DIR = path.join(DATA_DIR, 'images');
 
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.0';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.1';
 const ALLOWED_SERVICES = {
   light: ['turn_on','turn_off','toggle','set_brightness','set_temperature','set_color_temp','set_hs_color','set_rgb_color'],
   switch: ['turn_on','turn_off','toggle'],
@@ -36,6 +38,66 @@ const ALLOWED_SERVICES = {
   automation: ['trigger','turn_on','turn_off']
 };
 function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
+
+function safeCopyIfMissing(src, dst){
+  try{
+    if(src && fs.existsSync(src) && !fs.existsSync(dst)){
+      fs.mkdirSync(path.dirname(dst), {recursive:true});
+      fs.copyFileSync(src, dst);
+    }
+  }catch(e){ console.warn('[Smart Home UI] copy fallback failed:', e.message); }
+}
+function ensureDataStore(){
+  fs.mkdirSync(DATA_DIR, {recursive:true});
+  fs.mkdirSync(LAYOUT_BACKUP_DIR, {recursive:true});
+  fs.mkdirSync(DATA_IMAGES_DIR, {recursive:true});
+  safeCopyIfMissing(FALLBACK_DEVICES_PATH, DEVICES_PATH);
+  safeCopyIfMissing(path.join(__dirname, 'public', 'lovelace-source.js'), LOVELACE_PATH);
+}
+function atomicWriteJson(file, payload){
+  fs.mkdirSync(path.dirname(file), {recursive:true});
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8');
+  fs.renameSync(tmp, file);
+}
+function defaultUiState(){
+  return {
+    version: 1,
+    selectedRoom: 'overview',
+    ui: {
+      hideSidebar:false, hideDevicePanel:false, hideToolbar:false,
+      mobileMode:false, autoHide:false, compact:false, darkTheme:true,
+      kioskWidget:false, kioskMode:false, weatherEntity:'',
+      haloScale:0.50, hardwareScale:1.00,
+      markerScale:1.00, sensorScale:1.00, markerOpacity:1.00, sensorOpacity:1.00,
+      showAllDevicesInRoom:false
+    },
+    viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
+    updatedAt: null
+  };
+}
+function loadUiState(){
+  const loaded = readJsonSafe(UI_STATE_PATH, {});
+  const def = defaultUiState();
+  return {
+    ...def,
+    ...loaded,
+    ui: { ...def.ui, ...(loaded.ui||{}) },
+    viewport: { ...def.viewport, ...(loaded.viewport||{}), overview:{...def.viewport.overview, ...(loaded.viewport?.overview||{})}, rooms: loaded.viewport?.rooms || {} }
+  };
+}
+function saveUiState(payload){
+  const current = loadUiState();
+  const next = {
+    ...current,
+    ...(payload||{}),
+    ui: { ...current.ui, ...(payload?.ui||{}) },
+    viewport: { ...current.viewport, ...(payload?.viewport||{}), overview:{...current.viewport.overview, ...(payload?.viewport?.overview||{})}, rooms: payload?.viewport?.rooms || current.viewport.rooms || {} },
+    updatedAt: new Date().toISOString()
+  };
+  atomicWriteJson(UI_STATE_PATH, next);
+  return next;
+}
 function parseJsAssignedArray(file, name){
   try{
     if(!fs.existsSync(file)) return [];
@@ -100,6 +162,7 @@ async function buildDiagnostics(){
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH) },
     allowedServices: ALLOWED_SERVICES,
     generatedAt: new Date().toISOString()
   };
@@ -148,6 +211,7 @@ function saveSourceConfig(cfg){
 }
 
 
+ensureDataStore();
 app.use(express.json({limit:'1mb'}));
 app.get('/devices.js', (req,res)=>{
   const generated = path.join(DATA_DIR, 'devices.js');
@@ -581,6 +645,8 @@ app.post('/api/config', (req,res)=> {
 app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:6000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', haApiBase:HA_API_BASE, haWsUrl:HA_WS_URL, hasSupervisorToken:!!HA_TOKEN, dataDir:DATA_DIR }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/ui-state', (req,res)=> { try { res.json(loadUiState()); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/ui-state', (req,res)=> { try { res.json({ok:true, state: saveUiState(req.body || {})}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics()); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:listBackups()}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutBackup(req.body?.name); res.json({ok:true, layout}); } catch(e){ res.status(500).json({error:e.message}); } });
