@@ -682,7 +682,7 @@ function writeDeviceOutputs(parsed){
   fs.writeFileSync(LOVELACE_PATH, lovelaceJs, 'utf8');
   fs.writeFileSync(path.join(DATA_DIR,'device_parse_report.json'), JSON.stringify(parsed.stats, null, 2), 'utf8');
   const md = [
-    '# Device parse report v3.4.9',
+    '# Device parse report v3.4.10',
     '',
     `Generated: ${parsed.stats.generatedAt}`,
     `Source: HA Lovelace RAW`,

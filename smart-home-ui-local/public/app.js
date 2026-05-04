@@ -1428,3 +1428,15 @@ window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); ap
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, 250), {passive:true});
 window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
 document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});
+
+
+/* v3.4.10: keep mobile bottom bar and kiosk controls from covering open modals */
+function syncModalOpenClass(){
+  const anyOpen = Array.from(document.querySelectorAll('.modal')).some(m=>!m.classList.contains('hidden'));
+  document.body.classList.toggle('modal-open', anyOpen);
+}
+const _modalClassObserver = new MutationObserver(syncModalOpenClass);
+window.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('.modal').forEach(m=>_modalClassObserver.observe(m,{attributes:true,attributeFilter:['class']}));
+  syncModalOpenClass();
+});
