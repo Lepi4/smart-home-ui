@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.13
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.13
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.14
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.14
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.13
+## Что умеет текущая версия v3.4.14
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.13"
+git commit -m "Update Smart Home UI add-on to v3.4.14"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.13
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.13
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.14
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.14
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,9 +294,21 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.13
+## Изменения v3.4.14
 
 - Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
 - Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.
 - Preview слайдеров применяется через `requestAnimationFrame`, сохранение происходит с debounce и при отпускании.
 - README расширен: добавлено подробное описание проекта, установка, структура, GHCR, Lovelace source, `/data`, layout coordinate rules и roadmap.
+
+
+## v3.4.14 — mobile panel stability
+
+This release fixes mobile panel behavior after the security/data-consistency update:
+
+- Rooms and Devices mobile panels are now mutually exclusive; opening one closes the other.
+- Tapping outside an open mobile panel closes it.
+- Rooms and Devices are rendered as compact bottom sheets above the mobile navigation bar.
+- The map is dimmed while a mobile panel is open, but the bottom navigation remains usable.
+- Selecting a room on mobile closes open panels automatically.
+- Device list scrolling is contained inside the panel and no longer drags the whole page.

@@ -247,11 +247,33 @@ function lockViewportScroll(){
   document.body.style.width='100%';
   document.body.style.height='100dvh';
 }
-function setPanelHidden(key, value){ state.ui[key]=!!value; saveUiPrefs(); }
+function isMobilePanelMode(){ return !!state.ui.mobileMode || document.body.classList.contains('mobile-mode') || (navigator.maxTouchPoints>0 && Math.min(window.innerWidth, window.innerHeight)<820); }
+function setPanelHidden(key, value){
+  state.ui[key]=!!value;
+  // v3.4.14: mobile panels are mutually exclusive. This prevents the Rooms and Devices sheets
+  // from stacking over each other and blocking the bottom navigation.
+  if(isMobilePanelMode()){
+    if(key==='hideSidebar' && value===false) state.ui.hideDevicePanel=true;
+    if(key==='hideDevicePanel' && value===false) state.ui.hideSidebar=true;
+  }
+  saveUiPrefs();
+}
+function closeMobilePanels(){
+  if(!isMobilePanelMode()) return;
+  if(!state.ui.hideSidebar || !state.ui.hideDevicePanel){
+    state.ui.hideSidebar=true;
+    state.ui.hideDevicePanel=true;
+    saveUiPrefs();
+  }
+}
+
 function applyUiPrefs(){
   document.body.classList.toggle('touch-capable', !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
   document.body.classList.toggle('hide-sidebar', !!state.ui.hideSidebar);
   document.body.classList.toggle('hide-device-panel', !!state.ui.hideDevicePanel);
+  document.body.classList.toggle('mobile-panel-open', !!state.ui.mobileMode && (!state.ui.hideSidebar || !state.ui.hideDevicePanel));
+  document.body.classList.toggle('mobile-rooms-open', !!state.ui.mobileMode && !state.ui.hideSidebar);
+  document.body.classList.toggle('mobile-devices-open', !!state.ui.mobileMode && !state.ui.hideDevicePanel);
   document.body.classList.toggle('hide-toolbar', !!state.ui.hideToolbar);
   document.body.classList.toggle('mobile-mode', !!state.ui.mobileMode);
   document.body.classList.toggle('auto-hide-menus', !!state.ui.autoHide);
@@ -1252,7 +1274,7 @@ function openKioskRooms(){
 
 function selectRoom(id){
   state.selectedRoom=id;
-  if(state.ui.autoHide && state.ui.mobileMode){
+  if(state.ui.mobileMode || state.ui.autoHide){
     state.ui.hideSidebar=true; state.ui.hideDevicePanel=true;
   }
   saveUiPrefs();
@@ -1469,8 +1491,8 @@ function bindGlobal(){
   el('btn-show-device-panel').onclick=()=>setPanelHidden('hideDevicePanel', false);
   el('btn-toggle-toolbar').onclick=()=>setPanelHidden('hideToolbar', !state.ui.hideToolbar);
   el('btn-show-toolbar').onclick=()=>setPanelHidden('hideToolbar', false);
-  el('btn-mobile-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
-  el('btn-mobile-devices').onclick=()=>setPanelHidden('hideDevicePanel', !state.ui.hideDevicePanel);
+  el('btn-mobile-sidebar').onclick=()=>{ const open=state.ui.hideSidebar; state.ui.hideSidebar=!open; state.ui.hideDevicePanel=true; saveUiPrefs(); };
+  el('btn-mobile-devices').onclick=()=>{ const open=state.ui.hideDevicePanel; state.ui.hideDevicePanel=!open; state.ui.hideSidebar=true; saveUiPrefs(); };
   const closeMobileDevicePanel=el('btn-close-mobile-device-panel'); if(closeMobileDevicePanel) closeMobileDevicePanel.onclick=()=>setPanelHidden('hideDevicePanel', true);
   const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); showToast('Режим киоска включён'); };
   el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
@@ -1522,3 +1544,12 @@ window.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.modal').forEach(m=>_modalClassObserver.observe(m,{attributes:true,attributeFilter:['class']}));
   syncModalOpenClass();
 });
+
+
+// v3.4.14: mobile panel stability. Tap outside Rooms/Devices sheets closes them.
+document.addEventListener('pointerdown', e=>{
+  if(!isMobilePanelMode() || state.ui.kioskMode || document.body.classList.contains('modal-open')) return;
+  if(state.ui.hideSidebar && state.ui.hideDevicePanel) return;
+  if(e.target.closest('.sidebar,.device-panel,.mobile-menu-bar,.floating-menu-btn,.modal,.device-modal-card,.kiosk-room-overlay')) return;
+  closeMobilePanels();
+}, {capture:true});
