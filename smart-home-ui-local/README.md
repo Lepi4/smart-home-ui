@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.23
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.23
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.25
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.25
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.23
+## Что умеет текущая версия v3.4.25
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.23"
+git commit -m "Update Smart Home UI add-on to v3.4.25"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.23
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.23
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.25
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.25
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,7 +294,7 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.23
+## Изменения v3.4.25
 
 - В режиме редактирования общего плана панель устройств теперь сгруппирована по комнатам.
 - Одновременно раскрыта только одна группа: открытие второй комнаты автоматически сворачивает предыдущую.
@@ -303,31 +303,33 @@ entity.name = отображаемое имя устройства
 - Сценарий размещения через touch сохранён: открыть комнату в списке → тапнуть устройство → тапнуть место на карте.
 - Поиск работает поверх групп и показывает только подходящие комнаты/устройства.
 
-## v3.4.23 — overview edit accordion
+## v3.4.25 — overview edit accordion
 
 This release optimizes overview editing on touch devices and landscape screens. Instead of rendering 180+ device cards at once, the Devices panel shows room groups as an accordion. Only the active group renders its cards, which reduces layout/repaint cost and makes placing devices on the overview map easier.
 
-## Изменения v3.4.23
+## Изменения v3.4.25
 
 - В режиме редактирования общего плана список устройств всегда работает как аккордеон по комнатам.
 - Закрытые комнаты не рендерят карточки устройств, что снижает нагрузку на мобильных и в landscape.
 - Одновременно раскрыта только одна группа; повторный тап закрывает группу.
 
-## v3.4.23 — grouped edit device panel
+## v3.4.25 — grouped edit device panel
 
 In edit mode the device panel is now grouped by room on every screen, not only on mobile. Closed room groups do not render device cards, which reduces UI load on large dashboards. The media Lovelace parser also uses `heading` cards as source groups and tries to infer the actual room from the device name, so entries like “Алиса кабинет”, “Алиса гостиная”, or “ТВ гостиная” can be grouped with the corresponding room instead of falling into “Неразмещённые”.
 
 
-## v3.4.23 — HA Area fallback and edit groups
+## v3.4.25 — HA Area fallback and edit groups
 
 - В режиме редактирования панель устройств всегда группируется по комнатам, без зависимости от мобильной/desktop версии.
 - При редактировании конкретной комнаты её группа открывается сразу, чтобы не надо было раскрывать список вручную.
 - Импорт Lovelace теперь дополнительно читает Home Assistant Area/Entity/Device registry через WebSocket API. Если комнату нельзя понять из карточки Lovelace или имени устройства, используется помещение сущности из Home Assistant.
 - Для media-вкладок без карточек-комнат это помогает распределять устройства по реальным помещениям HA, а не отправлять их в “Неразмещённые”.
 
-## v3.4.23 — edit-mode panel stability
 
-- Polling Home Assistant states no longer triggers a full render while edit mode is active.
-- The grouped device panel keeps its scroll position instead of jumping back to the top.
-- Touch/wheel scrolling is isolated inside the Devices panel to prevent map repaint flicker.
+## Kiosk Lock / Auto-lock
 
+В режиме киоска доступна кнопка Lock/Unlock в нижнем углу. В состоянии Lock тапы по устройствам, датчикам и зонам игнорируются, чтобы случайно ничего не включить. В настройках есть Auto-lock: при включении киоск автоматически блокируется после заданного времени бездействия, по умолчанию 15 секунд.
+
+## v3.4.25: Device Picker в режиме редактирования
+
+В режиме редактирования кнопка **Устройства** открывает отдельное окно выбора устройства. После выбора окно закрывается, а устройство ставится на карту следующим тапом. Это заменяет тяжёлую панель устройств поверх карты и работает одинаково на ПК и мобильных.

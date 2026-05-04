@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.23
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.23
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.25
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.25
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.23
+## Что умеет текущая версия v3.4.25
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.23"
+git commit -m "Update Smart Home UI add-on to v3.4.25"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.23
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.23
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.25
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.25
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,14 +294,14 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.23
+## Изменения v3.4.25
 
 - Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
 - Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.
 - Preview слайдеров применяется через `requestAnimationFrame`, сохранение происходит с debounce и при отпускании.
 - README расширен: добавлено подробное описание проекта, установка, структура, GHCR, Lovelace source, `/data`, layout coordinate rules и roadmap.
 
-## v3.4.23 — data consistency and security
+## v3.4.25 — data consistency and security
 
 This release separates shared settings from device-local state:
 
@@ -323,7 +323,7 @@ Setup-from-scratch foundation:
 - images from `/data/images` are exposed as `/media/...`, ready for the upcoming room/image manager.
 
 
-## v3.4.23 — mobile panel stability
+## v3.4.25 — mobile panel stability
 
 This release fixes mobile panel behavior after the security/data-consistency update:
 
@@ -334,21 +334,30 @@ This release fixes mobile panel behavior after the security/data-consistency upd
 - Selecting a room on mobile closes open panels automatically.
 - Device list scrolling is contained inside the panel and no longer drags the whole page.
 
-## v3.4.23
+## v3.4.25
 
 Исправлен режим редактирования общего плана: устройства теперь действительно отображаются аккордеоном по комнатам, а не старым плоским списком.
 
 
-## v3.4.23 — HA Area fallback and edit groups
+## v3.4.25 — HA Area fallback and edit groups
 
 - В режиме редактирования панель устройств всегда группируется по комнатам, без зависимости от мобильной/desktop версии.
 - При редактировании конкретной комнаты её группа открывается сразу, чтобы не надо было раскрывать список вручную.
 - Импорт Lovelace теперь дополнительно читает Home Assistant Area/Entity/Device registry через WebSocket API. Если комнату нельзя понять из карточки Lovelace или имени устройства, используется помещение сущности из Home Assistant.
 - Для media-вкладок без карточек-комнат это помогает распределять устройства по реальным помещениям HA, а не отправлять их в “Неразмещённые”.
 
-## v3.4.23 — edit-mode panel stability
 
-- Polling Home Assistant states no longer triggers a full render while edit mode is active.
-- The grouped device panel keeps its scroll position instead of jumping back to the top.
-- Touch/wheel scrolling is isolated inside the Devices panel to prevent map repaint flicker.
+## Kiosk Lock / Auto-lock
 
+В режиме киоска доступна кнопка Lock/Unlock в нижнем углу. В состоянии Lock тапы по устройствам, датчикам и зонам игнорируются, чтобы случайно ничего не включить. В настройках есть Auto-lock: при включении киоск автоматически блокируется после заданного времени бездействия, по умолчанию 15 секунд.
+
+## v3.4.25: Device Picker в режиме редактирования
+
+В режиме редактирования кнопка **Устройства** больше не открывает тяжёлую живую панель поверх карты. Вместо этого открывается отдельное лёгкое окно выбора устройства:
+
+1. Нажать **Устройства**.
+2. Выбрать комнату/группу.
+3. Выбрать устройство.
+4. Тапнуть место на карте.
+
+Такая логика используется одинаково на ПК, телефоне, планшете и в landscape, чтобы не зависеть от определения платформы и не вызывать мерцание/сброс скролла.

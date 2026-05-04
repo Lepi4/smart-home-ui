@@ -14,9 +14,9 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'' },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, openDeviceRoomGroup:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -30,7 +30,7 @@ const DRAG_SUPPRESS_MS = 420;
 
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
-const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom']);
+const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
@@ -114,6 +114,45 @@ function saveUiPrefs(){
   applyUiPrefs();
   persistUiStateSoon();
 }
+
+function saveKioskLockLocal(){
+  try{ localStorage.setItem('kiosk_locked', state.kioskLocked ? '1' : '0'); }catch(_){ }
+}
+function loadKioskLockLocal(){
+  try{ state.kioskLocked = localStorage.getItem('kiosk_locked') === '1'; }catch(_){ state.kioskLocked=false; }
+}
+function setKioskLocked(locked, reason=''){
+  state.kioskLocked=!!locked;
+  saveKioskLockLocal();
+  applyKioskLockUi();
+  if(locked) showToast(reason || 'Киоск заблокирован');
+  else { showToast('Киоск разблокирован'); resetKioskAutoLock(); }
+}
+function applyKioskLockUi(){
+  document.body.classList.toggle('kiosk-locked', !!(state.ui.kioskMode && state.kioskLocked));
+  const btn=el('btn-kiosk-lock');
+  if(btn){
+    btn.textContent=state.kioskLocked?'🔒 Lock':'🔓 Unlock';
+    btn.title=state.kioskLocked?'Киоск заблокирован. Нажмите, чтобы разблокировать':'Киоск разблокирован. Нажмите, чтобы заблокировать';
+    btn.classList.toggle('is-locked', state.kioskLocked);
+  }
+  const badge=el('kiosk-lock-badge');
+  if(badge) badge.classList.toggle('hidden', !(state.ui.kioskMode && state.kioskLocked));
+}
+function resetKioskAutoLock(){
+  if(state.kioskAutoLockTimer) clearTimeout(state.kioskAutoLockTimer);
+  state.kioskAutoLockTimer=null;
+  const seconds=Number(state.ui.kioskAutoLockSeconds || 15);
+  if(state.ui.kioskMode && !state.kioskLocked && state.ui.kioskAutoLock && seconds>0){
+    state.kioskAutoLockTimer=setTimeout(()=>setKioskLocked(true, 'Автоблокировка киоска'), seconds*1000);
+  }
+}
+function registerKioskActivity(e){
+  if(!state.ui.kioskMode) return;
+  if(e && e.target && e.target.closest('.kiosk-lock-btn,.kiosk-exit-btn,.kiosk-rooms-btn,.kiosk-room-overlay')) return;
+  if(!state.kioskLocked) resetKioskAutoLock();
+}
+function isKioskInputLocked(){ return !!(state.ui.kioskMode && state.kioskLocked); }
 
 
 function applyDisplayPrefsOnly(){
@@ -280,6 +319,8 @@ function applyUiPrefs(){
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
   document.body.classList.toggle('dark-theme', !!state.ui.darkTheme);
   document.body.classList.toggle('kiosk-mode', !!state.ui.kioskMode);
+  applyKioskLockUi();
+  resetKioskAutoLock();
   const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
   const mobileMarkerFactor = isNarrowMobile ? 0.84 : 1;
   const mobileSensorFactor = isNarrowMobile ? 0.72 : 1;
@@ -300,6 +341,8 @@ function applyUiPrefs(){
   const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
   const kw=el('pref-kiosk-widget'); if(kw) kw.checked=!!state.ui.kioskWidget;
   const km=el('pref-kiosk-mode'); if(km) km.checked=!!state.ui.kioskMode;
+  const kal=el('pref-kiosk-autolock'); if(kal) kal.checked=!!state.ui.kioskAutoLock;
+  const kas=el('pref-kiosk-autolock-seconds'); if(kas) kas.value=String(Number(state.ui.kioskAutoLockSeconds||15));
   const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
   const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
@@ -663,10 +706,9 @@ function enterEditMode(){
   state.edit=true;
   // On a touch overview screen the full 180+ device list is expensive and covers the map.
   // Start with both panels closed; the user opens Devices only when they need to place something.
-  if(state.selectedRoom==='overview' && isMobilePanelMode()){
-    state.ui.hideSidebar=true;
-    state.ui.hideDevicePanel=true;
-  }
+  // v3.4.25: edit mode uses a dedicated lightweight Device Picker instead of the heavy live device panel.
+  state.ui.hideDevicePanel=true;
+  if(isMobilePanelMode()) state.ui.hideSidebar=true;
   setLayoutDirty(false);
   showToast('Режим редактирования: изменения применятся только после сохранения.');
   render();
@@ -738,7 +780,7 @@ function renderOverviewZones(){
     Object.assign(z.style,{left:r.x+'%',top:r.y+'%',width:r.w+'%',height:r.h+'%'});
     z.innerHTML=`<span class="zone-label">${esc(r.label)}</span><span class="zone-handle" data-handle="resize"></span>`;
     z.addEventListener('pointerdown', zoneDown);
-    z.onclick=e=>{if(state.edit||state.suppressClick){state.suppressClick=false;return} selectRoom(r.id)};
+    z.onclick=e=>{if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(state.edit||state.suppressClick){state.suppressClick=false;return} selectRoom(r.id)};
     layer.appendChild(z);
   });
 }
@@ -854,6 +896,95 @@ function bindDeviceCards(list){
     const d=devices().find(x=>x.entity_id===card.dataset.entity); if(d) attachPressActions(card,d,{ignoreSelector:'button'});
   });
   qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d) attachPressActions(btn,d)});
+}
+
+// v3.4.25: stable edit workflow. In edit mode the device list is a separate
+// lightweight picker, not a live panel over the map. This avoids mobile/landscape
+// scroll glitches and platform-specific panel bugs.
+function devicePickerCardHtml(d){
+  const rid=effectiveDeviceRoomId(d);
+  const roomLabel = ROOM_MAP[normalizedRoomId(rid)]?.label || d.room || d.haArea?.name || 'Без комнаты';
+  return `<button type="button" class="device-picker-item ${visualClass(d)}" data-picker-entity="${esc(d.entity_id)}" style="${visualStyle(d)}"><span class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="device-picker-text"><b>${esc(displayName(d))}</b><small>${esc(roomLabel)} · ${esc(d.domain)} · ${esc(d.entity_id)}</small></span><span class="device-picker-select">Выбрать</span></button>`;
+}
+function currentPickerDevices(){
+  const showAll = !!state.devicePickerShowAll;
+  if(state.selectedRoom==='overview' || showAll) return devices();
+  return roomDevices(state.selectedRoom);
+}
+function buildPickerGroups(filtered){
+  const currentMarkers = markerMapForCurrentEditScope();
+  const showAll = !!state.devicePickerShowAll;
+  const visible = showAll ? filtered : filtered.filter(d=>!currentMarkers[d.entity_id]);
+  const byRoom = new Map();
+  visible.forEach(d=>{
+    const rid = effectiveDeviceRoomId(d) || '__noroom';
+    const groupId = (!rid || rid==='unassigned' || rid==='__noroom') ? '__unplaced' : rid;
+    if(!byRoom.has(groupId)) byRoom.set(groupId, []);
+    byRoom.get(groupId).push(d);
+  });
+  const ordered=[];
+  const selectedRid=normalizedRoomId(state.selectedRoom);
+  if(state.selectedRoom!=='overview'){
+    const arr=byRoom.get(selectedRid);
+    if(arr?.length) ordered.push({id:selectedRid,label:ROOM_MAP[selectedRid]?.label||selectedRid,items:arr});
+  }
+  ROOMS.forEach(r=>{
+    const rid=normalizedRoomId(r.id);
+    if(rid===selectedRid && state.selectedRoom!=='overview') return;
+    const arr=byRoom.get(rid);
+    if(arr?.length) ordered.push({id:rid,label:r.label,items:arr});
+  });
+  const noRoom=byRoom.get('__unplaced');
+  if(noRoom?.length) ordered.push({id:'__unplaced',label:'Неразмещённые / без комнаты',items:noRoom});
+  [...byRoom.entries()].filter(([rid])=>rid!=='__unplaced' && !ROOM_MAP[rid] && !(rid===selectedRid && state.selectedRoom!=='overview')).sort((a,b)=>String(a[0]).localeCompare(String(b[0]),'ru')).forEach(([rid,arr])=>ordered.push({id:rid,label:roomGroupLabel(rid),items:arr}));
+  return {ordered, visible};
+}
+function renderDevicePicker(){
+  const list=el('device-picker-list'); if(!list) return;
+  const q=(el('device-picker-search')?.value||'').toLowerCase().trim();
+  const current=currentPickerDevices().filter(d=>IMPORTANT_DOMAINS.has(d.domain));
+  const filtered=current.filter(d=>(displayName(d)+' '+d.entity_id+' '+(d.category||'')+' '+(ROOM_MAP[effectiveDeviceRoomId(d)]?.label||'')+' '+(ROOM_MAP[normalizedRoomId(d.room)]?.label||'')).toLowerCase().includes(q));
+  const {ordered, visible}=buildPickerGroups(filtered);
+  const selectedRid=normalizedRoomId(state.selectedRoom);
+  if(state.selectedRoom!=='overview' && !state.openDevicePickerGroup && ordered.some(g=>g.id===selectedRid)) state.openDevicePickerGroup=selectedRid;
+  if(state.openDevicePickerGroup && !ordered.some(g=>g.id===state.openDevicePickerGroup)) state.openDevicePickerGroup='';
+  if(!state.openDevicePickerGroup && q && ordered.length===1) state.openDevicePickerGroup=ordered[0].id;
+  const count=el('device-picker-count'); if(count) count.textContent=`${ordered.length} групп · ${visible.length} устройств`;
+  const title=el('device-picker-title'); if(title) title.textContent=state.selectedRoom==='overview'?'Выбрать устройство для общего плана':`Выбрать устройство: ${room(state.selectedRoom)?.label||state.selectedRoom}`;
+  const subtitle=el('device-picker-subtitle'); if(subtitle) subtitle.textContent='Тапните устройство, окно закроется, затем тапните место на карте.';
+  if(!ordered.length){ list.innerHTML=`<p class="muted device-empty">Нет устройств для размещения. Включите “Показать уже размещённые” или измените поиск.</p>`; return; }
+  list.innerHTML=`<div class="device-picker-groups">${ordered.map(g=>{
+    const open=g.id===state.openDevicePickerGroup;
+    const currentMarkers=markerMapForCurrentEditScope();
+    const unp=g.items.filter(d=>!currentMarkers[d.entity_id]).length;
+    const sub=state.devicePickerShowAll ? `${g.items.length} устройств${unp?`, ${unp} без маркера`:''}` : `${g.items.length} без маркера`;
+    return `<section class="device-picker-group ${open?'open':''}"><button type="button" class="device-picker-group-head" data-picker-group="${esc(g.id)}"><span>${open?'▾':'▸'} ${esc(g.label)}</span><b>${esc(sub)}</b></button>${open?`<div class="device-picker-items">${g.items.map(devicePickerCardHtml).join('')}</div>`:''}</section>`;
+  }).join('')}</div>`;
+  qsa('[data-picker-group]',list).forEach(btn=>btn.onclick=()=>{state.openDevicePickerGroup=state.openDevicePickerGroup===btn.dataset.pickerGroup?'':btn.dataset.pickerGroup; renderDevicePicker();});
+  qsa('[data-picker-entity]',list).forEach(btn=>btn.onclick=()=>{ const id=btn.dataset.pickerEntity; closeDevicePicker(); startTouchPlaceDevice(id); });
+}
+function openDevicePicker(){
+  if(!state.edit){ setPanelHidden('hideDevicePanel', false); return; }
+  state.ui.hideDevicePanel=true;
+  state.openDevicePickerGroup = state.selectedRoom==='overview' ? (state.openDevicePickerGroup||'') : normalizedRoomId(state.selectedRoom);
+  const search=el('device-picker-search'); if(search) search.value='';
+  const showAll=el('device-picker-show-all'); if(showAll) showAll.checked=!!state.devicePickerShowAll;
+  const modal=el('device-picker-modal'); if(modal) modal.classList.remove('hidden');
+  document.body.classList.add('device-picker-open');
+  renderDevicePicker();
+  setTimeout(()=>{try{search?.focus({preventScroll:true});}catch(_){ }},60);
+}
+function closeDevicePicker(){
+  const modal=el('device-picker-modal'); if(modal) modal.classList.add('hidden');
+  document.body.classList.remove('device-picker-open');
+}
+function toggleDeviceListOrPicker(){
+  if(state.edit) openDevicePicker();
+  else setPanelHidden('hideDevicePanel', !state.ui.hideDevicePanel);
+}
+function showDeviceListOrPicker(){
+  if(state.edit) openDevicePicker();
+  else setPanelHidden('hideDevicePanel', false);
 }
 function roomGroupLabel(roomId){
   if(roomId==='__unplaced') return 'Неразмещённые';
@@ -986,7 +1117,11 @@ function renderDevices(){
     .filter(d=>IMPORTANT_DOMAINS.has(d.domain))
     .filter(d=>(displayName(d)+' '+d.entity_id+' '+(d.category||'')+' '+(ROOM_MAP[effectiveDeviceRoomId(d)]?.label||'')+' '+(ROOM_MAP[normalizedRoomId(d.room)]?.label||'')).toLowerCase().includes(q));
   if(editGrouped){
-    renderEditDeviceGroups(list, filtered, q, current);
+    if(list){
+      el('devices-title').textContent='Выбор устройства';
+      el('device-count').textContent='открывается отдельным окном';
+      list.innerHTML='<button type="button" class="open-picker-inline" onclick="openDevicePicker()">Выбрать устройство</button><p class="muted device-empty">В режиме редактирования список устройств открывается отдельным лёгким окном, чтобы карта и скролл не мерцали.</p>';
+    }
     return;
   }
   let countSuffix = `${filtered.length} из ${current.length}`;
@@ -996,8 +1131,8 @@ function renderDevices(){
   bindDeviceCards(list);
 }
 
-function openDevice(d){ openDeviceModal(d); }
-function shortDeviceAction(d){ if(canPrimaryAction(d)) return toggleDevice(d); openDeviceModal(d); }
+function openDevice(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} openDeviceModal(d); }
+function shortDeviceAction(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(canPrimaryAction(d)) return toggleDevice(d); openDeviceModal(d); }
 function attachPressActions(node,d,opts={}){
   let timer=null, longFired=false, sx=0, sy=0, pointerId=null;
   const cancelTimer=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
@@ -1026,7 +1161,7 @@ function attachPressActions(node,d,opts={}){
   }, {passive:false});
   node.addEventListener('contextmenu', e=>{
     e.preventDefault();
-    if(!state.edit) openDeviceModal(d);
+    if(!state.edit) openDevice(d);
   });
 }
 function modalRow(label,value){return `<div class="device-modal-row"><span>${esc(label)}</span><b>${esc(value??'')}</b></div>`}
@@ -1518,22 +1653,7 @@ async function clearConfig(){
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){
-  try{
-    const data=await apiJson('api/ha/states');
-    state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));
-    applySourceConfig();
-    // v3.4.23: do not fully re-render while editing. Polling every few seconds
-    // was rebuilding the map and the grouped device panel, causing flicker and
-    // resetting the scroll position on touch devices.
-    if(state.edit){
-      setConnection(true,'Подключено');
-      return;
-    }
-    render();
-    setConnection(true,'Подключено');
-  }catch(e){setConnection(false,'Ошибка обновления');console.error(e)}
-}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();render();setConnection(true,'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
 function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer);state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
 
 function defaultSourceConfig(){return{version:1,selectedCards:{},defaultInclude:true,excludedCards:{'Физические устройства::Системные':true,'Вирт.устройства::Вирт.устройства':true},includeUnknownFromApi:false}}
@@ -1656,6 +1776,7 @@ function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncM
 function bindGlobal(){
   loadUiPrefs();
   document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
+  ['pointerdown','touchstart','keydown'].forEach(evt=>document.addEventListener(evt, registerKioskActivity, {passive:true}));
   el('btn-settings').onclick=()=>openModal('settings-modal');
   el('btn-close-settings').onclick=()=>closeModal('settings-modal');
   el('btn-close-device').onclick=closeDeviceModal;
@@ -1683,21 +1804,26 @@ function bindGlobal(){
   el('device-search').oninput=renderDevices;
   el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
   const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
-  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops(); bindDevicePanelScrollIsolation();
+  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops();
 
   el('btn-hide-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-show-sidebar').onclick=()=>setPanelHidden('hideSidebar', false);
-  el('btn-toggle-devices-panel').onclick=()=>setPanelHidden('hideDevicePanel', !state.ui.hideDevicePanel);
-  el('btn-show-device-panel').onclick=()=>setPanelHidden('hideDevicePanel', false);
+  el('btn-toggle-devices-panel').onclick=toggleDeviceListOrPicker;
+  el('btn-show-device-panel').onclick=showDeviceListOrPicker;
   el('btn-toggle-toolbar').onclick=()=>setPanelHidden('hideToolbar', !state.ui.hideToolbar);
   el('btn-show-toolbar').onclick=()=>setPanelHidden('hideToolbar', false);
   el('btn-mobile-sidebar').onclick=()=>{ const open=state.ui.hideSidebar; state.ui.hideSidebar=!open; state.ui.hideDevicePanel=true; saveUiPrefs(); };
-  el('btn-mobile-devices').onclick=()=>{ const open=state.ui.hideDevicePanel; state.ui.hideDevicePanel=!open; state.ui.hideSidebar=true; saveUiPrefs(); };
+  el('btn-mobile-devices').onclick=()=>{ if(state.edit){ openDevicePicker(); return; } const open=state.ui.hideDevicePanel; state.ui.hideDevicePanel=!open; state.ui.hideSidebar=true; saveUiPrefs(); };
   const closeMobileDevicePanel=el('btn-close-mobile-device-panel'); if(closeMobileDevicePanel) closeMobileDevicePanel.onclick=()=>setPanelHidden('hideDevicePanel', true);
-  const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); showToast('Режим киоска включён'); };
+  const closePicker=el('btn-close-device-picker'); if(closePicker) closePicker.onclick=closeDevicePicker;
+  const pickerModal=el('device-picker-modal'); if(pickerModal) pickerModal.addEventListener('click',e=>{ if(e.target.id==='device-picker-modal') closeDevicePicker(); });
+  const pickerSearch=el('device-picker-search'); if(pickerSearch) pickerSearch.oninput=renderDevicePicker;
+  const pickerShowAll=el('device-picker-show-all'); if(pickerShowAll) pickerShowAll.onchange=e=>{ state.devicePickerShowAll=e.target.checked; renderDevicePicker(); };
+  const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); resetKioskAutoLock(); showToast('Режим киоска включён'); };
   el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
   const exitKiosk=el('btn-exit-kiosk');
-  if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
+  if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
+  const kioskLock=el('btn-kiosk-lock'); if(kioskLock) kioskLock.onclick=()=>setKioskLocked(!state.kioskLocked);
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
   const closeKioskRooms=el('btn-close-kiosk-rooms'); if(closeKioskRooms) closeKioskRooms.onclick=hideKioskRooms;
   const kioskOverview=el('btn-kiosk-overview'); if(kioskOverview) kioskOverview.onclick=()=>{ selectRoom('overview'); hideKioskRooms(); };
@@ -1706,7 +1832,9 @@ function bindGlobal(){
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
   el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();};
   el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; applyUiPrefs(); renderKioskWidget();};
-  el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render();};
+  el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render(); resetKioskAutoLock();};
+  const pal=el('pref-kiosk-autolock'); if(pal) pal.onchange=e=>{state.ui.kioskAutoLock=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
+  const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();};
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
   ['pref-panel-mode','pref-allow-dangerous','pref-confirm-dangerous'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>saveGlobalPrefs().catch(()=>{}); });
@@ -1726,30 +1854,12 @@ function bindGlobal(){
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
 }
 
-(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
+(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); loadKioskLockLocal(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
 
 window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, {passive:true});
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, 250), {passive:true});
 window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
 document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});
-
-
-// v3.4.23: isolate scrolling inside the Devices panel.
-// Some Android WebViews/BlueStacks builds bubble touch scrolls to the map layer,
-// which can trigger re-layout/repaint and make the open group jump back to the top.
-function bindDevicePanelScrollIsolation(){
-  const panel=el('device-panel');
-  if(!panel || panel.dataset.scrollIsolationBound==='1') return;
-  panel.dataset.scrollIsolationBound='1';
-  const stop=e=>{
-    if(e.target.closest('.device-panel')) e.stopPropagation();
-  };
-  panel.addEventListener('pointerdown', stop, {capture:true});
-  panel.addEventListener('pointermove', stop, {capture:true});
-  panel.addEventListener('touchstart', stop, {capture:true, passive:true});
-  panel.addEventListener('touchmove', stop, {capture:true, passive:true});
-  panel.addEventListener('wheel', stop, {capture:true, passive:true});
-}
 
 
 /* v3.4.12: keep mobile bottom bar and kiosk controls from covering open modals */
@@ -1771,3 +1881,5 @@ document.addEventListener('pointerdown', e=>{
   if(e.target.closest('.sidebar,.device-panel,.mobile-menu-bar,.floating-menu-btn,.modal,.device-modal-card,.kiosk-room-overlay')) return;
   closeMobilePanels();
 }, {capture:true});
+
+window.openDevicePicker=openDevicePicker;

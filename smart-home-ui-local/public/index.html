@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.23</title>
+  <title>Smart Home UI HA Add-on v3.4.25</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <button type="button" id="btn-kiosk-rooms" class="kiosk-rooms-btn" title="Открыть список комнат в режиме киоска">☰ Комнаты</button>
+  <button type="button" id="btn-kiosk-lock" class="kiosk-lock-btn" title="Заблокировать/разблокировать киоск">🔓 Unlock</button>
   <button type="button" id="btn-exit-kiosk" class="kiosk-exit-btn" title="Выйти из режима киоска">⋮ Выйти</button>
+  <div id="kiosk-lock-badge" class="kiosk-lock-badge hidden">🔒 Заблокировано</div>
   <div id="kiosk-room-overlay" class="kiosk-room-overlay hidden" aria-label="Список комнат в режиме киоска">
     <div class="kiosk-room-head"><strong>Комнаты</strong><button type="button" id="btn-close-kiosk-rooms">×</button></div>
     <button type="button" id="btn-kiosk-overview" class="kiosk-room-item kiosk-overview-item">Общий план</button>
@@ -159,6 +161,8 @@
         <label class="settings-check"><input type="checkbox" id="pref-dark-theme"> Тёмная тема</label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-mode"> Режим киоска: скрыть панели и оставить только план</label>
+        <label class="settings-check"><input type="checkbox" id="pref-kiosk-autolock"> Автоблокировка киоска</label>
+        <label>Автоблокировка после, сек<input id="pref-kiosk-autolock-seconds" type="number" min="5" max="300" value="15"></label>
         <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
         <label>Режим панели
           <select id="pref-panel-mode">
@@ -217,6 +221,24 @@
       <div class="modal-actions">
         <button type="button" id="btn-refresh-info">Обновить</button>
       </div>
+    </div>
+  </div>
+
+  <div id="device-picker-modal" class="modal hidden device-picker-modal">
+    <div class="modal-card device-picker-card-wrap">
+      <div class="modal-head">
+        <div>
+          <h2 id="device-picker-title">Выбрать устройство</h2>
+          <p id="device-picker-subtitle" class="muted">Выберите устройство, затем тапните место на карте.</p>
+        </div>
+        <button type="button" id="btn-close-device-picker" class="close-word">× Закрыть</button>
+      </div>
+      <div class="device-picker-tools">
+        <input id="device-picker-search" class="search" placeholder="Поиск устройства...">
+        <label class="settings-check device-filter-check"><input type="checkbox" id="device-picker-show-all"> Показать уже размещённые устройства</label>
+        <span id="device-picker-count" class="muted"></span>
+      </div>
+      <div id="device-picker-list" class="device-picker-list"></div>
     </div>
   </div>
 

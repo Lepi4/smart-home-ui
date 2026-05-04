@@ -1198,42 +1198,40 @@ body.mobile-mode .device-group.open .device-group-items{
   }
 }
 
-/* v3.4.23: edit panel flicker/scroll reset fix */
-body.editing .plan-stage,
-body.editing .room-image-wrap{
-  contain:layout paint style;
-}
-body.editing:not(.hide-device-panel) .device-panel{
-  contain:layout paint style;
-  transform:translateZ(0);
-  backface-visibility:hidden;
-}
-body.editing:not(.hide-device-panel) .device-list{
-  overscroll-behavior:contain!important;
-  overflow-y:auto!important;
-  scrollbar-gutter:stable;
-  transform:translateZ(0);
-}
-body.editing:not(.hide-device-panel) .device-groups{
-  overflow:visible!important;
-  min-height:0!important;
-}
-body.editing:not(.hide-device-panel) .device-group.open{
-  overflow:hidden!important;
-}
-body.editing:not(.hide-device-panel) .device-group.open .device-group-items{
-  overflow-y:auto!important;
-  overscroll-behavior:contain!important;
-  -webkit-overflow-scrolling:touch!important;
-  touch-action:pan-y!important;
-  scrollbar-gutter:stable;
-}
-body.editing:not(.hide-device-panel) .device-card,
-body.editing:not(.hide-device-panel) .device-card *{
-  touch-action:pan-y!important;
-}
-@media (orientation:landscape) and (max-height:920px){
-  body.mobile-mode.editing:not(.hide-device-panel) .device-group.open .device-group-items{
-    max-height:calc(100dvh - 285px)!important;
-  }
+
+/* v3.4.24 kiosk lock/autolock */
+.kiosk-lock-btn{display:none;position:fixed;right:96px;bottom:12px;z-index:1802;min-height:38px;padding:7px 12px;border-radius:999px;background:rgba(18,24,32,.86);border:1px solid rgba(255,255,255,.16);color:#e9f1fb;backdrop-filter:blur(10px)}
+.kiosk-lock-btn.is-locked{background:rgba(156,89,28,.92);border-color:rgba(255,199,105,.55);color:#fff}
+.kiosk-lock-badge{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:1801;background:rgba(14,18,24,.90);border:1px solid rgba(255,199,105,.45);color:#ffd28a;border-radius:999px;padding:9px 16px;font-weight:900;backdrop-filter:blur(10px);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+body.kiosk-mode .kiosk-lock-btn{display:block}
+body.kiosk-locked .device-marker, body.kiosk-locked .badge, body.kiosk-locked .room-zone{pointer-events:none!important}
+body.kiosk-locked .plan-stage{cursor:default}
+body.kiosk-mode .kiosk-exit-btn{right:12px!important}
+body.kiosk-mode .kiosk-rooms-btn{left:12px!important}
+@media(max-width:760px){.kiosk-lock-btn{right:92px;bottom:10px;min-height:36px;font-size:12px}.kiosk-lock-badge{bottom:54px;font-size:12px;padding:7px 12px}}
+@media(orientation:landscape) and (max-height:760px){.kiosk-lock-btn{right:88px;bottom:10px}.kiosk-lock-badge{bottom:12px;left:50%}}
+
+
+/* v3.4.25: edit Device Picker. In edit mode the live device panel is disabled;
+   users select a device in this lightweight modal, then tap the map. */
+body.editing .device-panel{display:none!important}
+body.editing #btn-show-device-panel{display:none!important}
+body.editing .workspace{grid-template-columns:minmax(0,1fr)!important}
+.device-picker-modal{z-index:1800!important}
+.device-picker-card-wrap{width:min(980px,calc(100vw - 18px));height:min(88dvh,760px);max-height:88dvh;background:#0f141b!important}
+.device-picker-tools{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid #252c36;background:#10161e}
+.device-picker-tools .search{margin:0;height:38px}
+.device-picker-list{min-height:0;overflow:auto;padding:12px 14px 16px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;contain:content}
+.device-picker-groups{display:flex;flex-direction:column;gap:8px}
+.device-picker-group{border:1px solid #26303d;border-radius:14px;overflow:hidden;background:#121820}
+.device-picker-group-head{width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:left;background:#171e27;color:#eaf0f6;border-radius:0;min-height:42px;padding:9px 12px}
+.device-picker-group-head b{font-size:12px;color:#9da8b5;white-space:nowrap}
+.device-picker-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;padding:8px;background:#0f141b;max-height:52dvh;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+.device-picker-item{min-width:0;text-align:left;background:#151b24;border:1px solid #26303d;border-radius:13px;display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:9px;padding:8px;color:#eaf0f6;touch-action:manipulation}
+.device-picker-item:hover{border-color:#b48434;background:#1b2330}
+.device-picker-item .dev-icon{width:34px;height:34px;border-radius:10px;background:#222b37;display:flex;align-items:center;justify-content:center}
+.device-picker-text{min-width:0;display:grid;gap:2px}.device-picker-text b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.device-picker-text small{font-size:10px;color:#99a5b3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.device-picker-select{font-size:11px;border-radius:999px;background:#27313f;color:#dce5ef;padding:5px 7px;white-space:nowrap}.open-picker-inline{width:100%;margin:8px 0;background:#263243}
+@media(max-width:760px),(orientation:landscape) and (max-height:620px){
+  .device-picker-card-wrap{width:100vw;height:100dvh;max-height:100dvh;border-radius:0;border:0}
+  .device-picker-tools{grid-template-columns:1fr;gap:7px;padding:8px 10px}.device-picker-tools .settings-check{font-size:12px}.device-picker-list{padding:8px 10px 12px}.device-picker-group-head{min-height:36px;padding:7px 9px;font-size:12px}.device-picker-group-head b{font-size:10px}.device-picker-items{grid-template-columns:1fr;max-height:48dvh;padding:6px;gap:6px}.device-picker-item{grid-template-columns:28px minmax(0,1fr) auto;padding:6px;gap:7px}.device-picker-item .dev-icon{width:28px;height:28px}.device-picker-text b{font-size:12px}.device-picker-text small{font-size:9px}.device-picker-select{font-size:10px;padding:4px 6px}
 }
