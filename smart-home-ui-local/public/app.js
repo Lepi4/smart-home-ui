@@ -16,7 +16,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'' },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, placingKind:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -715,6 +715,7 @@ function enterEditMode(){
   state.editSnapshot=cloneLayout(state.layout);
   state.selectedEdit=null;
   state.placingDeviceId=null;
+  state.placingKind=null;
   state.edit=true;
   // On a touch overview screen the full 180+ device list is expensive and covers the map.
   // Start with both panels closed; the user opens Devices only when they need to place something.
@@ -730,6 +731,7 @@ async function saveEditChanges(){
   if(!state.layoutDirty){
     state.edit=false;
     state.editSnapshot=null;
+    state.placingDeviceId=null; state.placingKind=null; renderPlacementBar();
     resumeLiveDashboard();
     updateEditButtons();
     showToast('Изменений нет');
@@ -740,6 +742,7 @@ async function saveEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
+  state.placingDeviceId=null; state.placingKind=null; renderPlacementBar();
   resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения сохранены');
@@ -751,6 +754,7 @@ function cancelEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
+  state.placingDeviceId=null; state.placingKind=null; renderPlacementBar();
   resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения отменены');
@@ -775,6 +779,7 @@ function render(){
   if(isOverview){ renderOverview(); } else { renderRoom(); }
   renderDevices();
   renderEditSheet();
+  renderPlacementBar();
   renderKioskWidget();
   updateZoomControls();
 }
@@ -1356,33 +1361,68 @@ function setMarkerPosition(entityId,scope,p){
   }
 }
 
+function renderPlacementBar(){
+  const bar=el('placement-bar');
+  if(!bar) return;
+  const active=!!(state.edit && state.placingDeviceId);
+  bar.classList.toggle('hidden', !active);
+  document.body.classList.toggle('placing-mode', active);
+  if(!active) return;
+  const d=devices().find(x=>x.entity_id===state.placingDeviceId);
+  const title=el('placement-title');
+  const hint=el('placement-hint');
+  if(title) title.textContent=`Размещение: ${d?displayName(d):state.placingDeviceId}`;
+  if(hint) hint.textContent='Для точности передвиньте план так, чтобы нужная точка была под прицелом, затем нажмите “Поставить здесь”. Тап по карте тоже работает как быстрый вариант.';
+}
 function startTouchPlaceDevice(entityId){
   if(!state.edit) return;
   const d=devices().find(x=>x.entity_id===entityId);
   if(!d || !canDragDeviceFromList(d)){ showToast('Это устройство нельзя разместить на текущем экране'); return; }
   state.placingDeviceId=entityId;
+  state.placingKind=activeStageKind();
   closeMobilePanels();
-  showToast(state.selectedRoom==='overview' ? 'Тапните место на общем плане' : 'Тапните место на карте, чтобы поставить устройство');
+  renderPlacementBar();
+  showToast('Передвиньте план под прицел и нажмите “Поставить здесь”');
 }
-function placePendingDevice(kind,e){
+function cancelPlacement(){
+  state.placingDeviceId=null;
+  state.placingKind=null;
+  renderPlacementBar();
+  showToast('Размещение отменено');
+}
+function placeDeviceAtImagePercent(kind,p){
   if(!state.edit || !state.placingDeviceId) return false;
   const id=state.placingDeviceId;
   const d=devices().find(x=>x.entity_id===id);
-  if(!d){ state.placingDeviceId=null; return false; }
+  if(!d){ cancelPlacement(); return false; }
   if(kind==='room' && normalizedRoomId(d.room)!==normalizedRoomId(state.selectedRoom)){
     showToast('Перенос устройств между комнатами пока отключён');
-    state.placingDeviceId=null;
+    cancelPlacement();
     return true;
   }
-  const p=eventImagePercent(kind,e);
   setMarkerPosition(id,kind,kind==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
   state.placingDeviceId=null;
+  state.placingKind=null;
+  renderPlacementBar();
   setLayoutDirty(true);
   if(kind==='overview') renderOverviewMarkers(); else renderRoomMarkers();
   selectEditObject({kind:'marker',id,scope:kind,label:d?displayName(d):id});
   renderEditSheet();
   showToast('Устройство размещено');
   return true;
+}
+function placePendingDevice(kind,e){
+  if(!state.edit || !state.placingDeviceId) return false;
+  return placeDeviceAtImagePercent(kind, eventImagePercent(kind,e));
+}
+function placePendingDeviceAtCrosshair(){
+  if(!state.edit || !state.placingDeviceId) return;
+  const kind=activeStageKind();
+  const stage=el(kind==='overview'?'overview-stage':'room-stage');
+  if(!stage) return;
+  const r=stage.getBoundingClientRect();
+  const p=imagePercentIn(kind, r.left+r.width/2, r.top+r.height/2);
+  placeDeviceAtImagePercent(kind,p);
 }
 
 function isSelectedEdit(kind,id,scope){
@@ -1416,11 +1456,12 @@ function renderEditSheet(){
   sheet.classList.toggle('hidden', !state.edit);
   const title=el('edit-sheet-title'); if(title) title.textContent=selectedEditLabel();
   const hint=el('edit-sheet-hint');
-  if(hint) hint.textContent = state.selectedEdit ? 'Перетащите выбранный объект пальцем или мышью. Управление устройствами в редакторе отключено.' : 'Коснитесь зоны, маркера или показателя, чтобы выбрать. Затем перетащите.';
+  const isMetric=!!(state.selectedEdit && (state.selectedEdit.kind==='overviewMetric'||state.selectedEdit.kind==='roomMetric'));
+  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Его можно двигать и сбросить позицию, но нельзя удалить окончательно.' : 'Перетащите выбранный объект пальцем или мышью. Управление устройствами в редакторе отключено.') : 'Коснитесь зоны, маркера или показателя, чтобы выбрать. Затем перетащите.';
   const del=el('btn-delete-selected');
   const reset=el('btn-reset-selected');
-  if(del) del.disabled=!(state.selectedEdit && state.selectedEdit.kind==='marker');
-  if(reset) reset.disabled=!state.selectedEdit;
+  if(del){ del.disabled=!(state.selectedEdit && state.selectedEdit.kind==='marker'); del.textContent='Удалить маркер'; }
+  if(reset){ reset.disabled=!state.selectedEdit; reset.textContent=isMetric?'Сбросить позицию':'Сбросить/убрать'; }
 }
 function deleteSelectedEditObject(){
   const s=state.selectedEdit;
@@ -1833,6 +1874,8 @@ function bindGlobal(){
   const delSel=el('btn-delete-selected'); if(delSel) delSel.onclick=deleteSelectedEditObject;
   const resetSel=el('btn-reset-selected'); if(resetSel) resetSel.onclick=resetSelectedEditObject;
   const closeEdit=el('btn-close-edit-sheet'); if(closeEdit) closeEdit.onclick=()=>{state.selectedEdit=null; render();};
+  const placeHere=el('btn-place-here'); if(placeHere) placeHere.onclick=placePendingDeviceAtCrosshair;
+  const cancelPlace=el('btn-cancel-placement'); if(cancelPlace) cancelPlace.onclick=cancelPlacement;
   const sheetSave=el('btn-sheet-save-edit'); if(sheetSave) sheetSave.onclick=()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message));
   const sheetCancel=el('btn-sheet-cancel-edit'); if(sheetCancel) sheetCancel.onclick=cancelEditChanges;
   el('device-search').oninput=renderDevices;

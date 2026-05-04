@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.27</title>
+  <title>Smart Home UI HA Add-on v3.4.28</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -115,6 +115,19 @@
             <button type="button" id="btn-close-edit-sheet">Снять выбор</button>
             <button type="button" id="btn-sheet-save-edit" class="sheet-save">Сохранить</button>
             <button type="button" id="btn-sheet-cancel-edit" class="sheet-cancel">Отменить</button>
+          </div>
+        </div>
+
+
+        <div id="placement-bar" class="placement-bar hidden">
+          <div class="placement-crosshair" aria-hidden="true"></div>
+          <div class="placement-info">
+            <strong id="placement-title">Размещение устройства</strong>
+            <p id="placement-hint">Передвиньте план под прицел и нажмите “Поставить здесь”.</p>
+          </div>
+          <div class="placement-actions">
+            <button type="button" id="btn-place-here" class="sheet-save">Поставить здесь</button>
+            <button type="button" id="btn-cancel-placement" class="sheet-cancel">Отмена</button>
           </div>
         </div>
 
