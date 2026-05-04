@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.7</title>
+  <title>Smart Home UI HA Add-on v3.4.9</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -161,9 +161,10 @@
         <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
         <label>Размер ореолов <input id="pref-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-halo-scale-value">50%</span></label>
         <label>Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
-        <label>Масштаб маркеров устройств <input id="pref-marker-scale" type="range" min="50" max="200" value="100"><span id="pref-marker-scale-value">100%</span></label>
+        <label>Масштаб маркеров устройств <input id="pref-marker-scale" type="range" min="10" max="200" value="100"><span id="pref-marker-scale-value">100%</span></label>
         <label>Прозрачность фона маркеров <input id="pref-marker-opacity" type="range" min="0" max="100" value="0"><span id="pref-marker-opacity-value">0%</span></label>
-        <label>Масштаб датчиков <input id="pref-sensor-scale" type="range" min="50" max="200" value="100"><span id="pref-sensor-scale-value">100%</span></label>
+        <label>Масштаб датчиков <input id="pref-sensor-scale" type="range" min="10" max="200" value="100"><span id="pref-sensor-scale-value">100%</span></label>
+        <label>Масштаб названий помещений <input id="pref-room-label-scale" type="range" min="10" max="200" value="100"><span id="pref-room-label-scale-value">100%</span></label>
         <label>Прозрачность фона датчиков <input id="pref-sensor-opacity" type="range" min="0" max="100" value="0"><span id="pref-sensor-opacity-value">0%</span></label>
         <p class="muted">Масштаб карты меняется двумя пальцами или кнопками +/−. Аппаратный масштаб задаёт базовый размер плана для конкретной панели/экрана. Вид, масштаб, скрытые панели и kiosk mode сохраняются в /data/ui_state.json и восстанавливаются после переустановки add-on, если данные не удалить.</p>
       </div>

@@ -14,7 +14,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null
 };
@@ -96,11 +96,12 @@ function saveUiPrefs(){
 }
 
 function shouldUseMobileMode(){
-  const coarsePointer = !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
   if(!window.matchMedia) return false;
-  return window.matchMedia('(max-width: 760px)').matches ||
-    window.matchMedia('(orientation: landscape) and (max-height: 920px)').matches ||
-    (coarsePointer && window.innerHeight <= 920);
+  const coarsePointer = window.matchMedia('(pointer: coarse)').matches || !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
+  const narrow = window.matchMedia('(max-width: 760px)').matches;
+  const touchLandscape = coarsePointer && window.matchMedia('(orientation: landscape) and (max-height: 920px)').matches;
+  const touchShort = coarsePointer && window.innerHeight <= 920;
+  return narrow || touchLandscape || touchShort;
 }
 function syncAutoMobileMode(){
   if(!shouldUseMobileMode()) return;
@@ -126,11 +127,37 @@ function getViewport(kind){
   const rid=normalizedRoomId(state.selectedRoom);
   return state.viewport.rooms[rid] || (state.viewport.rooms[rid]={zoom:1,panX:0,panY:0});
 }
+function viewportElements(kind){
+  return {
+    stage: kind==='overview' ? el('overview-stage') : el('room-stage'),
+    content: kind==='overview' ? el('overview-content') : el('room-content')
+  };
+}
+function clampViewportPan(kind, v){
+  const {stage, content}=viewportElements(kind);
+  const hardware=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5);
+  const scale=hardware*(Number(v.zoom)||1);
+  if(!stage || !content || !stage.clientWidth || !stage.clientHeight || !content.offsetWidth || !content.offsetHeight){
+    v.panX=clamp(Number(v.panX)||0, -1200, 1200);
+    v.panY=clamp(Number(v.panY)||0, -1200, 1200);
+    return v;
+  }
+  const stageW=stage.clientWidth, stageH=stage.clientHeight;
+  const contentW=content.offsetWidth*scale, contentH=content.offsetHeight*scale;
+  // The content is centered by flex layout before transform. Pan is therefore limited around zero.
+  // This prevents the old "endless scroll" feeling on mobile/landscape.
+  const maxX = contentW > stageW ? Math.ceil((contentW-stageW)/2 + 80) : 0;
+  const maxY = contentH > stageH ? Math.ceil((contentH-stageH)/2 + 80) : 0;
+  v.panX=clamp(Number(v.panX)||0, -maxX, maxX);
+  v.panY=clamp(Number(v.panY)||0, -maxY, maxY);
+  return v;
+}
 function setViewport(kind, next, persist=true){
   const v=getViewport(kind);
   v.zoom=clamp(Number(next.zoom ?? v.zoom)||1, 0.5, 4);
-  v.panX=clamp(Number(next.panX ?? v.panX)||0, -5000, 5000);
-  v.panY=clamp(Number(next.panY ?? v.panY)||0, -5000, 5000);
+  v.panX=Number(next.panX ?? v.panX)||0;
+  v.panY=Number(next.panY ?? v.panY)||0;
+  clampViewportPan(kind, v);
   applyStageTransform(kind);
   updateZoomControls();
   if(persist) saveViewportPrefs();
@@ -143,10 +170,11 @@ function zoomViewport(kind, factor){
 function applyStageTransform(kind){
   const content=kind==='overview'?el('overview-content'):el('room-content'); if(!content) return;
   const v=getViewport(kind);
+  clampViewportPan(kind, v);
   const hardware=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5);
   const scale=hardware*v.zoom;
   content.style.transformOrigin='0 0';
-  content.style.transform=`translate(${v.panX}px, ${v.panY}px) scale(${scale})`;
+  content.style.transform=`translate3d(${v.panX}px, ${v.panY}px, 0) scale(${scale})`;
   content.dataset.scale=String(scale);
 }
 function activeStageKind(){ return state.selectedRoom==='overview'?'overview':'room'; }
@@ -154,6 +182,14 @@ function updateZoomControls(){
   const zv=el('zoom-value'); if(zv){ const v=getViewport(activeStageKind()); const hw=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5); zv.textContent=Math.round(v.zoom*hw*100)+'%'; }
 }
 function fitViewport(kind){ resetViewport(kind); }
+function lockViewportScroll(){
+  document.documentElement.style.overflow='hidden';
+  document.body.style.overflow='hidden';
+  document.body.style.position='fixed';
+  document.body.style.inset='0';
+  document.body.style.width='100%';
+  document.body.style.height='100dvh';
+}
 function setPanelHidden(key, value){ state.ui[key]=!!value; saveUiPrefs(); }
 function applyUiPrefs(){
   document.body.classList.toggle('touch-capable', !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
@@ -168,8 +204,9 @@ function applyUiPrefs(){
   const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
   const mobileMarkerFactor = isNarrowMobile ? 0.84 : 1;
   const mobileSensorFactor = isNarrowMobile ? 0.72 : 1;
-  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .5, 2) * mobileMarkerFactor));
-  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .5, 2) * mobileSensorFactor));
+  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .1, 2) * mobileMarkerFactor));
+  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .1, 2) * mobileSensorFactor));
+  document.documentElement.style.setProperty('--room-label-scale', String(clamp(Number(state.ui.roomLabelScale ?? 1), .1, 2)));
   document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(state.ui.markerOpacity ?? 0), 0, 1))); // setting is background transparency
   document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(state.ui.sensorOpacity ?? 0), 0, 1))); // setting is background transparency
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
@@ -191,6 +228,7 @@ function applyUiPrefs(){
   const hw=el('pref-hardware-scale'); if(hw){ hw.value=String(Math.round(Number(state.ui.hardwareScale ?? 1)*100)); const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=hw.value+'%'; }
   const ms=el('pref-marker-scale'); if(ms){ ms.value=String(Math.round(Number(state.ui.markerScale ?? 1)*100)); const mv=el('pref-marker-scale-value'); if(mv) mv.textContent=ms.value+'%'; }
   const ss=el('pref-sensor-scale'); if(ss){ ss.value=String(Math.round(Number(state.ui.sensorScale ?? 1)*100)); const sv=el('pref-sensor-scale-value'); if(sv) sv.textContent=ss.value+'%'; }
+  const rls=el('pref-room-label-scale'); if(rls){ rls.value=String(Math.round(Number(state.ui.roomLabelScale ?? 1)*100)); const rv=el('pref-room-label-scale-value'); if(rv) rv.textContent=rls.value+'%'; }
   const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 0)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
   const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 0)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
@@ -1372,6 +1410,7 @@ function bindGlobal(){
   const hwScale=el('pref-hardware-scale'); if(hwScale) hwScale.oninput=e=>{state.ui.hardwareScale=Number(e.target.value)/100; const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=e.target.value+'%'; saveUiPrefs(); applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();};
   const markerScale=el('pref-marker-scale'); if(markerScale) markerScale.oninput=e=>{state.ui.markerScale=Number(e.target.value)/100; const v=el('pref-marker-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
   const sensorScale=el('pref-sensor-scale'); if(sensorScale) sensorScale.oninput=e=>{state.ui.sensorScale=Number(e.target.value)/100; const v=el('pref-sensor-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
+  const roomLabelScale=el('pref-room-label-scale'); if(roomLabelScale) roomLabelScale.oninput=e=>{state.ui.roomLabelScale=Number(e.target.value)/100; const v=el('pref-room-label-scale-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
   const markerOpacity=el('pref-marker-opacity'); if(markerOpacity) markerOpacity.oninput=e=>{state.ui.markerOpacity=Number(e.target.value)/100; const v=el('pref-marker-opacity-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
   const sensorOpacity=el('pref-sensor-opacity'); if(sensorOpacity) sensorOpacity.oninput=e=>{state.ui.sensorOpacity=Number(e.target.value)/100; const v=el('pref-sensor-opacity-value'); if(v) v.textContent=e.target.value+'%'; saveUiPrefs();};
   const zb=el('btn-zoom-out'); if(zb) zb.onclick=()=>zoomViewport(activeStageKind(), .86);
@@ -1384,3 +1423,8 @@ function bindGlobal(){
 }
 
 (async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else el('settings-modal').classList.remove('hidden')}catch(e){console.error(e);el('settings-modal').classList.remove('hidden')}})();
+
+window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, {passive:true});
+window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, 250), {passive:true});
+window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
+document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});

@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>FAQ — Smart Home UI Local v3.4.7</title>
+  <title>FAQ — Smart Home UI Local v3.4.9</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body style="display:block;overflow:auto;padding:24px;max-width:980px;margin:auto">
-<h1>FAQ — Smart Home UI Local v3.4.7</h1>
+<h1>FAQ — Smart Home UI Local v3.4.9</h1>
 <p>Smart Home UI Local работает как Home Assistant add-on через Ingress. URL и long-lived token вводить не нужно: add-on использует Supervisor API.</p>
 
-<h2>Что исправлено в v3.4.7</h2>
+<h2>Что исправлено в v3.4.9</h2>
 <ul>
   <li>Горизонтальная мобильная ориентация теперь определяется не только по ширине, но и по высоте/тач-устройству.</li>
   <li>Нижняя мобильная панель больше не пропадает в landscape.</li>
@@ -91,5 +91,11 @@ views:
 
 <h2>Почему иконка в боковом меню может не появиться сразу?</h2>
 <p>Home Assistant берёт иконку бокового пункта из <code>panel_icon</code> в <code>config.yaml</code>. Иногда sidebar entry кешируется. После обновления add-on стоит обновить репозиторий add-on, перезапустить add-on, удалить пункт из sidebar и добавить его снова. Если не помогает — перезапустить frontend/Home Assistant.</p>
+
+<section>
+  <h2>v3.4.9: масштаб маркеров, датчиков и названий помещений</h2>
+  <p>В настройках можно уменьшать маркеры устройств, датчики и названия помещений до 10% и увеличивать до 200%. Это полезно для маленьких экранов, горизонтальной ориентации и плотных планов.</p>
+  <p>Масштаб названий помещений применяется к подписям зон на общем плане отдельно от датчиков и маркеров.</p>
+</section>
 </body>
 </html>
