@@ -61,12 +61,17 @@ function loadUiPrefs(){
     const server = state.serverUiState || {};
     const saved=JSON.parse(localStorage.getItem('ui_prefs')||'{}');
     const last=JSON.parse(localStorage.getItem('last_view')||'{}');
-    const autoMobile = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+    const coarsePointer = !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
+    const autoMobile = !!(window.matchMedia && (
+      window.matchMedia('(max-width: 760px)').matches ||
+      window.matchMedia('(orientation: landscape) and (max-height: 920px)').matches ||
+      (coarsePointer && window.innerHeight <= 920)
+    ));
     state.ui = { ...state.ui, ...(server.ui||{}), ...saved };
     if(autoMobile){
       state.ui.mobileMode = true;
-      // На телефоне панели должны стартовать закрытыми. Иначе их может заблокировать CSS/Ingress,
-      // а нижние кнопки выглядят нерабочими.
+      // На телефоне и в горизонтальной ориентации панели должны стартовать закрытыми.
+      // Иначе desktop-toolbar занимает полэкрана, а нижняя панель не появляется.
       state.ui.hideSidebar = true;
       state.ui.hideDevicePanel = true;
     }
@@ -88,6 +93,22 @@ function saveUiPrefs(){
   localStorage.setItem('last_view', JSON.stringify({selectedRoom:state.selectedRoom, updatedAt:new Date().toISOString()}));
   applyUiPrefs();
   persistUiStateSoon();
+}
+
+function shouldUseMobileMode(){
+  const coarsePointer = !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
+  if(!window.matchMedia) return false;
+  return window.matchMedia('(max-width: 760px)').matches ||
+    window.matchMedia('(orientation: landscape) and (max-height: 920px)').matches ||
+    (coarsePointer && window.innerHeight <= 920);
+}
+function syncAutoMobileMode(){
+  if(!shouldUseMobileMode()) return;
+  const changed = !state.ui.mobileMode || !state.ui.hideSidebar || !state.ui.hideDevicePanel;
+  state.ui.mobileMode = true;
+  state.ui.hideSidebar = true;
+  state.ui.hideDevicePanel = true;
+  if(changed){ applyUiPrefs(); persistUiStateSoon(); }
 }
 function loadViewportPrefs(){
   try{
@@ -1260,14 +1281,28 @@ function renderInfoModal(){
   const d=state.diagnostics; const box=el('info-content'); if(!box||!d) return;
   qsa('[data-info-tab]').forEach(b=>b.classList.toggle('active', b.dataset.infoTab===state.infoTab));
   if(state.infoTab==='summary'){
+    const ld=d.layoutDiagnostics||{};
     box.innerHTML=`<table class="info-table">${[
-      ['Версия add-on',d.version],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
+      ['Версия add-on',d.version],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['Layout координаты',ld.ok?'OK':'есть проблемы'],['Pixel-like координаты',ld.problems?.pixelLike?.length||0],['Координаты вне 0–100',ld.problems?.outOfRange?.length||0],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
     ].map(x=>infoRow(x[0],x[1])).join('')}</table>`;
   } else if(state.infoTab==='entities'){
     box.innerHTML=`<h3>Проблемы entity_id</h3><p class="muted">Показаны первые 200 записей каждого типа.</p>`+
       `<h4>Не найдены в HA (${d.counts?.missingInHa||0})</h4><div class="info-list">${(d.missingInHa||[]).map(x=>`<code>${esc(x.entity_id)}</code> <span>${esc(x.name||'')}</span>`).join('<br>')||'—'}</div>`+
       `<h4>Дубли (${d.counts?.duplicates||0})</h4><div class="info-list">${(d.duplicates||[]).map(x=>`<code>${esc(x.entity_id)}</code> × ${x.count}`).join('<br>')||'—'}</div>`+
       `<h4>Без координат (${d.counts?.noCoordinates||0})</h4><div class="info-list">${(d.noCoordinates||[]).map(x=>`<code>${esc(x)}</code>`).join('<br>')||'—'}</div>`;
+  } else if(state.infoTab==='layout'){
+    const ld=d.layoutDiagnostics||{};
+    const p=ld.problems||{};
+    const cnt=ld.counts||{};
+    const hasFix=(p.pixelLike?.length||0)||(p.outOfRange?.length||0)||(p.invalidPoints?.length||0);
+    box.innerHTML=`<h3>Диагностика layout</h3><p class="muted">Layout должен хранить координаты только в процентах 0–100. Zoom, pan и hardware scale хранятся отдельно и не должны менять координаты.</p>`+
+      `<table class="info-table">${[
+        ['Статус',ld.ok?'OK':'Есть проблемы'],['Overview markers',cnt.overviewMarkers||0],['Room markers',cnt.roomMarkers||0],['Overview metrics',cnt.overviewMetrics||0],['Room metrics',cnt.roomMetrics||0],['Zones',cnt.zones||0],['Pixel-like координаты',p.pixelLike?.length||0],['Вне диапазона 0–100',p.outOfRange?.length||0],['Некорректные точки',p.invalidPoints?.length||0],['Неизвестные top-level поля',(p.unknownTopLevel||[]).join(', ')||'—']
+      ].map(x=>infoRow(x[0],x[1])).join('')}</table>`+
+      `${hasFix?'<p><button type="button" id="btn-normalize-layout">Нормализовать координаты</button></p>':''}`+
+      `<h4>Первые проблемы</h4><div class="info-list">${[...(p.pixelLike||[]),...(p.outOfRange||[]),...(p.invalidPoints||[])].slice(0,80).map(x=>`<code>${esc(x.path||'')}</code> ${esc(JSON.stringify(x))}`).join('<br>')||'—'}</div>`;
+    const btn=el('btn-normalize-layout');
+    if(btn) btn.onclick=async()=>{ if(!confirm('Создать backup и нормализовать layout в проценты 0–100?')) return; const r=await apiJson('api/layout/normalize',{method:'POST'}); state.layout=r.diagnostics?.normalizedPreview || state.layout; await loadDiagnostics(); render(); showToast('Layout нормализован'); };
   } else if(state.infoTab==='backups'){
     box.innerHTML=`<h3>Резервные копии layout</h3><p class="muted">Перед каждым сохранением создаётся backup. Хранятся последние 20 копий.</p><div class="backup-list">${(d.backups||[]).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div><button data-restore-backup="${esc(b.name)}">Восстановить</button><button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
     qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущий layout будет сохранён в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Layout восстановлен'); });
@@ -1307,7 +1342,7 @@ function bindGlobal(){
   el('device-search').oninput=renderDevices;
   el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
   const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
-  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{fitStage('overview');fitStage('room')}); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops();
+  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops();
 
   el('btn-hide-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-show-sidebar').onclick=()=>setPanelHidden('hideSidebar', false);

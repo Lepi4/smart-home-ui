@@ -590,7 +590,7 @@ body.kiosk-mode .kiosk-room-overlay.hidden{display:none!important}
 .kiosk-room-list{display:grid;gap:6px}.kiosk-room-item{width:100%;text-align:left;border-radius:12px;padding:10px 12px;background:rgba(27,34,45,.94);border:1px solid rgba(255,255,255,.08);color:#eef3fb;font-weight:750}.kiosk-room-item.active{background:#1c3558;border-color:rgba(115,168,255,.45)}.kiosk-overview-item{margin-bottom:8px;background:#223a5f!important}
 @media(max-width:560px){body.kiosk-mode .kiosk-rooms-btn{left:10px;bottom:14px;min-height:42px;padding:8px 12px}body.kiosk-mode .kiosk-exit-btn{right:10px;bottom:14px}body.kiosk-mode .kiosk-room-overlay{left:8px;bottom:64px;width:min(84vw,292px);max-height:52vh}}
 
-/* v3.4.5 mobile hotfix: keep kiosk reachable, avoid floating Devices overlay, keep HA sidebar icon compatible */
+/* v3.4.6 mobile/layout hotfix: keep kiosk reachable, avoid floating Devices overlay, keep HA sidebar icon compatible */
 @media(max-width:760px){
   /* The bottom mobile bar already has a Devices button, so the floating Devices button must not cover the toolbar Kiosk button. */
   #btn-show-device-panel.floating-menu-btn,
@@ -611,4 +611,151 @@ body.kiosk-mode .kiosk-room-overlay.hidden{display:none!important}
   .mobile-menu-bar{gap:6px;padding:7px 6px}
   .mobile-menu-bar button,.mobile-menu-bar .button-link{font-size:12px;padding:9px 6px;min-width:0}
   .toolbar-actions #btn-toolbar-kiosk{min-width:78px}
+}
+
+/* v3.4.7 landscape mobile / kiosk polish */
+html{height:100%;max-height:100%;overflow:hidden;overscroll-behavior:none;touch-action:manipulation}
+body{max-height:100dvh;overscroll-behavior:none}
+
+/* Mobile mode must work not only by width. Android landscape can be very wide but low. */
+body.mobile-mode{
+  display:block!important;
+  grid-template-columns:1fr!important;
+  height:100dvh!important;
+  max-height:100dvh!important;
+  overflow:hidden!important;
+  background:#070a0e;
+}
+body.mobile-mode .sidebar{display:none!important}
+body.mobile-mode:not(.hide-sidebar) .sidebar{
+  display:block!important;
+  position:fixed!important;
+  left:8px!important;
+  top:52px!important;
+  bottom:70px!important;
+  width:min(78vw,300px)!important;
+  z-index:1450!important;
+  border-radius:18px!important;
+  padding:10px!important;
+  box-shadow:14px 0 36px rgba(0,0,0,.42)!important;
+}
+body.mobile-mode .main{
+  height:100dvh!important;
+  min-height:0!important;
+  overflow:hidden!important;
+  display:flex!important;
+  flex-direction:column!important;
+}
+body.mobile-mode .toolbar{
+  flex:0 0 auto!important;
+  min-height:0!important;
+  height:auto!important;
+  max-height:132px!important;
+  overflow:hidden!important;
+  display:flex!important;
+  align-items:flex-start!important;
+  justify-content:flex-start!important;
+  gap:8px!important;
+  padding:6px 8px!important;
+  z-index:55!important;
+  background:rgba(7,10,14,.98)!important;
+}
+body.mobile-mode .toolbar>div:first-child{
+  width:auto!important;
+  min-width:92px!important;
+  max-width:150px!important;
+  flex:0 0 auto!important;
+}
+body.mobile-mode .toolbar h1{
+  font-size:clamp(17px, 3.2vw, 24px)!important;
+  line-height:1.05!important;
+  margin:0!important;
+}
+body.mobile-mode .toolbar p{display:none!important}
+body.mobile-mode .toolbar-actions{
+  flex:1 1 auto!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  flex-wrap:wrap!important;
+  gap:6px!important;
+  overflow:hidden!important;
+  max-height:120px!important;
+}
+body.mobile-mode .toolbar-actions button,
+body.mobile-mode .toolbar-actions .button-link,
+body.mobile-mode .toolbar-actions label{
+  min-height:36px!important;
+  padding:7px 10px!important;
+  border-radius:12px!important;
+  font-size:clamp(12px, 2.1vw, 15px)!important;
+  line-height:1.1!important;
+}
+body.mobile-mode .toolbar-actions label{gap:5px!important;color:#eef3f8!important}
+body.mobile-mode .toolbar-actions input[type="checkbox"]{width:18px;height:18px}
+body.mobile-mode .toolbar-actions #btn-toggle-toolbar,
+body.mobile-mode .toolbar-actions #btn-toggle-devices-panel,
+body.mobile-mode .toolbar-actions #btn-fullscreen,
+body.mobile-mode .toolbar-actions .range-label{display:none!important}
+body.mobile-mode .toolbar-actions #btn-toolbar-kiosk{display:inline-flex!important;order:70;min-width:76px!important;background:#1d3557!important;border-color:rgba(115,168,255,.38)!important;color:#eef6ff!important}
+body.mobile-mode .toolbar-actions #btn-edit{order:72}
+body.mobile-mode .toolbar-actions #edit-mode-badge{order:74;font-size:12px!important;padding:7px 10px!important;white-space:nowrap}
+body.mobile-mode .workspace{
+  flex:1 1 auto!important;
+  min-height:0!important;
+  height:auto!important;
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  gap:0!important;
+  padding:0 6px 66px!important;
+  overflow:hidden!important;
+}
+body.mobile-mode .canvas-card{
+  height:100%!important;
+  min-height:0!important;
+  overflow:hidden!important;
+  border-radius:12px!important;
+}
+body.mobile-mode .view,
+body.mobile-mode .plan-stage,
+body.mobile-mode .room-layout,
+body.mobile-mode .room-image-wrap{height:100%!important;min-height:0!important;overflow:hidden!important}
+body.mobile-mode .plan-stage{padding:10px!important}
+body.mobile-mode .room-layout{display:grid!important;grid-template-columns:1fr!important;padding:8px!important}
+body.mobile-mode .room-details{display:none!important}
+body.mobile-mode .device-panel{display:none!important}
+body.mobile-mode:not(.hide-device-panel) .device-panel{
+  display:flex!important;
+  position:fixed!important;
+  right:8px!important;
+  top:52px!important;
+  bottom:70px!important;
+  width:min(78vw,330px)!important;
+  z-index:1450!important;
+  border-radius:18px!important;
+  padding:10px!important;
+  box-shadow:-14px 0 36px rgba(0,0,0,.42)!important;
+}
+body.mobile-mode:not(.hide-sidebar)::after,
+body.mobile-mode:not(.hide-device-panel)::after{content:'';position:fixed;inset:0;background:rgba(0,0,0,.22);z-index:1440;pointer-events:none}
+body.mobile-mode .mobile-menu-bar{display:flex!important;z-index:1500!important}
+body.mobile-mode .mobile-menu-bar button,
+body.mobile-mode .mobile-menu-bar .button-link{font-size:clamp(12px,2.3vw,14px)!important;min-height:42px!important;padding:8px 9px!important;min-width:0!important}
+body.mobile-mode #btn-show-device-panel,
+body.mobile-mode #btn-show-sidebar,
+body.mobile-mode #btn-show-toolbar{display:none!important}
+body.mobile-mode .zoom-controls{right:10px!important;top:10px!important;transform:scale(.86);transform-origin:top right}
+body.mobile-mode.editing .zoom-controls{top:10px!important}
+
+@media (orientation: landscape) and (max-height:920px){
+  body.mobile-mode .toolbar{max-height:96px!important}
+  body.mobile-mode .toolbar h1{font-size:clamp(16px,2.2vw,22px)!important}
+  body.mobile-mode .toolbar-actions button,
+  body.mobile-mode .toolbar-actions .button-link,
+  body.mobile-mode .toolbar-actions label{min-height:34px!important;padding:6px 9px!important;font-size:clamp(11px,1.35vw,14px)!important}
+  body.mobile-mode .toolbar>div:first-child{max-width:128px!important}
+  body.mobile-mode .workspace{padding-bottom:58px!important}
+  body.mobile-mode .mobile-menu-bar{padding:6px 8px!important;gap:8px!important}
+  body.mobile-mode .mobile-menu-bar button,
+  body.mobile-mode .mobile-menu-bar .button-link{min-height:40px!important}
 }

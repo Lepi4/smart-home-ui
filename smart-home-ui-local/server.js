@@ -136,6 +136,87 @@ function deleteLayoutBackup(name){
   const file=path.join(LAYOUT_BACKUP_DIR,name);
   if(fs.existsSync(file)) fs.unlinkSync(file);
 }
+
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function isPlainObject(value){ return !!value && typeof value === 'object' && !Array.isArray(value); }
+function finiteNumber(value){ const n=Number(value); return Number.isFinite(n) ? n : null; }
+function roundPercent(value){ return Math.round(Number(value) * 1000) / 1000; }
+function normalizePoint(value, problems, pathLabel){
+  if(!isPlainObject(value)) { problems.invalidPoints.push({path:pathLabel, reason:'not-object'}); return null; }
+  const x=finiteNumber(value.x), y=finiteNumber(value.y);
+  if(x === null || y === null){ problems.invalidPoints.push({path:pathLabel, reason:'x/y-not-number'}); return null; }
+  if(x > 100 || y > 100 || x < 0 || y < 0) problems.outOfRange.push({path:pathLabel, x, y});
+  if(x > 100 || y > 100) problems.pixelLike.push({path:pathLabel, x, y});
+  return { ...value, x: roundPercent(clamp(x,0,100)), y: roundPercent(clamp(y,0,100)) };
+}
+function normalizeRect(value, problems, pathLabel){
+  if(!isPlainObject(value)) { problems.invalidPoints.push({path:pathLabel, reason:'not-object'}); return null; }
+  const x=finiteNumber(value.x), y=finiteNumber(value.y), w=finiteNumber(value.w), h=finiteNumber(value.h);
+  if(x === null || y === null || w === null || h === null){ problems.invalidPoints.push({path:pathLabel, reason:'x/y/w/h-not-number'}); return null; }
+  if(x > 100 || y > 100 || w > 100 || h > 100 || x < 0 || y < 0 || w < 0 || h < 0) problems.outOfRange.push({path:pathLabel, x,y,w,h});
+  if(x > 100 || y > 100 || w > 100 || h > 100) problems.pixelLike.push({path:pathLabel, x,y,w,h});
+  return { ...value, x:roundPercent(clamp(x,0,100)), y:roundPercent(clamp(y,0,100)), w:roundPercent(clamp(w,0,100)), h:roundPercent(clamp(h,0,100)) };
+}
+function makeLayoutProblems(){ return { pixelLike:[], outOfRange:[], invalidPoints:[], oversized:[], unknownTopLevel:[] }; }
+const LAYOUT_ALLOWED_TOP = new Set(['version','coordinateSpace','overviewRoomSync','roomCoordinateMigrated','overviewMarkers','roomMarkers','overviewMetrics','roomMetrics','zones','customNames','markers']);
+function normalizeLayoutPayload(input, opts={}){
+  const problems=makeLayoutProblems();
+  if(!isPlainObject(input)) throw new Error('Layout должен быть JSON object');
+  const rawSize = Buffer.byteLength(JSON.stringify(input), 'utf8');
+  if(rawSize > 1024*1024) throw new Error('Layout слишком большой');
+  for(const k of Object.keys(input)) if(!LAYOUT_ALLOWED_TOP.has(k)) problems.unknownTopLevel.push(k);
+  const layout={
+    version: Number.isFinite(Number(input.version)) ? Number(input.version) : 8,
+    coordinateSpace: input.coordinateSpace || 'room-content-box',
+    overviewRoomSync: !!input.overviewRoomSync,
+    roomCoordinateMigrated: isPlainObject(input.roomCoordinateMigrated) ? input.roomCoordinateMigrated : {},
+    overviewMarkers: {}, roomMarkers:{}, overviewMetrics:{}, roomMetrics:{}, zones:{}, customNames: isPlainObject(input.customNames) ? input.customNames : {}
+  };
+  const overviewMarkers = isPlainObject(input.overviewMarkers) ? input.overviewMarkers : (isPlainObject(input.markers) ? input.markers : {});
+  for(const [eid,p] of Object.entries(overviewMarkers)){
+    const np=normalizePoint(p, problems, `overviewMarkers.${eid}`);
+    if(np) layout.overviewMarkers[eid]=np;
+  }
+  if(Object.keys(layout.overviewMarkers).length > 2000) problems.oversized.push({path:'overviewMarkers', count:Object.keys(layout.overviewMarkers).length});
+  const roomMarkers = isPlainObject(input.roomMarkers) ? input.roomMarkers : {};
+  for(const [rid,map] of Object.entries(roomMarkers)){
+    if(!isPlainObject(map)){ problems.invalidPoints.push({path:`roomMarkers.${rid}`, reason:'not-object'}); continue; }
+    layout.roomMarkers[rid]={};
+    for(const [eid,p] of Object.entries(map)){
+      const np=normalizePoint(p, problems, `roomMarkers.${rid}.${eid}`);
+      if(np) layout.roomMarkers[rid][eid]=np;
+    }
+    if(Object.keys(layout.roomMarkers[rid]).length > 2000) problems.oversized.push({path:`roomMarkers.${rid}`, count:Object.keys(layout.roomMarkers[rid]).length});
+  }
+  for(const [id,p] of Object.entries(isPlainObject(input.overviewMetrics)?input.overviewMetrics:{})){
+    const np=normalizePoint(p, problems, `overviewMetrics.${id}`); if(np) layout.overviewMetrics[id]=np;
+  }
+  for(const [rid,p] of Object.entries(isPlainObject(input.roomMetrics)?input.roomMetrics:{})){
+    const np=normalizePoint(p, problems, `roomMetrics.${rid}`); if(np) layout.roomMetrics[rid]=np;
+  }
+  for(const [rid,z] of Object.entries(isPlainObject(input.zones)?input.zones:{})){
+    const nz=normalizeRect(z, problems, `zones.${rid}`); if(nz) layout.zones[rid]=nz;
+  }
+  layout.version = Math.max(1, Number(layout.version)||8);
+  if(problems.oversized.length) throw new Error('Layout содержит слишком много объектов');
+  if(problems.invalidPoints.length && opts.strict) throw new Error('Layout содержит некорректные координаты');
+  if(problems.unknownTopLevel.length > 20) throw new Error('Layout содержит слишком много неизвестных top-level полей');
+  return { layout, problems };
+}
+function analyzeLayout(layout){
+  const { layout: normalized, problems } = normalizeLayoutPayload(layout || {}, {strict:false});
+  const counts={ overviewMarkers:Object.keys(normalized.overviewMarkers||{}).length, roomMarkers:0, overviewMetrics:Object.keys(normalized.overviewMetrics||{}).length, roomMetrics:Object.keys(normalized.roomMetrics||{}).length, zones:Object.keys(normalized.zones||{}).length };
+  for(const map of Object.values(normalized.roomMarkers||{})) counts.roomMarkers += Object.keys(map||{}).length;
+  const ok = !problems.pixelLike.length && !problems.outOfRange.length && !problems.invalidPoints.length && !problems.oversized.length;
+  return { ok, counts, problems, normalizedPreview: normalized };
+}
+function normalizeStoredLayout(){
+  const current=loadLayout();
+  const {layout, problems}=normalizeLayoutPayload(current, {strict:false});
+  const backup=saveLayout(layout);
+  return { ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(layout), problems };
+}
+
 async function buildDiagnostics(){
   const devices=loadAllDevicesForDiagnostics();
   let haStates=[]; let haError=null;
@@ -147,8 +228,9 @@ async function buildDiagnostics(){
   const missing=devices.filter(d=>d.entity_id && !haIds.has(d.entity_id)).map(d=>({entity_id:d.entity_id,name:d.name||d.label||'',room:d.room||''}));
   const noRoom=devices.filter(d=>!d.room).map(d=>d.entity_id).filter(Boolean);
   const layout=loadLayout();
-  const markers=Object.assign({}, layout.overviewMarkers||{});
-  for(const map of Object.values(layout.roomMarkers||{})) Object.assign(markers,map||{});
+  const layoutDiagnostics=analyzeLayout(layout);
+  const markers=Object.assign({}, layoutDiagnostics.normalizedPreview?.overviewMarkers||layout.overviewMarkers||{});
+  for(const map of Object.values(layoutDiagnostics.normalizedPreview?.roomMarkers||layout.roomMarkers||{})) Object.assign(markers,map||{});
   const noCoordinates=devices.filter(d=>d.entity_id && !markers[d.entity_id]).map(d=>d.entity_id);
   return {
     ok: !haError,
@@ -162,7 +244,8 @@ async function buildDiagnostics(){
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     generatedAt: new Date().toISOString()
   };
@@ -178,7 +261,8 @@ function backupLayout(){
 }
 function saveLayout(layout){
   fs.mkdirSync(DATA_DIR,{recursive:true});
-  const payload = layout || {version:1,markers:{}};
+  const normalized = normalizeLayoutPayload(layout || {version:8}, {strict:false});
+  const payload = normalized.layout;
   let backupPath = null;
   if(fs.existsSync(LAYOUT_PATH)) backupPath = backupLayout();
   const tmpPath = LAYOUT_PATH + '.tmp';
@@ -591,12 +675,14 @@ function parseLovelaceRawBundle(bundle){
 function writeDeviceOutputs(parsed){
   if(!parsed.devices.length) throw new Error('RAW Lovelace прочитан, но entity_id не найдены. Файлы устройств не перезаписаны.');
   fs.mkdirSync(DATA_DIR,{recursive:true});
+  const devicesJs = 'window.ALL_DEVICES = '+JSON.stringify(parsed.devices, null, 2)+';\nwindow.DEVICES = window.ALL_DEVICES;\n';
+  const lovelaceJs = 'window.LOVELACE_SOURCE = '+JSON.stringify(parsed.source, null, 2)+';\n';
   fs.writeFileSync(path.join(DATA_DIR,'devices.json'), JSON.stringify(parsed.devices, null, 2), 'utf8');
-  fs.writeFileSync(path.join(__dirname,'public','devices.js'), 'window.ALL_DEVICES = '+JSON.stringify(parsed.devices, null, 2)+';\nwindow.DEVICES = window.ALL_DEVICES;\n', 'utf8');
-  fs.writeFileSync(path.join(__dirname,'public','lovelace-source.js'), 'window.LOVELACE_SOURCE = '+JSON.stringify(parsed.source, null, 2)+';\n', 'utf8');
+  fs.writeFileSync(DEVICES_PATH, devicesJs, 'utf8');
+  fs.writeFileSync(LOVELACE_PATH, lovelaceJs, 'utf8');
   fs.writeFileSync(path.join(DATA_DIR,'device_parse_report.json'), JSON.stringify(parsed.stats, null, 2), 'utf8');
   const md = [
-    '# Device parse report v3.2.3',
+    '# Device parse report v3.4.7',
     '',
     `Generated: ${parsed.stats.generatedAt}`,
     `Source: HA Lovelace RAW`,
@@ -605,6 +691,7 @@ function writeDeviceOutputs(parsed){
     `- Views processed: ${parsed.stats.views}`,
     `- Cards with entities: ${parsed.stats.cards}`,
     `- Unique entities: ${parsed.stats.entitiesFound}`,
+    `- Runtime storage: /data/devices.js, /data/lovelace-source.js, /data/devices.json`,
     `- Templates used: ${parsed.stats.templatesUsed.length ? parsed.stats.templatesUsed.join(', ') : 'none'}`,
     '',
     '## Template warnings',
@@ -615,6 +702,7 @@ function writeDeviceOutputs(parsed){
   ].join('\n');
   fs.writeFileSync(path.join(DATA_DIR,'device_parse_report.md'), md+'\n', 'utf8');
 }
+
 async function importLovelaceRaw(paths){
   const rawBundle = await readLovelaceRawFromHa(paths);
   const parsed = parseLovelaceRawBundle(rawBundle);
@@ -632,9 +720,11 @@ function importStoredLovelaceRaw(){
 
 app.get('/api/health', (req,res)=> res.json({ ok:true }));
 app.get('/api/layout', (req,res)=>{ try{res.json(loadLayout());}catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/layout/diagnostics', (req,res)=>{ try{res.json(analyzeLayout(loadLayout()));}catch(e){res.status(500).json({error:e.message});} });
+app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/source-config', (req,res)=>{ try{res.json(loadSourceConfig());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/source-config', (req,res)=>{ try{saveSourceConfig(req.body);res.json({ok:true, config: loadSourceConfig()});}catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/layout', (req,res)=>{ try{const backup=saveLayout(req.body);res.json({ok:true, backup: backup ? path.basename(backup) : null});}catch(e){res.status(500).json({error:e.message});} });
+app.post('/api/layout', (req,res)=>{ try{const backup=saveLayout(req.body);res.json({ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(loadLayout())});}catch(e){res.status(400).json({error:e.message});} });
 app.get('/api/config', (req,res)=> { try { res.json(publicConfig(loadAddonConfig())); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/config', (req,res)=> {
   try {
