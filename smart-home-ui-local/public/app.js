@@ -14,9 +14,9 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'' },
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', placeByTap:false, showZones:true, showMarkers:true, showSensors:true },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, placingKind:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, placingKind:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placingCrosshair:{overview:{x:50,y:50},room:{x:50,y:50}}, crosshairDragging:false
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -30,8 +30,8 @@ const DRAG_SUPPRESS_MS = 420;
 
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
-const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom']);
-const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode']);
+const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','placeByTap']);
+const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','showZones','showMarkers','showSensors']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
   const src = (cfg && cfg.ui) ? cfg.ui : cfg || {};
@@ -272,6 +272,7 @@ function applyStageTransform(kind){
   content.style.transformOrigin='0 0';
   content.style.transform=`translate3d(${v.panX}px, ${v.panY}px, 0) scale(${scale})`;
   content.dataset.scale=String(scale);
+  if(state.edit && state.placingDeviceId) requestAnimationFrame(updatePlacementAim);
 }
 function activeStageKind(){ return state.selectedRoom==='overview'?'overview':'room'; }
 function updateZoomControls(){
@@ -346,6 +347,10 @@ function applyUiPrefs(){
   const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
   const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
+  const pbt=el('pref-place-by-tap'); if(pbt) pbt.checked=!!state.ui.placeByTap;
+  const tz=el('toggle-zones'); if(tz) tz.checked=state.ui.showZones!==false;
+  const tdv=el('toggle-devices'); if(tdv) tdv.checked=state.ui.showMarkers!==false;
+  const ts=el('toggle-sensors'); if(ts) ts.checked=state.ui.showSensors!==false;
   const ph=el('pref-halo-scale'); if(ph){ ph.value=String(Math.round(Number(state.ui.haloScale ?? 0.50)*100)); const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=ph.value+'%'; }
   const hw=el('pref-hardware-scale'); if(hw){ hw.value=String(Math.round(Number(state.ui.hardwareScale ?? 1)*100)); const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=hw.value+'%'; }
   const ms=el('pref-marker-scale'); if(ms){ ms.value=String(Math.round(Number(state.ui.markerScale ?? 1)*100)); const mv=el('pref-marker-scale-value'); if(mv) mv.textContent=ms.value+'%'; }
@@ -1372,7 +1377,8 @@ function renderPlacementBar(){
   const title=el('placement-title');
   const hint=el('placement-hint');
   if(title) title.textContent=`Размещение: ${d?displayName(d):state.placingDeviceId}`;
-  if(hint) hint.textContent='Для точности передвиньте план так, чтобы нужная точка была под прицелом, затем нажмите “Поставить здесь”. Тап по карте тоже работает как быстрый вариант.';
+  if(hint) hint.textContent=state.ui.placeByTap ? 'Передвиньте план под прицел и нажмите “Поставить здесь”. Тап по карте включён в настройках как быстрый вариант.' : 'Тап по карте не размещает устройство. Передвиньте план под прицел или перетащите прицел, затем нажмите “Поставить здесь”.';
+  updatePlacementAim();
 }
 function startTouchPlaceDevice(entityId){
   if(!state.edit) return;
@@ -1389,6 +1395,64 @@ function cancelPlacement(){
   state.placingKind=null;
   renderPlacementBar();
   showToast('Размещение отменено');
+}
+function ensurePlacementAim(){
+  let aim=el('placement-aim');
+  if(aim) return aim;
+  aim=document.createElement('div');
+  aim.id='placement-aim';
+  aim.className='placement-aim hidden';
+  aim.title='Перетащите прицел или двигайте карту под ним';
+  document.body.appendChild(aim);
+  aim.addEventListener('pointerdown', e=>{
+    if(!state.edit || !state.placingDeviceId) return;
+    e.preventDefault(); e.stopPropagation();
+    state.crosshairDragging=true;
+    try{ aim.setPointerCapture(e.pointerId); }catch(_){}
+  }, {passive:false});
+  aim.addEventListener('pointermove', e=>{
+    if(!state.crosshairDragging) return;
+    e.preventDefault(); e.stopPropagation();
+    movePlacementAimToClient(e.clientX, e.clientY);
+  }, {passive:false});
+  const stop=e=>{ if(state.crosshairDragging){ e.preventDefault(); e.stopPropagation(); } state.crosshairDragging=false; };
+  aim.addEventListener('pointerup', stop, {passive:false});
+  aim.addEventListener('pointercancel', stop, {passive:false});
+  return aim;
+}
+function activeStageEl(kind=activeStageKind()){
+  return el(kind==='overview'?'overview-stage':'room-stage');
+}
+function updatePlacementAim(){
+  const aim=ensurePlacementAim();
+  const active=!!(state.edit && state.placingDeviceId);
+  aim.classList.toggle('hidden', !active);
+  if(!active) return;
+  const kind=activeStageKind();
+  const stage=activeStageEl(kind);
+  if(!stage) return;
+  const r=stage.getBoundingClientRect();
+  const pos=state.placingCrosshair[kind] || {x:50,y:50};
+  aim.style.left=(r.left + r.width*clamp(pos.x,0,100)/100)+'px';
+  aim.style.top=(r.top + r.height*clamp(pos.y,0,100)/100)+'px';
+}
+function movePlacementAimToClient(cx,cy){
+  const kind=activeStageKind();
+  const stage=activeStageEl(kind);
+  if(!stage) return;
+  const r=stage.getBoundingClientRect();
+  const x=clamp((cx-r.left)/Math.max(1,r.width)*100,0,100);
+  const y=clamp((cy-r.top)/Math.max(1,r.height)*100,0,100);
+  state.placingCrosshair[kind]={x,y};
+  updatePlacementAim();
+}
+function placementAimClientPoint(){
+  const kind=activeStageKind();
+  const stage=activeStageEl(kind);
+  if(!stage) return null;
+  const r=stage.getBoundingClientRect();
+  const pos=state.placingCrosshair[kind] || {x:50,y:50};
+  return {x:r.left + r.width*clamp(pos.x,0,100)/100, y:r.top + r.height*clamp(pos.y,0,100)/100};
 }
 function placeDeviceAtImagePercent(kind,p){
   if(!state.edit || !state.placingDeviceId) return false;
@@ -1420,8 +1484,9 @@ function placePendingDeviceAtCrosshair(){
   const kind=activeStageKind();
   const stage=el(kind==='overview'?'overview-stage':'room-stage');
   if(!stage) return;
-  const r=stage.getBoundingClientRect();
-  const p=imagePercentIn(kind, r.left+r.width/2, r.top+r.height/2);
+  const pt=placementAimClientPoint();
+  if(!pt) return;
+  const p=imagePercentIn(kind, pt.x, pt.y);
   placeDeviceAtImagePercent(kind,p);
 }
 
@@ -1557,7 +1622,7 @@ function bindStageGestures(){
     stage.addEventListener('pointerdown', e=>{
       if(e.button !== undefined && e.button !== 0) return;
       const isInteractive=isStageInteractiveTarget(e.target);
-      if(state.edit && state.placingDeviceId && !isInteractive){
+      if(state.edit && state.placingDeviceId && !isInteractive && state.ui.placeByTap){
         e.preventDefault();
         placePendingDevice(kind,e);
         return;
@@ -1850,6 +1915,7 @@ function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncM
 
 function bindGlobal(){
   loadUiPrefs();
+  window.addEventListener('resize', updatePlacementAim);
   document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
   ['pointerdown','touchstart','keydown'].forEach(evt=>document.addEventListener(evt, registerKioskActivity, {passive:true}));
   el('btn-settings').onclick=()=>openModal('settings-modal');
@@ -1861,7 +1927,7 @@ function bindGlobal(){
   el('btn-refresh-info').onclick=loadDiagnostics;
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
-  el('toggle-zones').onchange=render; el('toggle-devices').onchange=render; el('toggle-sensors').onchange=render;
+  el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
   const editBtn=el('btn-edit');
   const startEditHold=()=>{ if(state.edit) return; editBtn.classList.add('holding'); showToast('Удерживайте 2 секунды для входа в редактор'); state.editHoldTimer=setTimeout(()=>{ editBtn.classList.remove('holding'); state.editHoldTimer=null; enterEditMode(); },2000); };
   const cancelEditHold=()=>{ if(state.editHoldTimer){ clearTimeout(state.editHoldTimer); state.editHoldTimer=null; editBtn.classList.remove('holding'); } };
@@ -1914,6 +1980,7 @@ function bindGlobal(){
   const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();};
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
+  const placeByTapPref=el('pref-place-by-tap'); if(placeByTapPref) placeByTapPref.onchange=e=>{state.ui.placeByTap=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{}); renderPlacementBar();};
   ['pref-panel-mode','pref-allow-dangerous','pref-confirm-dangerous'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>saveGlobalPrefs().catch(()=>{}); });
   bindRangePreview('pref-halo-scale','haloScale','pref-halo-scale-value');
   bindRangePreview('pref-hardware-scale','hardwareScale','pref-hardware-scale-value');

@@ -1281,10 +1281,33 @@ body.editing .toolbar p{color:#7a8491!important}
 body.live-paused #connection-text::after{content:' · live paused';font-size:11px;color:#d9a441}
 
 
-/* v3.4.28 precise placement mode */
+/* v3.4.29 precise placement mode */
 .placement-bar{position:fixed;left:16px;right:16px;bottom:86px;z-index:960;display:flex;align-items:center;gap:14px;background:rgba(14,18,24,.96);border:1px solid rgba(240,179,75,.55);box-shadow:0 18px 60px rgba(0,0,0,.45);border-radius:18px;padding:12px 14px;color:#edf3fb}
 .placement-bar.hidden{display:none}
 .placement-info{min-width:0;flex:1}.placement-info strong{display:block;font-size:16px}.placement-info p{margin:3px 0 0;color:#b8c2cf;font-size:13px}.placement-actions{display:flex;gap:8px;flex-wrap:wrap}.placement-crosshair{width:34px;height:34px;border-radius:50%;border:2px solid #f0b34b;box-shadow:0 0 0 6px rgba(240,179,75,.16);position:relative;flex:0 0 auto}.placement-crosshair:before,.placement-crosshair:after{content:'';position:absolute;background:#f0b34b;left:50%;top:50%;transform:translate(-50%,-50%)}.placement-crosshair:before{width:20px;height:2px}.placement-crosshair:after{width:2px;height:20px}
 body.placing-mode .plan-stage:after,body.placing-mode .room-image-wrap:after{content:'';position:absolute;left:50%;top:50%;width:42px;height:42px;transform:translate(-50%,-50%);border:2px solid #f0b34b;border-radius:50%;box-shadow:0 0 0 9999px rgba(0,0,0,.04),0 0 0 8px rgba(240,179,75,.14);pointer-events:none;z-index:150}
 body.placing-mode .plan-stage:before,body.placing-mode .room-image-wrap:before{content:'';position:absolute;left:50%;top:50%;width:26px;height:26px;transform:translate(-50%,-50%);background:linear-gradient(#f0b34b,#f0b34b) center/26px 2px no-repeat,linear-gradient(#f0b34b,#f0b34b) center/2px 26px no-repeat;pointer-events:none;z-index:151}
 @media(max-width:760px),(hover:none) and (pointer:coarse){.placement-bar{left:10px;right:10px;bottom:76px;align-items:flex-start}.placement-info p{font-size:12px}.placement-actions button{min-height:42px}}
+
+/* v3.4.29 placement stability: real movable crosshair; tap-to-place is opt-in */
+body.placing-mode .plan-stage:after,
+body.placing-mode .room-image-wrap:after,
+body.placing-mode .plan-stage:before,
+body.placing-mode .room-image-wrap:before{display:none!important}
+.placement-aim{
+  position:fixed;
+  width:46px;height:46px;
+  margin-left:-23px;margin-top:-23px;
+  border:2px solid #f0b34b;
+  border-radius:50%;
+  box-shadow:0 0 0 8px rgba(240,179,75,.16),0 8px 28px rgba(0,0,0,.35);
+  z-index:955;
+  cursor:grab;
+  touch-action:none;
+  pointer-events:auto;
+  background:rgba(14,18,24,.10);
+}
+.placement-aim.hidden{display:none}
+.placement-aim:before,.placement-aim:after{content:'';position:absolute;background:#f0b34b;left:50%;top:50%;transform:translate(-50%,-50%)}
+.placement-aim:before{width:28px;height:2px}.placement-aim:after{width:2px;height:28px}
+.placement-aim:active{cursor:grabbing;box-shadow:0 0 0 10px rgba(240,179,75,.24),0 8px 32px rgba(0,0,0,.45)}
