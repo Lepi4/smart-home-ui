@@ -1212,7 +1212,7 @@ body.kiosk-mode .kiosk-rooms-btn{left:12px!important}
 @media(orientation:landscape) and (max-height:760px){.kiosk-lock-btn{right:88px;bottom:10px}.kiosk-lock-badge{bottom:12px;left:50%}}
 
 
-/* v3.4.25: edit Device Picker. In edit mode the live device panel is disabled;
+/* v3.4.26: edit Device Picker. In edit mode the live device panel is disabled;
    users select a device in this lightweight modal, then tap the map. */
 body.editing .device-panel{display:none!important}
 body.editing #btn-show-device-panel{display:none!important}
@@ -1235,3 +1235,47 @@ body.editing .workspace{grid-template-columns:minmax(0,1fr)!important}
   .device-picker-card-wrap{width:100vw;height:100dvh;max-height:100dvh;border-radius:0;border:0}
   .device-picker-tools{grid-template-columns:1fr;gap:7px;padding:8px 10px}.device-picker-tools .settings-check{font-size:12px}.device-picker-list{padding:8px 10px 12px}.device-picker-group-head{min-height:36px;padding:7px 9px;font-size:12px}.device-picker-group-head b{font-size:10px}.device-picker-items{grid-template-columns:1fr;max-height:48dvh;padding:6px;gap:6px}.device-picker-item{grid-template-columns:28px minmax(0,1fr) auto;padding:6px;gap:7px}.device-picker-item .dev-icon{width:28px;height:28px}.device-picker-text b{font-size:12px}.device-picker-text small{font-size:9px}.device-picker-select{font-size:10px;padding:4px 6px}
 }
+
+
+/* v3.4.26 — Lightweight Edit Mode. The dashboard becomes a static layout editor: no glow, no hover, no live visual states. */
+body.editing .device-marker,
+body.editing .badge,
+body.editing .room-zone,
+body.editing .dev-icon,
+body.editing .quick-icon{
+  animation:none!important;
+  transition:none!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+body.editing .device-marker::before,
+body.editing .dev-icon::before,
+body.editing .quick-icon::before{
+  display:none!important;
+  animation:none!important;
+}
+body.editing .device-marker{
+  background:rgba(30,34,40,.82)!important;
+  box-shadow:0 4px 10px rgba(0,0,0,.20)!important;
+}
+body.editing .device-marker.active,
+body.editing .device-marker.light-on,
+body.editing .device-marker.switch-on,
+body.editing .device-marker.cover-state-open,
+body.editing .device-marker.cover-state-partial{
+  background:rgba(30,34,40,.82)!important;
+  color:#fff!important;
+  box-shadow:0 4px 10px rgba(0,0,0,.20)!important;
+}
+body.editing .device-marker .marker-value,
+body.editing .sensor-room-value{display:none!important}
+body.editing .edit-marker-icon{display:flex;align-items:center;justify-content:center;line-height:1}
+body.editing .edit-marker-icon .icon-svg{width:18px!important;height:18px!important}
+body.editing .room-zone:hover{background:rgba(232,207,154,.08)!important}
+body.editing .device-card:hover,
+body.editing button:hover{transition:none!important}
+body.editing .quick-overlay-button,
+body.editing .quick-overlay{display:none!important}
+body.editing .toolbar p{color:#7a8491!important}
+body.live-paused #connection-text::after{content:' · live paused';font-size:11px;color:#d9a441}

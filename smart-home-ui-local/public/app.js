@@ -687,6 +687,17 @@ function renderNav(){
 }
 
 
+function pauseLiveDashboard(){
+  state.livePaused = true;
+  if(state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer=null; }
+  document.body.classList.add('live-paused');
+}
+function resumeLiveDashboard(){
+  state.livePaused = false;
+  document.body.classList.remove('live-paused');
+  startPolling();
+  loadStates().catch(()=>{});
+}
 function cloneLayout(layout){ return JSON.parse(JSON.stringify(layout || {})); }
 function setLayoutDirty(value=true){
   state.layoutDirty=!!value;
@@ -700,13 +711,14 @@ function updateEditButtons(){
   if(cancelBtn) cancelBtn.classList.toggle('hidden', !state.edit);
 }
 function enterEditMode(){
+  pauseLiveDashboard();
   state.editSnapshot=cloneLayout(state.layout);
   state.selectedEdit=null;
   state.placingDeviceId=null;
   state.edit=true;
   // On a touch overview screen the full 180+ device list is expensive and covers the map.
   // Start with both panels closed; the user opens Devices only when they need to place something.
-  // v3.4.25: edit mode uses a dedicated lightweight Device Picker instead of the heavy live device panel.
+  // v3.4.26: edit mode uses a dedicated lightweight Device Picker instead of the heavy live device panel.
   state.ui.hideDevicePanel=true;
   if(isMobilePanelMode()) state.ui.hideSidebar=true;
   setLayoutDirty(false);
@@ -718,6 +730,7 @@ async function saveEditChanges(){
   if(!state.layoutDirty){
     state.edit=false;
     state.editSnapshot=null;
+    resumeLiveDashboard();
     updateEditButtons();
     showToast('Изменений нет');
     render();
@@ -727,6 +740,7 @@ async function saveEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
+  resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения сохранены');
   render();
@@ -737,6 +751,7 @@ function cancelEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
+  resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения отменены');
   render();
@@ -755,7 +770,7 @@ function render(){
   el('overview-view').classList.toggle('active', isOverview);
   el('room-view').classList.toggle('active', !isOverview);
   el('page-title').textContent = isOverview ? 'Общий план' : room(state.selectedRoom).label;
-  el('page-subtitle').textContent = isOverview ? 'Тап по комнате открывает отдельный вид помещения' : 'Тап по устройству — действие, удержание — функции';
+  el('page-subtitle').textContent = state.edit ? 'Лёгкий редактор: живые состояния, меню и анимации временно отключены' : (isOverview ? 'Тап по комнате открывает отдельный вид помещения' : 'Тап по устройству — действие, удержание — функции');
   renderNav();
   if(isOverview){ renderOverview(); } else { renderRoom(); }
   renderDevices();
@@ -794,7 +809,7 @@ function metricContent(r){
 }
 function defaultMetricPos(r){return {x:clamp(r.x-r.w/4,2,98),y:clamp(r.y-r.h/4,2,98)}}
 function renderOverviewMetrics(){
-  const layer=el('overview-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return;
+  const layer=el('overview-metrics'); layer.innerHTML=''; if(state.edit) return; if(!el('toggle-sensors')?.checked)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
     const p=state.layout.overviewMetrics?.[r.id] || defaultMetricPos(r);
@@ -826,7 +841,7 @@ function renderRoom(){
   el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных датчиков температуры/влажности</span>';
 }
 function renderRoomMetrics(){
-  const layer=el('room-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
+  const layer=el('room-metrics'); layer.innerHTML=''; if(state.edit) return; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
   const stored=state.layout.roomMetrics?.[r.id] || {x:16,y:16};
   const p=roomStoredToImagePos(r.id, stored);
   const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
@@ -842,9 +857,10 @@ function renderRoomMarkers(){
 function markerEl(d,p,scope){
   const b=document.createElement('button');
   const renderPos = scope==='room' ? roomStoredToImagePos(state.selectedRoom, p) : p;
-  b.className='device-marker '+visualClass(d)+(shouldRenderSensorTextMarker(d, scope)?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
+  const editSimple = !!state.edit;
+  b.className='device-marker '+(editSimple?'edit-static':visualClass(d))+(shouldRenderSensorTextMarker(d, scope) && !editSimple?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
   b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.dataset.domain=d.domain||domainOf(d.entity_id); b.title=`${displayName(d)}\n${d.entity_id}`;
-  b.style.left=renderPos.x+'%'; b.style.top=renderPos.y+'%'; b.style.cssText += visualStyle(d); b.innerHTML=markerInnerHtml(d, scope);
+  b.style.left=renderPos.x+'%'; b.style.top=renderPos.y+'%'; if(!editSimple) b.style.cssText += visualStyle(d); b.innerHTML=editSimple?`<span class="edit-marker-icon">${iconMarkup(d)}</span>`:markerInnerHtml(d, scope);
   attachPressActions(b,d,{dragHandler:markerDown});
   b.addEventListener('contextmenu',e=>{
     e.preventDefault();
@@ -860,6 +876,7 @@ function bindQuickActions(container){
   qsa('[data-quick]',container).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.quick); if(d) attachPressActions(btn,d)});
 }
 function renderQuickActions(){
+  if(state.edit){ const box=el('quick-actions'); if(box) box.innerHTML='<p class="muted">Быстрые действия отключены в режиме редактирования.</p>'; const over=el('quick-overlay-list'); if(over) over.innerHTML=''; return; }
   const list=roomDevices(state.selectedRoom).filter(d=>['light','switch','cover','climate','media_player','fan','humidifier','input_number','input_select','valve','button','script','automation'].includes(d.domain)).slice(0,24);
   const box=el('quick-actions'); if(box){ box.innerHTML=quickActionsHtml(list); bindQuickActions(box); }
   const over=el('quick-overlay-list'); if(over){ over.innerHTML=quickActionsHtml(list); bindQuickActions(over); }
@@ -898,7 +915,7 @@ function bindDeviceCards(list){
   qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d) attachPressActions(btn,d)});
 }
 
-// v3.4.25: stable edit workflow. In edit mode the device list is a separate
+// v3.4.26: stable edit workflow. In edit mode the device list is a separate
 // lightweight picker, not a live panel over the map. This avoids mobile/landscape
 // scroll glitches and platform-specific panel bugs.
 function devicePickerCardHtml(d){
@@ -1362,8 +1379,9 @@ function placePendingDevice(kind,e){
   setMarkerPosition(id,kind,kind==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
   state.placingDeviceId=null;
   setLayoutDirty(true);
+  if(kind==='overview') renderOverviewMarkers(); else renderRoomMarkers();
   selectEditObject({kind:'marker',id,scope:kind,label:d?displayName(d):id});
-  render();
+  renderEditSheet();
   showToast('Устройство размещено');
   return true;
 }
@@ -1562,7 +1580,9 @@ function bindDrops(){
       const parent=scope==='overview'?el('overview-content'):el('room-content');
       const p=percentIn(parent,e.clientX,e.clientY);
       setMarkerPosition(id,scope,scope==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
-      setLayoutDirty(true); render();
+      setLayoutDirty(true);
+      if(scope==='overview') renderOverviewMarkers(); else renderRoomMarkers();
+      selectEditObject({kind:'marker',id,scope,label:d?displayName(d):id});
     });
   });
 }
@@ -1653,8 +1673,8 @@ async function clearConfig(){
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();render();setConnection(true,'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
-function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer);state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();if(!state.edit && !state.livePaused) render();setConnection(true,state.edit?'Редактор · live paused':'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
+function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer); if(state.edit || state.livePaused) return; state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
 
 function defaultSourceConfig(){return{version:1,selectedCards:{},defaultInclude:true,excludedCards:{'Физические устройства::Системные':true,'Вирт.устройства::Вирт.устройства':true},includeUnknownFromApi:false}}
 function isSourceKeyEnabled(sourceKey){const cfg=state.sourceConfig||defaultSourceConfig(); if(Object.prototype.hasOwnProperty.call(cfg.selectedCards||{},sourceKey))return!!cfg.selectedCards[sourceKey]; if((cfg.excludedCards||{})[sourceKey])return false; return cfg.defaultInclude!==false}
