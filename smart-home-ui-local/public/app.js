@@ -1518,7 +1518,22 @@ async function clearConfig(){
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();render();setConnection(true,'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
+async function loadStates(){
+  try{
+    const data=await apiJson('api/ha/states');
+    state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));
+    applySourceConfig();
+    // v3.4.23: do not fully re-render while editing. Polling every few seconds
+    // was rebuilding the map and the grouped device panel, causing flicker and
+    // resetting the scroll position on touch devices.
+    if(state.edit){
+      setConnection(true,'Подключено');
+      return;
+    }
+    render();
+    setConnection(true,'Подключено');
+  }catch(e){setConnection(false,'Ошибка обновления');console.error(e)}
+}
 function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer);state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
 
 function defaultSourceConfig(){return{version:1,selectedCards:{},defaultInclude:true,excludedCards:{'Физические устройства::Системные':true,'Вирт.устройства::Вирт.устройства':true},includeUnknownFromApi:false}}
@@ -1668,7 +1683,7 @@ function bindGlobal(){
   el('device-search').oninput=renderDevices;
   el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
   const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
-  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops();
+  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops(); bindDevicePanelScrollIsolation();
 
   el('btn-hide-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-show-sidebar').onclick=()=>setPanelHidden('hideSidebar', false);
@@ -1717,6 +1732,24 @@ window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); ap
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, 250), {passive:true});
 window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
 document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});
+
+
+// v3.4.23: isolate scrolling inside the Devices panel.
+// Some Android WebViews/BlueStacks builds bubble touch scrolls to the map layer,
+// which can trigger re-layout/repaint and make the open group jump back to the top.
+function bindDevicePanelScrollIsolation(){
+  const panel=el('device-panel');
+  if(!panel || panel.dataset.scrollIsolationBound==='1') return;
+  panel.dataset.scrollIsolationBound='1';
+  const stop=e=>{
+    if(e.target.closest('.device-panel')) e.stopPropagation();
+  };
+  panel.addEventListener('pointerdown', stop, {capture:true});
+  panel.addEventListener('pointermove', stop, {capture:true});
+  panel.addEventListener('touchstart', stop, {capture:true, passive:true});
+  panel.addEventListener('touchmove', stop, {capture:true, passive:true});
+  panel.addEventListener('wheel', stop, {capture:true, passive:true});
+}
 
 
 /* v3.4.12: keep mobile bottom bar and kiosk controls from covering open modals */

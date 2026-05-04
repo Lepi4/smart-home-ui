@@ -1197,3 +1197,43 @@ body.mobile-mode .device-group.open .device-group-items{
     touch-action:pan-y!important;
   }
 }
+
+/* v3.4.23: edit panel flicker/scroll reset fix */
+body.editing .plan-stage,
+body.editing .room-image-wrap{
+  contain:layout paint style;
+}
+body.editing:not(.hide-device-panel) .device-panel{
+  contain:layout paint style;
+  transform:translateZ(0);
+  backface-visibility:hidden;
+}
+body.editing:not(.hide-device-panel) .device-list{
+  overscroll-behavior:contain!important;
+  overflow-y:auto!important;
+  scrollbar-gutter:stable;
+  transform:translateZ(0);
+}
+body.editing:not(.hide-device-panel) .device-groups{
+  overflow:visible!important;
+  min-height:0!important;
+}
+body.editing:not(.hide-device-panel) .device-group.open{
+  overflow:hidden!important;
+}
+body.editing:not(.hide-device-panel) .device-group.open .device-group-items{
+  overflow-y:auto!important;
+  overscroll-behavior:contain!important;
+  -webkit-overflow-scrolling:touch!important;
+  touch-action:pan-y!important;
+  scrollbar-gutter:stable;
+}
+body.editing:not(.hide-device-panel) .device-card,
+body.editing:not(.hide-device-panel) .device-card *{
+  touch-action:pan-y!important;
+}
+@media (orientation:landscape) and (max-height:920px){
+  body.mobile-mode.editing:not(.hide-device-panel) .device-group.open .device-group-items{
+    max-height:calc(100dvh - 285px)!important;
+  }
+}
