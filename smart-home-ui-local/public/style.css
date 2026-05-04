@@ -1095,3 +1095,53 @@ body.mobile-mode.editing .device-card[draggable="true"]::after{content:'тап �
   }
   body.mobile-mode.editing:not(.hide-device-panel) .device-card{min-height:40px!important}
 }
+
+/* v3.4.16 overview edit performance mode */
+body.overview-edit-lite .canvas-card{contain:layout paint!important}
+body.overview-edit-lite .plan-content{will-change:transform!important;backface-visibility:hidden!important}
+body.overview-edit-lite .device-marker::before,
+body.overview-edit-lite .dev-icon::before,
+body.overview-edit-lite .quick-icon::before{animation:none!important;filter:none!important;opacity:.28!important}
+body.overview-edit-lite .device-marker,
+body.overview-edit-lite .badge,
+body.overview-edit-lite .room-zone{transition:none!important}
+body.overview-edit-lite .device-marker:not(.edit-selected){opacity:.86}
+body.overview-edit-lite .badge:not(.edit-selected){opacity:.78}
+body.overview-edit-lite .room-zone{background:rgba(232,207,154,.04)!important}
+body.overview-edit-lite .room-zone .zone-label{box-shadow:none!important}
+body.mobile-mode.overview-editing .edit-action-sheet{z-index:1435!important}
+body.mobile-mode.overview-editing:not(.hide-device-panel) .device-panel .device-list{contain:content!important}
+body.mobile-mode.overview-editing:not(.hide-device-panel) .device-panel .device-card{content-visibility:auto;contain-intrinsic-size:42px 320px}
+@media (orientation:landscape) and (max-height:920px){
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-panel{
+    width:min(310px,30vw)!important;
+    top:50px!important;
+    right:8px!important;
+    bottom:calc(58px + env(safe-area-inset-bottom,0px))!important;
+    padding:8px!important;
+  }
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-card{min-height:36px!important;grid-template-columns:25px 1fr auto!important;gap:6px!important;padding:6px!important}
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-card .dev-icon{width:25px!important;height:25px!important}
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-card .name{font-size:10.5px!important}
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-card .meta{font-size:8.8px!important}
+}
+
+/* v3.4.17 overview edit device accordion by room */
+.device-groups{display:flex;flex-direction:column;gap:7px;min-height:0}
+.device-group{border:1px solid rgba(255,211,120,.10);border-radius:12px;background:rgba(255,255,255,.025);overflow:hidden;flex:0 0 auto}
+.device-group.open{border-color:rgba(255,211,120,.28);background:rgba(255,211,120,.035)}
+.device-group-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;border:0;background:rgba(255,255,255,.035);color:#e9eef5;padding:9px 10px;border-radius:0;font-weight:850;min-height:38px;cursor:pointer}
+.device-group-head b{font-size:11px;color:#9aa6b4;font-weight:700;white-space:nowrap}
+.device-group.open .device-group-head{background:rgba(255,180,64,.10);color:#fff}
+.device-group-items{display:flex;flex-direction:column;gap:6px;padding:7px;max-height:none;overflow:visible}
+.device-group-more,.device-empty{padding:8px 10px;color:#9ba7b5;font-size:11px}
+body.mobile-mode.overview-editing:not(.hide-device-panel) .device-groups{gap:5px}
+body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-head{min-height:34px;padding:7px 8px;font-size:12px}
+body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-head b{font-size:9.5px;max-width:46%;overflow:hidden;text-overflow:ellipsis}
+body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-items{gap:5px;padding:5px}
+body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group:not(.open) .device-group-head{opacity:.92}
+@media (orientation:landscape) and (max-height:920px){
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-head{min-height:30px;padding:6px 7px;font-size:11px}
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-head b{font-size:8.5px}
+  body.mobile-mode.overview-editing:not(.hide-device-panel) .device-group-items{padding:4px;gap:4px}
+}

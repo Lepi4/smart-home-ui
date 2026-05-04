@@ -16,7 +16,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, openDeviceRoomGroup:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -659,7 +659,14 @@ function updateEditButtons(){
 function enterEditMode(){
   state.editSnapshot=cloneLayout(state.layout);
   state.selectedEdit=null;
+  state.placingDeviceId=null;
   state.edit=true;
+  // On a touch overview screen the full 180+ device list is expensive and covers the map.
+  // Start with both panels closed; the user opens Devices only when they need to place something.
+  if(state.selectedRoom==='overview' && isMobilePanelMode()){
+    state.ui.hideSidebar=true;
+    state.ui.hideDevicePanel=true;
+  }
   setLayoutDirty(false);
   showToast('Режим редактирования: изменения применятся только после сохранения.');
   render();
@@ -696,6 +703,8 @@ function cancelEditChanges(){
 function render(){
   document.body.classList.toggle('editing', state.edit);
   document.body.classList.toggle('viewing', !state.edit);
+  document.body.classList.toggle('overview-editing', !!(state.edit && state.selectedRoom==='overview'));
+  document.body.classList.toggle('overview-edit-lite', !!(state.edit && state.selectedRoom==='overview' && isMobilePanelMode()));
   const eb=el('edit-mode-badge'); if(eb){ eb.textContent=state.edit?(state.layoutDirty?'Редактирование · есть изменения':'Редактирование'):'Режим управления'; eb.className='edit-mode-badge '+(state.edit?'is-edit':'is-view'); }
   const be=el('btn-edit'); if(be){ be.classList.toggle('edit-active', state.edit); be.setAttribute('aria-pressed', String(state.edit)); }
   updateEditButtons();
@@ -818,22 +827,15 @@ function canDragDeviceFromList(d){
   if(state.selectedRoom==='overview') return true;
   return normalizedRoomId(d.room)===normalizedRoomId(state.selectedRoom);
 }
-function renderDevices(){
-  const list=el('device-list');
-  const q=(el('device-search').value||'').toLowerCase();
-  const showAllInRoom = state.selectedRoom!=='overview' && state.edit && !!state.ui.showAllDevicesInRoom;
-  const current=state.selectedRoom==='overview'||showAllInRoom?devices():roomDevices(state.selectedRoom);
-  const filtered=current.filter(d=>IMPORTANT_DOMAINS.has(d.domain)).filter(d=>(displayName(d)+' '+d.entity_id+' '+(d.category||'')+' '+(ROOM_MAP[d.room]?.label||'')).toLowerCase().includes(q));
-  el('devices-title').textContent=state.selectedRoom==='overview'?'Все устройства':(showAllInRoom?`Все устройства · ${room(state.selectedRoom).label}`:`Устройства: ${room(state.selectedRoom).label}`);
-  el('device-count').textContent=`${filtered.length} из ${current.length}`;
-  list.innerHTML=filtered.map(d=>{
-    const sameRoom = state.selectedRoom==='overview' || normalizedRoomId(d.room)===normalizedRoomId(state.selectedRoom);
-    const draggable = canDragDeviceFromList(d);
-    const roomLabel = ROOM_MAP[normalizedRoomId(d.room)]?.label || d.room || 'Без комнаты';
-    const extra = showAllInRoom && !sameRoom ? ` · ${esc(roomLabel)}` : '';
-    const title = draggable ? d.entity_id : `${d.entity_id}\nУстройство из другой комнаты. В этом патче перенос в текущую комнату отключён.`;
-    return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" draggable="${draggable?'true':'false'}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div><button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button></div>`;
-  }).join('');
+function deviceCardHtml(d, showAllInRoom=false){
+  const sameRoom = state.selectedRoom==='overview' || normalizedRoomId(d.room)===normalizedRoomId(state.selectedRoom);
+  const draggable = canDragDeviceFromList(d);
+  const roomLabel = ROOM_MAP[normalizedRoomId(d.room)]?.label || d.room || 'Без комнаты';
+  const extra = showAllInRoom && !sameRoom ? ` · ${esc(roomLabel)}` : '';
+  const title = draggable ? d.entity_id : `${d.entity_id}\nУстройство из другой комнаты. В этом патче перенос в текущую комнату отключён.`;
+  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" draggable="${draggable?'true':'false'}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div><button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button></div>`;
+}
+function bindDeviceCards(list){
   qsa('.device-card',list).forEach(card=>{
     card.ondragstart=e=>{
       const d=devices().find(x=>x.entity_id===card.dataset.entity);
@@ -852,6 +854,63 @@ function renderDevices(){
     const d=devices().find(x=>x.entity_id===card.dataset.entity); if(d) attachPressActions(card,d,{ignoreSelector:'button'});
   });
   qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d) attachPressActions(btn,d)});
+}
+function roomGroupLabel(roomId){
+  if(roomId==='__unplaced') return 'Неразмещённые';
+  if(roomId==='__noroom') return 'Без комнаты';
+  return ROOM_MAP[normalizedRoomId(roomId)]?.label || roomId || 'Без комнаты';
+}
+function renderOverviewEditDeviceGroups(list, filtered, q, current){
+  const overviewMarkers = state.layout.overviewMarkers || {};
+  const byRoom = new Map();
+  const unplaced = [];
+  filtered.forEach(d=>{
+    const rid = normalizedRoomId(d.room) || '__noroom';
+    if(!overviewMarkers[d.entity_id]) unplaced.push(d);
+    if(!byRoom.has(rid)) byRoom.set(rid, []);
+    byRoom.get(rid).push(d);
+  });
+  const ordered = [];
+  if(unplaced.length) ordered.push({id:'__unplaced', label:'Неразмещённые', items:unplaced});
+  ROOMS.forEach(r=>{ const arr=byRoom.get(normalizedRoomId(r.id)); if(arr?.length) ordered.push({id:normalizedRoomId(r.id), label:r.label, items:arr}); });
+  [...byRoom.entries()].filter(([rid])=>!ROOM_MAP[rid]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))).forEach(([rid,arr])=>ordered.push({id:rid, label:roomGroupLabel(rid), items:arr}));
+  if(!ordered.length){ list.innerHTML='<p class="muted device-empty">Нет устройств по текущему фильтру</p>'; return; }
+  if(!state.openDeviceRoomGroup || !ordered.some(g=>g.id===state.openDeviceRoomGroup)){
+    state.openDeviceRoomGroup = ordered[0].id;
+  }
+  const totalVisible = ordered.reduce((sum,g)=>sum + (g.id===state.openDeviceRoomGroup ? g.items.length : 0), 0);
+  el('devices-title').textContent='Добавить на общий план';
+  el('device-count').textContent=q ? `${filtered.length} найдено · ${current.length} всего` : `${ordered.length} групп · ${current.length} всего`;
+  list.innerHTML = `<div class="device-groups">${ordered.map(g=>{
+    const open = g.id===state.openDeviceRoomGroup;
+    const placed = g.items.filter(d=>overviewMarkers[d.entity_id]).length;
+    const unp = g.items.length - placed;
+    const items = open ? g.items.slice(0, q ? 90 : 80).map(d=>deviceCardHtml(d,false)).join('') : '';
+    const more = open && g.items.length > (q?90:80) ? `<div class="device-group-more">Показано ${q?90:80} из ${g.items.length}. Используйте поиск.</div>` : '';
+    const sub = g.id==='__unplaced' ? `${g.items.length} без маркера` : `${g.items.length} устройств${unp?`, ${unp} без маркера`:''}`;
+    return `<section class="device-group ${open?'open':''}" data-group="${esc(g.id)}"><button type="button" class="device-group-head" data-device-group="${esc(g.id)}"><span>${open?'▾':'▸'} ${esc(g.label)}</span><b>${esc(sub)}</b></button>${open?`<div class="device-group-items">${items}${more}</div>`:''}</section>`;
+  }).join('')}</div>`;
+  qsa('[data-device-group]',list).forEach(btn=>btn.onclick=()=>{ state.openDeviceRoomGroup=btn.dataset.deviceGroup; renderDevices(); });
+  bindDeviceCards(list);
+}
+function renderDevices(){
+  const list=el('device-list');
+  const q=(el('device-search').value||'').toLowerCase();
+  const showAllInRoom = state.selectedRoom!=='overview' && state.edit && !!state.ui.showAllDevicesInRoom;
+  const current=state.selectedRoom==='overview'||showAllInRoom?devices():roomDevices(state.selectedRoom);
+  const overviewEditLite = state.selectedRoom==='overview' && state.edit && isMobilePanelMode();
+  let filtered=current
+    .filter(d=>IMPORTANT_DOMAINS.has(d.domain))
+    .filter(d=>(displayName(d)+' '+d.entity_id+' '+(d.category||'')+' '+(ROOM_MAP[normalizedRoomId(d.room)]?.label||'')).toLowerCase().includes(q));
+  if(overviewEditLite){
+    renderOverviewEditDeviceGroups(list, filtered, q, current);
+    return;
+  }
+  let countSuffix = `${filtered.length} из ${current.length}`;
+  el('devices-title').textContent=state.selectedRoom==='overview'?'Все устройства':(showAllInRoom?`Все устройства · ${room(state.selectedRoom).label}`:`Устройства: ${room(state.selectedRoom).label}`);
+  el('device-count').textContent=countSuffix;
+  list.innerHTML=filtered.map(d=>deviceCardHtml(d, showAllInRoom)).join('');
+  bindDeviceCards(list);
 }
 
 function openDevice(d){ openDeviceModal(d); }
@@ -1068,7 +1127,7 @@ function startTouchPlaceDevice(entityId){
   if(!d || !canDragDeviceFromList(d)){ showToast('Это устройство нельзя разместить на текущем экране'); return; }
   state.placingDeviceId=entityId;
   closeMobilePanels();
-  showToast('Тапните место на карте, чтобы поставить устройство');
+  showToast(state.selectedRoom==='overview' ? 'Тапните место на общем плане' : 'Тапните место на карте, чтобы поставить устройство');
 }
 function placePendingDevice(kind,e){
   if(!state.edit || !state.placingDeviceId) return false;

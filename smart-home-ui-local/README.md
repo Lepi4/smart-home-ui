@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.15
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.15
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.17
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.17
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.15
+## Что умеет текущая версия v3.4.17
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.15"
+git commit -m "Update Smart Home UI add-on to v3.4.17"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.15
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.15
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.17
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.17
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,21 +294,15 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.15
+## Изменения v3.4.17
 
-- Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
-- Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.
-- Preview слайдеров применяется через `requestAnimationFrame`, сохранение происходит с debounce и при отпускании.
-- README расширен: добавлено подробное описание проекта, установка, структура, GHCR, Lovelace source, `/data`, layout coordinate rules и roadmap.
+- В режиме редактирования общего плана панель устройств теперь сгруппирована по комнатам.
+- Одновременно раскрыта только одна группа: открытие второй комнаты автоматически сворачивает предыдущую.
+- Добавлена группа «Неразмещённые» для устройств без маркера на общем плане.
+- В закрытых группах не рендерятся карточки устройств, поэтому общий план в edit mode меньше нагружает мобильный/landscape UI.
+- Сценарий размещения через touch сохранён: открыть комнату в списке → тапнуть устройство → тапнуть место на карте.
+- Поиск работает поверх групп и показывает только подходящие комнаты/устройства.
 
+## v3.4.17 — overview edit accordion
 
-## v3.4.15 — mobile panel stability
-
-This release fixes mobile panel behavior after the security/data-consistency update:
-
-- Rooms and Devices mobile panels are now mutually exclusive; opening one closes the other.
-- Tapping outside an open mobile panel closes it.
-- Rooms and Devices are rendered as compact bottom sheets above the mobile navigation bar.
-- The map is dimmed while a mobile panel is open, but the bottom navigation remains usable.
-- Selecting a room on mobile closes open panels automatically.
-- Device list scrolling is contained inside the panel and no longer drags the whole page.
+This release optimizes overview editing on touch devices and landscape screens. Instead of rendering 180+ device cards at once, the Devices panel shows room groups as an accordion. Only the active group renders its cards, which reduces layout/repaint cost and makes placing devices on the overview map easier.
