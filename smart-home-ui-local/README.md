@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.29
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.29
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.30
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.30
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.29
+## Что умеет текущая версия v3.4.30
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.29"
+git commit -m "Update Smart Home UI add-on to v3.4.30"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.29
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.29
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.30
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.30
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,7 +294,7 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.29
+## Изменения v3.4.30
 
 - В режиме редактирования общего плана панель устройств теперь сгруппирована по комнатам.
 - Одновременно раскрыта только одна группа: открытие второй комнаты автоматически сворачивает предыдущую.
@@ -303,22 +303,22 @@ entity.name = отображаемое имя устройства
 - Сценарий размещения через touch сохранён: открыть комнату в списке → тапнуть устройство → тапнуть место на карте.
 - Поиск работает поверх групп и показывает только подходящие комнаты/устройства.
 
-## v3.4.29 — overview edit accordion
+## v3.4.30 — overview edit accordion
 
 This release optimizes overview editing on touch devices and landscape screens. Instead of rendering 180+ device cards at once, the Devices panel shows room groups as an accordion. Only the active group renders its cards, which reduces layout/repaint cost and makes placing devices on the overview map easier.
 
-## Изменения v3.4.29
+## Изменения v3.4.30
 
 - В режиме редактирования общего плана список устройств всегда работает как аккордеон по комнатам.
 - Закрытые комнаты не рендерят карточки устройств, что снижает нагрузку на мобильных и в landscape.
 - Одновременно раскрыта только одна группа; повторный тап закрывает группу.
 
-## v3.4.29 — grouped edit device panel
+## v3.4.30 — grouped edit device panel
 
 In edit mode the device panel is now grouped by room on every screen, not only on mobile. Closed room groups do not render device cards, which reduces UI load on large dashboards. The media Lovelace parser also uses `heading` cards as source groups and tries to infer the actual room from the device name, so entries like “Алиса кабинет”, “Алиса гостиная”, or “ТВ гостиная” can be grouped with the corresponding room instead of falling into “Неразмещённые”.
 
 
-## v3.4.29 — HA Area fallback and edit groups
+## v3.4.30 — HA Area fallback and edit groups
 
 - В режиме редактирования панель устройств всегда группируется по комнатам, без зависимости от мобильной/desktop версии.
 - При редактировании конкретной комнаты её группа открывается сразу, чтобы не надо было раскрывать список вручную.
@@ -330,25 +330,32 @@ In edit mode the device panel is now grouped by room on every screen, not only o
 
 В режиме киоска доступна кнопка Lock/Unlock в нижнем углу. В состоянии Lock тапы по устройствам, датчикам и зонам игнорируются, чтобы случайно ничего не включить. В настройках есть Auto-lock: при включении киоск автоматически блокируется после заданного времени бездействия, по умолчанию 15 секунд.
 
-## v3.4.29: Device Picker в режиме редактирования
+## v3.4.30: Device Picker в режиме редактирования
 
 В режиме редактирования кнопка **Устройства** открывает отдельное окно выбора устройства. После выбора окно закрывается, а устройство ставится на карту следующим тапом. Это заменяет тяжёлую панель устройств поверх карты и работает одинаково на ПК и мобильных.
 
 
-## v3.4.29 — Lightweight Edit Mode
+## v3.4.30 — Lightweight Edit Mode
 
 В режиме редактирования приложение временно отключает живые обновления HA, glow-анимации, hover/long-press меню, быстрые действия и тяжёлые визуальные состояния маркеров. Редактор становится статичным и лёгким: выбрать устройство можно через Device Picker, затем тапнуть место на карте. После сохранения или отмены live dashboard включается снова.
 
-## Изменения v3.4.29
+## Изменения v3.4.30
 
 - Исправлена точность размещения устройств в редакторе: tap-to-place теперь считает координаты от фактического прямоугольника изображения, а не от контейнера карты.
 - Это особенно важно при zoom/pan, hardwareScale, landscape-режиме и запуске через Home Assistant Ingress/Android WebView.
 - Drag существующих маркеров также использует image-space координаты, чтобы маркер оставался там, где его отпустили.
 
 
-## v3.4.29 — precise placement and protected sensors
+## v3.4.30 — precise placement and protected sensors
 
 - В редакторе после выбора устройства появляется режим точного размещения с прицелом.
 - Для мобильных/landscape сценариев рекомендуется передвинуть план под прицел и нажать **Поставить здесь**.
 - Тап по карте остаётся быстрым вариантом, но прицел даёт стабильные координаты при zoom/pan/hardware scale.
 - Системные сдвоенные показатели температуры/влажности защищены от окончательного удаления: их можно двигать и сбрасывать позицию.
+
+
+## v3.4.30 — placement crosshair fix
+
+- Прицел размещения теперь скрывается при выходе из режима редактирования.
+- В placement mode карта может двигаться под прицелом по обеим осям в ограниченных пределах.
+- Размещение по тапу остаётся выключенным по умолчанию; основной способ — прицел + кнопка “Поставить здесь”.

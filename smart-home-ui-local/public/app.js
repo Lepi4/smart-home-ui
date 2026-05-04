@@ -242,8 +242,16 @@ function clampViewportPan(kind, v){
   const contentW=content.offsetWidth*scale, contentH=content.offsetHeight*scale;
   // The content is centered by flex layout before transform. Pan is therefore limited around zero.
   // This prevents the old "endless scroll" feeling on mobile/landscape.
-  const maxX = contentW > stageW ? Math.ceil((contentW-stageW)/2 + 80) : 0;
-  const maxY = contentH > stageH ? Math.ceil((contentH-stageH)/2 + 80) : 0;
+  let maxX = contentW > stageW ? Math.ceil((contentW-stageW)/2 + 80) : 0;
+  let maxY = contentH > stageH ? Math.ceil((contentH-stageH)/2 + 80) : 0;
+  // v3.4.30: in placement mode the user must be able to move the map
+  // under the crosshair in both directions, even when the fitted image is
+  // narrower/wider than the stage. Limit the extra pan to roughly half a
+  // screen so it stays bounded and does not reintroduce endless scrolling.
+  if(state.edit && state.placingDeviceId){
+    maxX = Math.max(maxX, Math.ceil(stageW * 0.50));
+    maxY = Math.max(maxY, Math.ceil(stageH * 0.50));
+  }
   v.panX=clamp(Number(v.panX)||0, -maxX, maxX);
   v.panY=clamp(Number(v.panY)||0, -maxY, maxY);
   return v;
@@ -736,7 +744,7 @@ async function saveEditChanges(){
   if(!state.layoutDirty){
     state.edit=false;
     state.editSnapshot=null;
-    state.placingDeviceId=null; state.placingKind=null; renderPlacementBar();
+    state.placingDeviceId=null; state.placingKind=null; state.crosshairDragging=false; renderPlacementBar();
     resumeLiveDashboard();
     updateEditButtons();
     showToast('Изменений нет');
@@ -747,7 +755,7 @@ async function saveEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
-  state.placingDeviceId=null; state.placingKind=null; renderPlacementBar();
+  state.placingDeviceId=null; state.placingKind=null; state.crosshairDragging=false; renderPlacementBar();
   resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения сохранены');
@@ -759,7 +767,7 @@ function cancelEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
-  state.placingDeviceId=null; state.placingKind=null; renderPlacementBar();
+  state.placingDeviceId=null; state.placingKind=null; state.crosshairDragging=false; renderPlacementBar();
   resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения отменены');
@@ -767,6 +775,11 @@ function cancelEditChanges(){
 }
 
 function render(){
+  if(!state.edit && state.placingDeviceId){
+    state.placingDeviceId=null;
+    state.placingKind=null;
+    state.crosshairDragging=false;
+  }
   document.body.classList.toggle('editing', state.edit);
   document.body.classList.toggle('viewing', !state.edit);
   document.body.classList.toggle('overview-editing', !!(state.edit && state.selectedRoom==='overview'));
@@ -1372,7 +1385,14 @@ function renderPlacementBar(){
   const active=!!(state.edit && state.placingDeviceId);
   bar.classList.toggle('hidden', !active);
   document.body.classList.toggle('placing-mode', active);
-  if(!active) return;
+  const aim=el('placement-aim');
+  if(!active){
+    if(aim) aim.classList.add('hidden');
+    state.crosshairDragging=false;
+    return;
+  }
+  // Re-apply viewport constraints now that placement mode allows extra bounded pan.
+  applyStageTransform(activeStageKind());
   const d=devices().find(x=>x.entity_id===state.placingDeviceId);
   const title=el('placement-title');
   const hint=el('placement-hint');
@@ -1393,6 +1413,7 @@ function startTouchPlaceDevice(entityId){
 function cancelPlacement(){
   state.placingDeviceId=null;
   state.placingKind=null;
+  state.crosshairDragging=false;
   renderPlacementBar();
   showToast('Размещение отменено');
 }
@@ -1467,6 +1488,7 @@ function placeDeviceAtImagePercent(kind,p){
   setMarkerPosition(id,kind,kind==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
   state.placingDeviceId=null;
   state.placingKind=null;
+  state.crosshairDragging=false;
   renderPlacementBar();
   setLayoutDirty(true);
   if(kind==='overview') renderOverviewMarkers(); else renderRoomMarkers();

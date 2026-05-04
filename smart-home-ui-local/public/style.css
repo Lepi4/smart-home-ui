@@ -1311,3 +1311,8 @@ body.placing-mode .room-image-wrap:before{display:none!important}
 .placement-aim:before,.placement-aim:after{content:'';position:absolute;background:#f0b34b;left:50%;top:50%;transform:translate(-50%,-50%)}
 .placement-aim:before{width:28px;height:2px}.placement-aim:after{width:2px;height:28px}
 .placement-aim:active{cursor:grabbing;box-shadow:0 0 0 10px rgba(240,179,75,.24),0 8px 32px rgba(0,0,0,.45)}
+
+/* v3.4.30 placement cleanup */
+body:not(.placing-mode) .placement-aim{display:none!important}
+body.placing-mode .placement-aim{display:block}
+body.editing.placing-mode .plan-stage,body.editing.placing-mode .room-image-wrap{touch-action:none!important}
