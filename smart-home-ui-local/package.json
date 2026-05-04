@@ -1,6 +1,6 @@
 {
   "name": "smart-home-ui-ha-addon",
-  "version": "3.4.26",
+  "version": "3.4.27",
   "private": true,
   "type": "commonjs",
   "scripts": {

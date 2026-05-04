@@ -718,7 +718,7 @@ function enterEditMode(){
   state.edit=true;
   // On a touch overview screen the full 180+ device list is expensive and covers the map.
   // Start with both panels closed; the user opens Devices only when they need to place something.
-  // v3.4.26: edit mode uses a dedicated lightweight Device Picker instead of the heavy live device panel.
+  // v3.4.27: edit mode uses a dedicated lightweight Device Picker instead of the heavy live device panel.
   state.ui.hideDevicePanel=true;
   if(isMobilePanelMode()) state.ui.hideSidebar=true;
   setLayoutDirty(false);
@@ -915,7 +915,7 @@ function bindDeviceCards(list){
   qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d) attachPressActions(btn,d)});
 }
 
-// v3.4.26: stable edit workflow. In edit mode the device list is a separate
+// v3.4.27: stable edit workflow. In edit mode the device list is a separate
 // lightweight picker, not a live panel over the map. This avoids mobile/landscape
 // scroll glitches and platform-specific panel bugs.
 function devicePickerCardHtml(d){
@@ -1374,8 +1374,7 @@ function placePendingDevice(kind,e){
     state.placingDeviceId=null;
     return true;
   }
-  const parent=kind==='overview'?el('overview-content'):el('room-content');
-  const p=percentIn(parent,e.clientX,e.clientY);
+  const p=eventImagePercent(kind,e);
   setMarkerPosition(id,kind,kind==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
   state.placingDeviceId=null;
   setLayoutDirty(true);
@@ -1478,7 +1477,23 @@ async function toggleDevice(d){
   catch(e){showToast('Ошибка управления: '+e.message)}
 }
 
-function percentIn(element,cx,cy){const r=element.getBoundingClientRect();return {x:clamp((cx-r.left)/r.width*100,0,100),y:clamp((cy-r.top)/r.height*100,0,100)}}
+function percentIn(element,cx,cy){const r=element.getBoundingClientRect();return {x:clamp((cx-r.left)/Math.max(1,r.width)*100,0,100),y:clamp((cy-r.top)/Math.max(1,r.height)*100,0,100)}}
+// v3.4.27: for placing and dragging markers use the actual rendered image rect,
+// not the stage/container box. This keeps tap-to-place accurate with zoom/pan,
+// hardwareScale, landscape mode and Home Assistant ingress scaling.
+function imagePercentIn(kind,cx,cy){
+  const img = el(kind==='overview' ? 'overview-image' : 'room-image');
+  const content = el(kind==='overview' ? 'overview-content' : 'room-content');
+  const target = img || content;
+  if(!target) return {x:50,y:50};
+  const r = target.getBoundingClientRect();
+  if(!r.width || !r.height) return percentIn(content || target, cx, cy);
+  return {x:clamp((cx-r.left)/r.width*100,0,100),y:clamp((cy-r.top)/r.height*100,0,100)};
+}
+function eventImagePercent(kind,e){
+  const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+  return imagePercentIn(kind, t.clientX, t.clientY);
+}
 function zoneDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const z=e.currentTarget; const id=z.dataset.room; const r=roomWithLayout(id); selectEditObject({kind:'zone',id,scope:'overview',label:r.label}); const p=percentIn(el('overview-content'),e.clientX,e.clientY); state.dragged={kind:e.target.dataset.handle==='resize'?'zoneResize':'zone',id,start:p,room:{...r},el:z}; bindDrag(); }
 function metricDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const parent=b.dataset.kind==='overviewMetric'?el('overview-content'):el('room-content'); selectEditObject({kind:b.dataset.kind,id:b.dataset.room,scope:b.dataset.kind==='overviewMetric'?'overview':'room',label:room(b.dataset.room)?.label||b.dataset.room}); state.dragged={kind:b.dataset.kind,id:b.dataset.room,el:b,parent}; bindDrag(); }
 function markerDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const d=devices().find(x=>x.entity_id===b.dataset.entity); selectEditObject({kind:'marker',id:b.dataset.entity,scope:b.dataset.scope,label:d?displayName(d):b.dataset.entity}); const parent=b.dataset.scope==='overview'?el('overview-content'):el('room-content'); state.dragged={kind:'marker',id:b.dataset.entity,scope:b.dataset.scope,el:b,parent}; bindDrag(); }
@@ -1487,7 +1502,7 @@ function dragMove(e){ const d=state.dragged; if(!d)return; state.dragMoved=true;
   const p=percentIn(d.parent,e.clientX,e.clientY);
   if(d.kind==='overviewMetric'){ d.el.style.left=p.x+'%'; d.el.style.top=p.y+'%'; state.layout.overviewMetrics[d.id]=p; }
   else if(d.kind==='roomMetric'){ const stored=roomImageToStoredPos(d.id, p); const renderPos=roomStoredToImagePos(d.id, stored); d.el.style.left=renderPos.x+'%'; d.el.style.top=renderPos.y+'%'; if(!state.layout.roomMetrics)state.layout.roomMetrics={}; state.layout.roomMetrics[d.id]=stored; }
-  else if(d.kind==='marker'){ if(d.scope==='room'){ const stored=roomImageToStoredPos(state.selectedRoom, p); const renderPos=roomStoredToImagePos(state.selectedRoom, stored); d.el.style.left=renderPos.x+'%'; d.el.style.top=renderPos.y+'%'; setMarkerPosition(d.id,d.scope,stored); } else { d.el.style.left=p.x+'%'; d.el.style.top=p.y+'%'; setMarkerPosition(d.id,d.scope,p); } } }
+  else if(d.kind==='marker'){ const mp=imagePercentIn(d.scope,e.clientX,e.clientY); if(d.scope==='room'){ const stored=roomImageToStoredPos(state.selectedRoom, mp); const renderPos=roomStoredToImagePos(state.selectedRoom, stored); d.el.style.left=renderPos.x+'%'; d.el.style.top=renderPos.y+'%'; setMarkerPosition(d.id,d.scope,stored); } else { d.el.style.left=mp.x+'%'; d.el.style.top=mp.y+'%'; setMarkerPosition(d.id,d.scope,mp); } } }
 function dragUp(){ if(state.dragMoved){ state.suppressClick=true; setLayoutDirty(true); renderEditSheet(); } state.dragged=null; setTimeout(()=>state.suppressClick=false,DRAG_SUPPRESS_MS) }
 
 
@@ -1577,8 +1592,7 @@ function bindDrops(){
       const d=devices().find(x=>x.entity_id===id);
       if(scope==='room' && d && normalizedRoomId(d.room)!==normalizedRoomId(state.selectedRoom)){ e.preventDefault(); showToast('Перенос устройств между комнатами пока отключён'); return; }
       e.preventDefault();
-      const parent=scope==='overview'?el('overview-content'):el('room-content');
-      const p=percentIn(parent,e.clientX,e.clientY);
+      const p=eventImagePercent(scope,e);
       setMarkerPosition(id,scope,scope==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
       setLayoutDirty(true);
       if(scope==='overview') renderOverviewMarkers(); else renderRoomMarkers();
