@@ -1,7 +1,15 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FAQ — Smart Home UI Local v3.4.2</title><link rel="stylesheet" href="style.css"></head><body style="display:block;overflow:auto;padding:24px;max-width:980px;margin:auto">
-<h1>FAQ — Smart Home UI Local v3.4.2</h1>
-<p>Версия 3.4.2 продолжает стабилизацию Home Assistant add-on: данные вынесены в <code>/data</code>, вид панели восстанавливается после переустановки add-on, добавлены kiosk mode, масштаб/прозрачность датчиков и маркеров.</p>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FAQ — Smart Home UI Local v3.4.4</title><link rel="stylesheet" href="style.css"></head><body style="display:block;overflow:auto;padding:24px;max-width:980px;margin:auto">
+<h1>FAQ — Smart Home UI Local v3.4.4</h1>
+<p>Версия 3.4.4 продолжает стабилизацию Home Assistant add-on: данные вынесены в <code>/data</code>, вид панели восстанавливается после переустановки add-on, добавлены kiosk mode, масштаб/прозрачность датчиков и маркеров.</p>
+<h2>Что изменено в v3.4.4</h2>
+<ul>
+  <li>Кнопка выхода из киоска перенесена вниз, чтобы не перекрывать управление масштабом.</li>
+  <li>Верхняя вторая кнопка FAQ заменена на кнопку <b>Киоск</b>.</li>
+  <li>Мобильные панели комнат и устройств стали компактнее; список устройств получил кнопку закрытия в верхней части панели.</li>
+  <li>Прозрачность теперь задаётся по понятной шкале 0–100%, где большее значение означает более прозрачный фон. Текст и значения датчиков не становятся прозрачными.</li>
+</ul>
+
 <h2>1. Где хранятся данные?</h2><p>Все runtime-данные хранятся вне контейнера, в папке данных add-on: <code>/data</code>. При удалении add-on Home Assistant спрашивает, удалять ли данные. Если отказаться от удаления данных, после установки заново layout, импортированные устройства, source config, backups и состояние вида восстанавливаются.</p>
 <h2>2. Какие файлы важны в /data?</h2><ul><li><code>/data/layout.json</code> — расположение зон, датчиков и маркеров.</li><li><code>/data/backups/</code> — резервные копии layout.</li><li><code>/data/addon_config.json</code> — настройки add-on и источников панели.</li><li><code>/data/source_config.json</code> — включённые/исключённые источники Lovelace.</li><li><code>/data/ui_state.json</code> — последний вид, скрытые панели, kiosk mode, масштаб и pan.</li><li><code>/data/devices.js</code> и <code>/data/lovelace-source.js</code> — импортированные устройства и источник.</li></ul>
 <h2>3. Как подключается Home Assistant?</h2><p>Адрес и long-lived token не вводятся. Add-on использует Supervisor API и <code>SUPERVISOR_TOKEN</code>. В <code>config.yaml</code> включено <code>homeassistant_api: true</code>.</p>
@@ -40,4 +48,4 @@ views:
           - entity: cover.living_room_curtain
             name: Шторы</code></pre>
 <h2>16. Что делать, если устройство не работает?</h2><p>Сначала откройте диагностику. Если entity попал в список “Не найдены в HA”, проверьте переименование в Home Assistant или перечитайте RAW панели.</p>
-</body></html>
+<h2>v3.4.4: навигация в режиме киоска</h2><p>В режиме киоска остаётся компактная кнопка <b>Комнаты</b> внизу слева. Она открывает список комнат поверх карты на 10 секунд и содержит пункт <b>Общий план</b>, чтобы можно было выйти из отдельной комнаты без отключения киоска.</p></body></html>

@@ -69,7 +69,7 @@ function defaultUiState(){
       mobileMode:false, autoHide:false, compact:false, darkTheme:true,
       kioskWidget:false, kioskMode:false, weatherEntity:'',
       haloScale:0.50, hardwareScale:1.00,
-      markerScale:1.00, sensorScale:1.00, markerOpacity:1.00, sensorOpacity:1.00,
+      markerScale:1.00, sensorScale:1.00, markerOpacity:0.00, sensorOpacity:0.00,
       showAllDevicesInRoom:false
     },
     viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },

@@ -3,11 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.2</title>
+  <title>Smart Home UI HA Add-on v3.4.4</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <button type="button" id="btn-kiosk-rooms" class="kiosk-rooms-btn" title="Открыть список комнат в режиме киоска">☰ Комнаты</button>
   <button type="button" id="btn-exit-kiosk" class="kiosk-exit-btn" title="Выйти из режима киоска">⋮ Выйти</button>
+  <div id="kiosk-room-overlay" class="kiosk-room-overlay hidden" aria-label="Список комнат в режиме киоска">
+    <div class="kiosk-room-head"><strong>Комнаты</strong><button type="button" id="btn-close-kiosk-rooms">×</button></div>
+    <button type="button" id="btn-kiosk-overview" class="kiosk-room-item kiosk-overview-item">Общий план</button>
+    <div id="kiosk-room-list" class="kiosk-room-list"></div>
+  </div>
   <div id="mobile-menu-bar" class="mobile-menu-bar"><a class="button-link mobile-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← HA</a><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button></div>
   <button type="button" id="btn-show-sidebar" class="floating-menu-btn left hidden">☰ Комнаты</button>
   <button type="button" id="btn-show-device-panel" class="floating-menu-btn right hidden">Устройства</button>
@@ -40,7 +46,7 @@
         <button type="button" id="btn-toggle-toolbar" title="Скрыть верхнее меню">Скрыть верх</button>
         <button type="button" id="btn-toggle-devices-panel" title="Скрыть список устройств">Скрыть список</button>
         <button type="button" id="btn-fullscreen">Полный экран</button>
-        <a class="button-link toolbar-faq" href="FAQ.html" target="_blank" rel="noopener">FAQ</a>
+        <button type="button" id="btn-toolbar-kiosk" class="toolbar-kiosk" title="Включить режим киоска">Киоск</button>
         <button type="button" id="btn-edit">Редактировать</button>
         <button type="button" id="btn-save-edit" class="hidden">Сохранить изменения</button>
         <button type="button" id="btn-cancel-edit" class="hidden">Отменить изменения</button>
@@ -125,6 +131,7 @@
         <div class="panel-head">
           <h2 id="devices-title">Все устройства</h2>
           <span id="device-count"></span>
+          <button type="button" id="btn-close-mobile-device-panel" class="panel-close-btn" title="Закрыть список устройств">×</button>
         </div>
         <input id="device-search" class="search" placeholder="Поиск устройства...">
         <label class="settings-check device-filter-check"><input type="checkbox" id="pref-show-all-devices-room"> В редактировании показывать все устройства</label>
@@ -155,9 +162,9 @@
         <label>Размер ореолов <input id="pref-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-halo-scale-value">50%</span></label>
         <label>Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
         <label>Масштаб маркеров устройств <input id="pref-marker-scale" type="range" min="50" max="200" value="100"><span id="pref-marker-scale-value">100%</span></label>
-        <label>Прозрачность маркеров устройств <input id="pref-marker-opacity" type="range" min="20" max="100" value="100"><span id="pref-marker-opacity-value">100%</span></label>
+        <label>Прозрачность фона маркеров <input id="pref-marker-opacity" type="range" min="0" max="100" value="0"><span id="pref-marker-opacity-value">0%</span></label>
         <label>Масштаб датчиков <input id="pref-sensor-scale" type="range" min="50" max="200" value="100"><span id="pref-sensor-scale-value">100%</span></label>
-        <label>Прозрачность датчиков <input id="pref-sensor-opacity" type="range" min="20" max="100" value="100"><span id="pref-sensor-opacity-value">100%</span></label>
+        <label>Прозрачность фона датчиков <input id="pref-sensor-opacity" type="range" min="0" max="100" value="0"><span id="pref-sensor-opacity-value">0%</span></label>
         <p class="muted">Масштаб карты меняется двумя пальцами или кнопками +/−. Аппаратный масштаб задаёт базовый размер плана для конкретной панели/экрана. Вид, масштаб, скрытые панели и kiosk mode сохраняются в /data/ui_state.json и восстанавливаются после переустановки add-on, если данные не удалить.</p>
       </div>
       <div class="source-tools">

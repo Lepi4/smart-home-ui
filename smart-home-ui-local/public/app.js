@@ -14,7 +14,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, markerOpacity:1.00, sensorOpacity:1.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null
 };
@@ -149,8 +149,8 @@ function applyUiPrefs(){
   const mobileSensorFactor = isNarrowMobile ? 0.72 : 1;
   document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .5, 2) * mobileMarkerFactor));
   document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .5, 2) * mobileSensorFactor));
-  document.documentElement.style.setProperty('--marker-opacity', String(clamp(Number(state.ui.markerOpacity ?? 1), .2, 1)));
-  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(Number(state.ui.sensorOpacity ?? 1), .2, 1)));
+  document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(state.ui.markerOpacity ?? 0), 0, 1))); // setting is background transparency
+  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(state.ui.sensorOpacity ?? 0), 0, 1))); // setting is background transparency
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
   const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel || state.ui.kioskMode);
   const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar || state.ui.kioskMode);
@@ -170,8 +170,8 @@ function applyUiPrefs(){
   const hw=el('pref-hardware-scale'); if(hw){ hw.value=String(Math.round(Number(state.ui.hardwareScale ?? 1)*100)); const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=hw.value+'%'; }
   const ms=el('pref-marker-scale'); if(ms){ ms.value=String(Math.round(Number(state.ui.markerScale ?? 1)*100)); const mv=el('pref-marker-scale-value'); if(mv) mv.textContent=ms.value+'%'; }
   const ss=el('pref-sensor-scale'); if(ss){ ss.value=String(Math.round(Number(state.ui.sensorScale ?? 1)*100)); const sv=el('pref-sensor-scale-value'); if(sv) sv.textContent=ss.value+'%'; }
-  const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 1)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
-  const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 1)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
+  const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 0)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
+  const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 0)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
 function normalizedRoomId(id){return id==='boiler'?'laundry':id}
@@ -1091,6 +1091,31 @@ function bindDrops(){
   });
 }
 
+function hideKioskRooms(){
+  const o=el('kiosk-room-overlay');
+  if(o) o.classList.add('hidden');
+  if(state.kioskRoomTimer){ clearTimeout(state.kioskRoomTimer); state.kioskRoomTimer=null; }
+}
+function renderKioskRoomOverlay(){
+  const list=el('kiosk-room-list'); if(!list) return;
+  list.innerHTML='';
+  ROOMS.forEach(r=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='kiosk-room-item'+(normalizedRoomId(state.selectedRoom)===normalizedRoomId(r.id)?' active':'');
+    b.textContent=r.label;
+    b.onclick=()=>{ selectRoom(r.id); hideKioskRooms(); };
+    list.appendChild(b);
+  });
+}
+function openKioskRooms(){
+  renderKioskRoomOverlay();
+  const o=el('kiosk-room-overlay'); if(!o) return;
+  o.classList.remove('hidden');
+  if(state.kioskRoomTimer) clearTimeout(state.kioskRoomTimer);
+  state.kioskRoomTimer=setTimeout(hideKioskRooms, 10000);
+}
+
 function selectRoom(id){
   state.selectedRoom=id;
   if(state.ui.autoHide && state.ui.mobileMode){
@@ -1292,9 +1317,14 @@ function bindGlobal(){
   el('btn-show-toolbar').onclick=()=>setPanelHidden('hideToolbar', false);
   el('btn-mobile-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-mobile-devices').onclick=()=>setPanelHidden('hideDevicePanel', !state.ui.hideDevicePanel);
+  const closeMobileDevicePanel=el('btn-close-mobile-device-panel'); if(closeMobileDevicePanel) closeMobileDevicePanel.onclick=()=>setPanelHidden('hideDevicePanel', true);
+  const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); showToast('Режим киоска включён'); };
   el('btn-mobile-settings').onclick=()=>el('settings-modal').classList.remove('hidden');
   const exitKiosk=el('btn-exit-kiosk');
-  if(exitKiosk) exitKiosk.onclick=()=>{ state.ui.kioskMode=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
+  if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
+  const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
+  const closeKioskRooms=el('btn-close-kiosk-rooms'); if(closeKioskRooms) closeKioskRooms.onclick=hideKioskRooms;
+  const kioskOverview=el('btn-kiosk-overview'); if(kioskOverview) kioskOverview.onclick=()=>{ selectRoom('overview'); hideKioskRooms(); };
   el('pref-mobile-mode').onchange=e=>{state.ui.mobileMode=e.target.checked; saveUiPrefs();};
   el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
