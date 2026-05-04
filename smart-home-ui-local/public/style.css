@@ -1043,3 +1043,55 @@ body.mobile-mode.mobile-devices-open #btn-mobile-devices{background:#203a60!impo
   body.mobile-mode .device-panel .panel-head h2{font-size:16px!important}
   body.mobile-mode .device-panel .search{height:34px!important}
 }
+
+/* v3.4.15 mobile panel fixes: compact sheets, no map flicker, edit-friendly device placement. */
+body.mobile-mode.mobile-panel-open .canvas-card{filter:none!important;transition:none!important}
+body.mobile-mode.mobile-panel-open::after{display:none!important;content:none!important}
+
+body.mobile-mode:not(.hide-sidebar) .sidebar{
+  display:flex!important;
+  position:fixed!important;
+  left:10px!important;right:10px!important;top:auto!important;
+  bottom:calc(58px + env(safe-area-inset-bottom,0px))!important;
+  width:auto!important;height:auto!important;max-height:42dvh!important;
+  min-height:0!important;z-index:1455!important;
+  border-radius:16px!important;padding:10px!important;overflow:hidden!important;
+  background:rgba(15,20,27,.99)!important;box-shadow:0 -14px 44px rgba(0,0,0,.42)!important;
+}
+body.mobile-mode:not(.hide-sidebar) .sidebar .top-actions{display:flex!important;margin:0 0 8px!important;min-height:34px!important}
+body.mobile-mode:not(.hide-sidebar) .sidebar .top-actions #btn-hide-sidebar{display:inline-flex!important;margin-left:auto!important}
+body.mobile-mode .room-nav{max-height:calc(42dvh - 56px)!important;overflow:auto!important;overscroll-behavior:contain!important;touch-action:pan-y!important}
+body.mobile-mode .room-btn{min-height:36px!important}
+
+/* Devices list: bottom sheet for normal mobile, right drawer in edit/landscape so the map remains usable. */
+body.mobile-mode:not(.hide-device-panel) .device-panel{
+  display:flex!important;
+  position:fixed!important;
+  left:10px!important;right:10px!important;top:auto!important;
+  bottom:calc(58px + env(safe-area-inset-bottom,0px))!important;
+  width:auto!important;height:min(48dvh,330px)!important;max-height:min(48dvh,330px)!important;
+  z-index:1455!important;border-radius:16px!important;padding:9px!important;overflow:hidden!important;
+  background:rgba(15,20,27,.99)!important;box-shadow:0 -14px 44px rgba(0,0,0,.42)!important;
+}
+body.mobile-mode .device-panel .panel-head h2{font-size:15px!important;margin:0!important}
+body.mobile-mode .device-panel .panel-head span{font-size:10px!important}
+body.mobile-mode .device-filter-check{font-size:11px!important;line-height:1.2!important;margin:0 0 5px!important}
+body.mobile-mode .device-card[draggable="true"]{touch-action:none!important}
+body.mobile-mode.editing .device-card[draggable="true"]{outline:1px dashed rgba(255,211,120,.35)!important}
+body.mobile-mode.editing .device-card[draggable="true"]::after{content:'тап → место на карте';font-size:9px!important;color:#ffd38a!important;right:8px!important;bottom:5px!important}
+
+@media (orientation: landscape) and (max-height:920px){
+  body.mobile-mode:not(.hide-sidebar) .sidebar{
+    height:auto!important;max-height:34dvh!important;left:10px!important;right:10px!important;bottom:calc(52px + env(safe-area-inset-bottom,0px))!important;
+  }
+  body.mobile-mode .room-nav{grid-template-columns:repeat(4,minmax(0,1fr))!important;max-height:calc(34dvh - 52px)!important}
+  body.mobile-mode:not(.hide-device-panel) .device-panel{
+    height:min(46dvh,300px)!important;max-height:min(46dvh,300px)!important;left:10px!important;right:10px!important;bottom:calc(52px + env(safe-area-inset-bottom,0px))!important;
+  }
+  body.mobile-mode.editing:not(.hide-device-panel) .device-panel{
+    left:auto!important;right:10px!important;top:54px!important;bottom:calc(58px + env(safe-area-inset-bottom,0px))!important;
+    width:min(350px,32vw)!important;height:auto!important;max-height:none!important;border-radius:16px!important;
+    box-shadow:-14px 0 44px rgba(0,0,0,.42)!important;
+  }
+  body.mobile-mode.editing:not(.hide-device-panel) .device-card{min-height:40px!important}
+}

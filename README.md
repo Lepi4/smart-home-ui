@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.14
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.14
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.15
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.15
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.14
+## Что умеет текущая версия v3.4.15
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.14"
+git commit -m "Update Smart Home UI add-on to v3.4.15"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.14
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.14
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.15
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.15
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,14 +294,14 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.14
+## Изменения v3.4.15
 
 - Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
 - Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.
 - Preview слайдеров применяется через `requestAnimationFrame`, сохранение происходит с debounce и при отпускании.
 - README расширен: добавлено подробное описание проекта, установка, структура, GHCR, Lovelace source, `/data`, layout coordinate rules и roadmap.
 
-## v3.4.14 — data consistency and security
+## v3.4.15 — data consistency and security
 
 This release separates shared settings from device-local state:
 
@@ -323,7 +323,7 @@ Setup-from-scratch foundation:
 - images from `/data/images` are exposed as `/media/...`, ready for the upcoming room/image manager.
 
 
-## v3.4.14 — mobile panel stability
+## v3.4.15 — mobile panel stability
 
 This release fixes mobile panel behavior after the security/data-consistency update:
 

@@ -16,7 +16,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, weatherEntity:'' },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -840,6 +840,15 @@ function renderDevices(){
       if(!d || !canDragDeviceFromList(d)){ e.preventDefault(); showToast('Перенос устройств между комнатами пока отключён'); return; }
       e.dataTransfer.setData('text/entity-id',card.dataset.entity);e.dataTransfer.effectAllowed='copy';
     };
+    card.addEventListener('click', e=>{
+      if(!state.edit) return;
+      if(e.target.closest('button')) return;
+      const d=devices().find(x=>x.entity_id===card.dataset.entity);
+      if(!d) return;
+      e.preventDefault();
+      e.stopPropagation();
+      startTouchPlaceDevice(d.entity_id);
+    });
     const d=devices().find(x=>x.entity_id===card.dataset.entity); if(d) attachPressActions(card,d,{ignoreSelector:'button'});
   });
   qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d) attachPressActions(btn,d)});
@@ -1053,6 +1062,35 @@ function setMarkerPosition(entityId,scope,p){
   }
 }
 
+function startTouchPlaceDevice(entityId){
+  if(!state.edit) return;
+  const d=devices().find(x=>x.entity_id===entityId);
+  if(!d || !canDragDeviceFromList(d)){ showToast('Это устройство нельзя разместить на текущем экране'); return; }
+  state.placingDeviceId=entityId;
+  closeMobilePanels();
+  showToast('Тапните место на карте, чтобы поставить устройство');
+}
+function placePendingDevice(kind,e){
+  if(!state.edit || !state.placingDeviceId) return false;
+  const id=state.placingDeviceId;
+  const d=devices().find(x=>x.entity_id===id);
+  if(!d){ state.placingDeviceId=null; return false; }
+  if(kind==='room' && normalizedRoomId(d.room)!==normalizedRoomId(state.selectedRoom)){
+    showToast('Перенос устройств между комнатами пока отключён');
+    state.placingDeviceId=null;
+    return true;
+  }
+  const parent=kind==='overview'?el('overview-content'):el('room-content');
+  const p=percentIn(parent,e.clientX,e.clientY);
+  setMarkerPosition(id,kind,kind==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
+  state.placingDeviceId=null;
+  setLayoutDirty(true);
+  selectEditObject({kind:'marker',id,scope:kind,label:d?displayName(d):id});
+  render();
+  showToast('Устройство размещено');
+  return true;
+}
+
 function isSelectedEdit(kind,id,scope){
   const s=state.selectedEdit;
   return !!(s && s.kind===kind && s.id===id && (!scope || s.scope===scope));
@@ -1168,6 +1206,11 @@ function bindStageGestures(){
     stage.addEventListener('pointerdown', e=>{
       if(e.button !== undefined && e.button !== 0) return;
       const isInteractive=isStageInteractiveTarget(e.target);
+      if(state.edit && state.placingDeviceId && !isInteractive){
+        e.preventDefault();
+        placePendingDevice(kind,e);
+        return;
+      }
       if(isInteractive && !state.stageGesture) return;
       e.preventDefault();
       if(!state.stageGesture || state.stageGesture.kind!==kind){
