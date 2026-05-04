@@ -902,40 +902,63 @@ function markerMapForCurrentEditScope(){
 }
 function renderEditDeviceGroups(list, filtered, q, current){
   const currentMarkers = markerMapForCurrentEditScope();
+  const showAll = !!state.ui.showAllDevicesInRoom;
+
+  // В edit mode не дублируем устройства между группой “Неразмещённые” и комнатами.
+  // По умолчанию показываем только устройства без маркера в текущем scope;
+  // если включена галочка “показывать все устройства” — показываем и уже размещённые.
+  const visible = showAll ? filtered : filtered.filter(d=>!currentMarkers[d.entity_id]);
+  const totalMissing = filtered.filter(d=>!currentMarkers[d.entity_id]).length;
+
   const byRoom = new Map();
-  const unplaced = [];
-  filtered.forEach(d=>{
+  visible.forEach(d=>{
     const rid = effectiveDeviceRoomId(d) || '__noroom';
-    if(state.selectedRoom==='overview' && !currentMarkers[d.entity_id]) unplaced.push(d);
-    if(!byRoom.has(rid)) byRoom.set(rid, []);
-    byRoom.get(rid).push(d);
+    const groupId = (!rid || rid==='unassigned' || rid==='__noroom') ? '__unplaced' : rid;
+    if(!byRoom.has(groupId)) byRoom.set(groupId, []);
+    byRoom.get(groupId).push(d);
   });
+
   const ordered = [];
-  if(state.selectedRoom==='overview' && unplaced.length) ordered.push({id:'__unplaced', label:'Неразмещённые', items:unplaced});
   const selectedRid = normalizedRoomId(state.selectedRoom);
+
   if(state.selectedRoom!=='overview'){
     const currentRoomItems = byRoom.get(selectedRid);
     if(currentRoomItems?.length) ordered.push({id:selectedRid, label:ROOM_MAP[selectedRid]?.label || selectedRid, items:currentRoomItems});
   }
+
   ROOMS.forEach(r=>{
     const rid=normalizedRoomId(r.id);
     if(rid===selectedRid && state.selectedRoom!=='overview') return;
     const arr=byRoom.get(rid);
     if(arr?.length) ordered.push({id:rid, label:r.label, items:arr});
   });
+
+  const noRoom = byRoom.get('__unplaced');
+  if(noRoom?.length) ordered.push({id:'__unplaced', label:'Неразмещённые / без комнаты', items:noRoom});
+
   [...byRoom.entries()]
-    .filter(([rid])=>!ROOM_MAP[rid] && !(rid===selectedRid && state.selectedRoom!=='overview'))
+    .filter(([rid])=>rid!=='__unplaced' && !ROOM_MAP[rid] && !(rid===selectedRid && state.selectedRoom!=='overview'))
     .sort((a,b)=>String(a[0]).localeCompare(String(b[0]),'ru'))
     .forEach(([rid,arr])=>ordered.push({id:rid, label:roomGroupLabel(rid), items:arr}));
-  if(!ordered.length){ list.innerHTML='<p class="muted device-empty">Нет устройств по текущему фильтру</p>'; return; }
+
+  if(!ordered.length){
+    const msg = showAll ? 'Нет устройств по текущему фильтру' : 'Все устройства по текущему фильтру уже размещены. Включите “показывать все устройства”, чтобы увидеть размещённые.';
+    list.innerHTML=`<p class="muted device-empty">${esc(msg)}</p>`;
+    el('device-count').textContent=q ? `0 групп · ${filtered.length} найдено` : `0 к размещению · ${totalMissing} без маркера`;
+    return;
+  }
+
   if(state.openDeviceRoomGroup && !ordered.some(g=>g.id===state.openDeviceRoomGroup)) state.openDeviceRoomGroup='';
   if(state.selectedRoom!=='overview'){
     const selectedGroup = ordered.find(g=>g.id===selectedRid);
     if(!state.openDeviceRoomGroup && selectedGroup) state.openDeviceRoomGroup = selectedRid;
   }
-  // В edit mode всегда показываем группы. Для конкретной комнаты текущая группа открыта сразу.
+
   el('devices-title').textContent=state.selectedRoom==='overview' ? 'Добавить на общий план' : `Добавить в комнату: ${room(state.selectedRoom)?.label || state.selectedRoom}`;
-  el('device-count').textContent=q ? `${ordered.length} групп · ${filtered.length} найдено` : `${ordered.length} групп · ${current.length} всего`;
+  el('device-count').textContent=q
+    ? `${ordered.length} групп · ${visible.length} показано · ${filtered.length} найдено`
+    : `${ordered.length} групп · ${visible.length} показано · ${totalMissing} без маркера`;
+
   list.innerHTML = `<div class="device-groups edit-accordion">${ordered.map(g=>{
     const open = g.id===state.openDeviceRoomGroup;
     const placed = g.items.filter(d=>currentMarkers[d.entity_id]).length;
@@ -943,9 +966,8 @@ function renderEditDeviceGroups(list, filtered, q, current){
     const limit = q ? 90 : 80;
     const items = open ? g.items.slice(0, limit).map(d=>deviceCardHtml(d, state.selectedRoom!=='overview')).join('') : '';
     const more = open && g.items.length > limit ? `<div class="device-group-more">Показано ${limit} из ${g.items.length}. Используйте поиск.</div>` : '';
-    let sub = `${g.items.length} устройств`;
-    if(g.id==='__unplaced') sub = `${g.items.length} без маркера`;
-    else if(unp) sub += `, ${unp} без маркера`;
+    let sub = showAll ? `${g.items.length} устройств` : `${g.items.length} без маркера`;
+    if(showAll && unp) sub += `, ${unp} без маркера`;
     return `<section class="device-group ${open?'open':''}" data-group="${esc(g.id)}"><button type="button" class="device-group-head" data-device-group="${esc(g.id)}"><span>${open?'▾':'▸'} ${esc(g.label)}</span><b>${esc(sub)}</b></button>${open?`<div class="device-group-items">${items}${more}</div>`:''}</section>`;
   }).join('')}</div>`;
   qsa('[data-device-group]',list).forEach(btn=>btn.onclick=()=>{

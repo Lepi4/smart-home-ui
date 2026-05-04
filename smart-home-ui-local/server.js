@@ -716,7 +716,11 @@ function makeDevice(ref, ctx){
   const category = ctx.cardTitle || 'Без группы';
   const name = ref.name || friendlyFromEntityId(ref.entity_id);
   const haArea = ctx.haArea || null;
-  const panelRoom = canonicalRoomFromText(name, category, ctx.viewTitle, ref.entity_id);
+  // Приоритет комнаты:
+  // 1) Lovelace card/section title, 2) имя устройства/entity_id, 3) HA Area API, 4) unassigned.
+  const roomFromCard = canonicalRoomFromText(category, ctx.viewTitle);
+  const roomFromName = canonicalRoomFromText(name, ref.entity_id);
+  const panelRoom = roomFromCard !== 'unassigned' ? roomFromCard : roomFromName;
   const haRoom = haArea?.room && haArea.room !== 'unassigned' ? haArea.room : '';
   const room = panelRoom !== 'unassigned' ? panelRoom : (haRoom || 'unassigned');
   const sourceKey = `${ctx.viewTitle || 'RAW'}::${category}`;
@@ -733,7 +737,7 @@ function makeDevice(ref, ctx){
     category,
     room,
     haArea: haArea ? { areaId: haArea.areaId || '', areaName: haArea.areaName || '', room: haArea.room || '' } : null,
-    roomSource: panelRoom !== 'unassigned' ? 'lovelace-card-or-name' : (haRoom ? 'ha-area' : 'unassigned'),
+    roomSource: roomFromCard !== 'unassigned' ? 'lovelace-card' : (roomFromName !== 'unassigned' ? 'device-name' : (haRoom ? 'ha-area' : 'unassigned')),
     zone: null,
     emoji: DOMAIN_EMOJI[domain] || '•',
     sourceKey,
