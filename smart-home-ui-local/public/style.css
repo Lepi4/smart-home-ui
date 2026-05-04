@@ -931,3 +931,60 @@ body.modal-open .zoom-controls{display:none!important}
   #settings-modal .settings-scroll{font-size:12px!important}
   #settings-modal .form-grid{grid-template-columns:1fr 1fr!important}
 }
+
+
+/* v3.4.12 settings modal performance polish */
+body.modal-open .main,
+body.modal-open .sidebar,
+body.modal-open .device-panel,
+body.modal-open .mobile-menu-bar,
+body.modal-open .zoom-controls,
+body.modal-open .kiosk-widget{
+  visibility:hidden!important;
+  pointer-events:none!important;
+}
+body.modal-open .modal{
+  visibility:visible!important;
+  pointer-events:auto!important;
+}
+#settings-modal{
+  background:#0b0f14!important;
+  backdrop-filter:none!important;
+}
+#settings-modal .modal-card,
+#settings-modal .settings-scroll,
+#settings-modal .form-grid,
+#settings-modal .source-tools,
+#settings-modal .modal-head,
+#settings-modal .modal-actions{
+  background:#11161d!important;
+}
+#settings-modal .settings-scroll{
+  transform:translateZ(0)!important;
+  will-change:scroll-position!important;
+  scrollbar-gutter:stable!important;
+}
+#settings-modal .form-grid{
+  grid-template-columns:repeat(auto-fit,minmax(270px,1fr))!important;
+  align-items:start!important;
+}
+#settings-modal .form-grid .addon-note,
+#settings-modal .form-grid label:has(#ha-dashboard-paths),
+#settings-modal .form-grid .muted{
+  grid-column:1 / -1!important;
+}
+#settings-modal .source-view:not([open]) .source-cards{
+  display:none!important;
+}
+#settings-modal .source-view summary{
+  min-height:36px!important;
+  display:flex!important;
+  align-items:center!important;
+}
+@media(max-width:760px), (orientation: landscape) and (max-height:920px){
+  #settings-modal .form-grid{grid-template-columns:1fr!important;}
+  #settings-modal .modal-card{box-shadow:none!important;}
+}
+@media(orientation:landscape) and (max-height:520px){
+  #settings-modal .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+}

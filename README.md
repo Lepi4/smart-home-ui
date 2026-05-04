@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.11
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.11
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.12
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.12
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.11
+## Что умеет текущая версия v3.4.12
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.11"
+git commit -m "Update Smart Home UI add-on to v3.4.12"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.11
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.11
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.12
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.12
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,7 +294,7 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.11
+## Изменения v3.4.12
 
 - Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
 - Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.

@@ -1272,7 +1272,7 @@ async function clearConfig(){
     status.textContent='Ошибка сброса настроек: '+e.message;
   }
 }
-async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)el('settings-modal').classList.add('hidden');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
+async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
 async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();render();setConnection(true,'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
 function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer);state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
 
@@ -1310,7 +1310,7 @@ async function saveSourceConfig(){await apiJson('api/source-config',{method:'POS
 function setSourceKeyEnabled(k,v){if(!state.sourceConfig)state.sourceConfig=defaultSourceConfig(); if(!state.sourceConfig.selectedCards)state.sourceConfig.selectedCards={}; state.sourceConfig.selectedCards[k]=!!v}
 function setAllSources(v){(window.LOVELACE_SOURCE?.views||[]).forEach(view=>(view.cards||[]).forEach(c=>setSourceKeyEnabled(c.sourceKey,v)));applySourceConfig();renderSourceSettings();render()}
 function setSafeSources(){setAllSources(false);const excluded=new Set(['Хрень всякая','Системные']);(window.LOVELACE_SOURCE?.views||[]).forEach(v=>(v.cards||[]).forEach(c=>{const ok=(v.title==='Физические устройства'||v.title==='Медиа')&&!excluded.has(c.title);setSourceKeyEnabled(c.sourceKey,ok)}));applySourceConfig();renderSourceSettings();render()}
-function renderSourceSettings(){const box=el('source-settings'); if(!box||!window.LOVELACE_SOURCE)return; const cfg=state.sourceConfig||defaultSourceConfig(); box.innerHTML=`<p class="muted">Активно: <b>${devices().length}</b> из <b>${allDevices().length}</b></p><label class="source-card source-card-inline"><input type="checkbox" id="include-unknown-api" ${cfg.includeUnknownFromApi?'checked':''}> Добавлять новые сущности из Home Assistant API</label>`+(LOVELACE_SOURCE.views||[]).map(view=>`<details class="source-view" open><summary>${esc(view.title)} · ${(view.cards||[]).length} карточек</summary><div class="source-cards">${(view.cards||[]).map(card=>`<label class="source-card"><input type="checkbox" data-source-key="${esc(card.sourceKey)}" ${isSourceKeyEnabled(card.sourceKey)?'checked':''}> ${esc(card.title)} (${(card.devices||[]).length})</label>`).join('')}</div></details>`).join(''); const unknown=el('include-unknown-api'); if(unknown) unknown.onchange=()=>{ state.sourceConfig={...cfg,includeUnknownFromApi:unknown.checked}; applySourceConfig(); renderSourceSettings(); render(); }; qsa('[data-source-key]',box).forEach(cb=>cb.onchange=()=>{setSourceKeyEnabled(cb.dataset.sourceKey,cb.checked);applySourceConfig();renderSourceSettings();render()})}
+function renderSourceSettings(){const box=el('source-settings'); if(!box||!window.LOVELACE_SOURCE)return; const cfg=state.sourceConfig||defaultSourceConfig(); box.innerHTML=`<p class="muted">Активно: <b>${devices().length}</b> из <b>${allDevices().length}</b></p><label class="source-card source-card-inline"><input type="checkbox" id="include-unknown-api" ${cfg.includeUnknownFromApi?'checked':''}> Добавлять новые сущности из Home Assistant API</label>`+(LOVELACE_SOURCE.views||[]).map(view=>`<details class="source-view"><summary>${esc(view.title)} · ${(view.cards||[]).length} карточек</summary><div class="source-cards">${(view.cards||[]).map(card=>`<label class="source-card"><input type="checkbox" data-source-key="${esc(card.sourceKey)}" ${isSourceKeyEnabled(card.sourceKey)?'checked':''}> ${esc(card.title)} (${(card.devices||[]).length})</label>`).join('')}</div></details>`).join(''); const unknown=el('include-unknown-api'); if(unknown) unknown.onchange=()=>{ state.sourceConfig={...cfg,includeUnknownFromApi:unknown.checked}; applySourceConfig(); renderSourceSettings(); render(); }; qsa('[data-source-key]',box).forEach(cb=>cb.onchange=()=>{setSourceKeyEnabled(cb.dataset.sourceKey,cb.checked);applySourceConfig();renderSourceSettings();render()})}
 
 
 async function readLovelaceRaw(){
@@ -1388,11 +1388,16 @@ function renderInfoModal(){
   }
 }
 
+
+/* v3.4.12: settings modal performance helpers */
+function openModal(id){ const m=el(id); if(m){ m.classList.remove('hidden'); syncModalOpenClass(); } }
+function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncModalOpenClass(); } }
+
 function bindGlobal(){
   loadUiPrefs();
   document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
-  el('btn-settings').onclick=()=>el('settings-modal').classList.remove('hidden');
-  el('btn-close-settings').onclick=()=>el('settings-modal').classList.add('hidden');
+  el('btn-settings').onclick=()=>openModal('settings-modal');
+  el('btn-close-settings').onclick=()=>closeModal('settings-modal');
   el('btn-close-device').onclick=closeDeviceModal;
   el('device-modal').addEventListener('click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
   el('btn-close-info').onclick=()=>el('info-modal').classList.add('hidden');
@@ -1430,7 +1435,7 @@ function bindGlobal(){
   el('btn-mobile-devices').onclick=()=>setPanelHidden('hideDevicePanel', !state.ui.hideDevicePanel);
   const closeMobileDevicePanel=el('btn-close-mobile-device-panel'); if(closeMobileDevicePanel) closeMobileDevicePanel.onclick=()=>setPanelHidden('hideDevicePanel', true);
   const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); showToast('Режим киоска включён'); };
-  el('btn-mobile-settings').onclick=()=>el('settings-modal').classList.remove('hidden');
+  el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
   const exitKiosk=el('btn-exit-kiosk');
   if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
@@ -1460,7 +1465,7 @@ function bindGlobal(){
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
 }
 
-(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else el('settings-modal').classList.remove('hidden')}catch(e){console.error(e);el('settings-modal').classList.remove('hidden')}})();
+(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
 
 window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, {passive:true});
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, 250), {passive:true});
@@ -1468,7 +1473,7 @@ window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(
 document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});
 
 
-/* v3.4.11: keep mobile bottom bar and kiosk controls from covering open modals */
+/* v3.4.12: keep mobile bottom bar and kiosk controls from covering open modals */
 function syncModalOpenClass(){
   const anyOpen = Array.from(document.querySelectorAll('.modal')).some(m=>!m.classList.contains('hidden'));
   document.body.classList.toggle('modal-open', anyOpen);
