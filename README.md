@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.12
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.12
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.13
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.13
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.12
+## Что умеет текущая версия v3.4.13
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.12"
+git commit -m "Update Smart Home UI add-on to v3.4.13"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.12
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.12
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.13
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.13
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,9 +294,30 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.12
+## Изменения v3.4.13
 
 - Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
 - Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.
 - Preview слайдеров применяется через `requestAnimationFrame`, сохранение происходит с debounce и при отпускании.
 - README расширен: добавлено подробное описание проекта, установка, структура, GHCR, Lovelace source, `/data`, layout coordinate rules и roadmap.
+
+## v3.4.13 — data consistency and security
+
+This release separates shared settings from device-local state:
+
+- shared settings are stored in `/data/addon_config.json` and are the same on PC, mobile and kiosk panels;
+- device-local state such as zoom, pan, last opened room, hidden panels and kiosk state is stored separately in `/data/ui_state.json` / browser local state;
+- marker/sensor/room-label scale, background transparency, dark theme and clock/weather visibility are global settings.
+
+Security hardening:
+
+- service calls are split into safe and dangerous groups;
+- dangerous commands are disabled by default;
+- dangerous commands can require confirmation;
+- panel mode can be `viewer`, `control` or `admin`;
+- the last service calls are logged in `/data/command_log.json` and shown in diagnostics.
+
+Setup-from-scratch foundation:
+
+- `/data/images` is created automatically;
+- images from `/data/images` are exposed as `/media/...`, ready for the upcoming room/image manager.

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.12</title>
+  <title>Smart Home UI HA Add-on v3.4.13</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -160,6 +160,15 @@
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-mode"> Режим киоска: скрыть панели и оставить только план</label>
         <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
+        <label>Режим панели
+          <select id="pref-panel-mode">
+            <option value="viewer">viewer — только просмотр</option>
+            <option value="control">control — управление safe-командами</option>
+            <option value="admin">admin — настройки и все разрешённые команды</option>
+          </select>
+        </label>
+        <label class="settings-check"><input type="checkbox" id="pref-allow-dangerous"> Разрешить опасные команды</label>
+        <label class="settings-check"><input type="checkbox" id="pref-confirm-dangerous" checked> Подтверждать опасные команды</label>
         <label>Размер ореолов <input id="pref-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-halo-scale-value">50%</span></label>
         <label>Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
         <label>Масштаб маркеров устройств <input id="pref-marker-scale" type="range" min="10" max="200" value="100"><span id="pref-marker-scale-value">100%</span></label>

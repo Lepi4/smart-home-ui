@@ -28,6 +28,24 @@ const LONG_PRESS_MS = 560;
 const GESTURE_MOVE_PX = 14;
 const DRAG_SUPPRESS_MS = 420;
 
+// v3.4.13: global settings live in /data/addon_config.json and must be identical
+// on PC, phone and kiosk panels. Device UI state is local per browser/screen.
+const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom']);
+const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode']);
+function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
+function applyGlobalConfig(cfg){
+  const src = (cfg && cfg.ui) ? cfg.ui : cfg || {};
+  const next = pickKeys(src, GLOBAL_UI_KEYS);
+  if(Object.keys(next).length){ state.ui = { ...state.ui, ...next }; applyUiPrefs(); renderKioskWidget(); }
+}
+function buildGlobalConfigPayload(){ return { ui: pickKeys(state.ui, GLOBAL_UI_KEYS) }; }
+function buildSecurityConfigPayload(){ return { security:{panelMode:el('pref-panel-mode')?.value||state.config?.security?.panelMode||'admin',allowDangerousServices:!!el('pref-allow-dangerous')?.checked,confirmDangerousServices:!!el('pref-confirm-dangerous')?.checked} }; }
+async function saveGlobalPrefs(){
+  const res=await apiJson('api/config',{method:'POST',body:JSON.stringify({...buildGlobalConfigPayload(),...buildSecurityConfigPayload()})});
+  state.config=res.config||state.config;
+  return res;
+}
+
 function el(id){return document.getElementById(id)}
 function qsa(s,p=document){return [...p.querySelectorAll(s)]}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
@@ -59,7 +77,9 @@ async function loadPersistedUiState(){
 function loadUiPrefs(){
   try{
     const server = state.serverUiState || {};
-    const saved=JSON.parse(localStorage.getItem('ui_prefs')||'{}');
+    const savedRaw=JSON.parse(localStorage.getItem('ui_prefs')||'{}');
+    const saved=pickKeys(savedRaw, DEVICE_UI_KEYS);
+    const serverUi=pickKeys(server.ui||{}, DEVICE_UI_KEYS);
     const last=JSON.parse(localStorage.getItem('last_view')||'{}');
     const coarsePointer = !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
     const autoMobile = !!(window.matchMedia && (
@@ -67,11 +87,11 @@ function loadUiPrefs(){
       window.matchMedia('(orientation: landscape) and (max-height: 920px)').matches ||
       (coarsePointer && window.innerHeight <= 920)
     ));
-    state.ui = { ...state.ui, ...(server.ui||{}), ...saved };
+    // Global display settings intentionally are NOT loaded from localStorage/ui_state.
+    // They are applied from /api/config so PC and mobile share scale/opacity/clock/theme.
+    state.ui = { ...state.ui, ...serverUi, ...saved };
     if(autoMobile){
       state.ui.mobileMode = true;
-      // На телефоне и в горизонтальной ориентации панели должны стартовать закрытыми.
-      // Иначе desktop-toolbar занимает полэкрана, а нижняя панель не появляется.
       state.ui.hideSidebar = true;
       state.ui.hideDevicePanel = true;
     }
@@ -81,7 +101,7 @@ function loadUiPrefs(){
     applyUiPrefs();
   }catch(e){ loadViewportPrefs(); applyUiPrefs(); }
 }
-function currentUiStatePayload(){ return { selectedRoom: state.selectedRoom, ui: state.ui, viewport: state.viewport }; }
+function currentUiStatePayload(){ return { selectedRoom: state.selectedRoom, ui: pickKeys(state.ui, DEVICE_UI_KEYS), viewport: state.viewport }; }
 function persistUiStateSoon(){
   clearTimeout(state.persistTimer);
   state.persistTimer=setTimeout(()=>{
@@ -89,7 +109,7 @@ function persistUiStateSoon(){
   }, 500);
 }
 function saveUiPrefs(){
-  localStorage.setItem('ui_prefs', JSON.stringify(state.ui));
+  localStorage.setItem('ui_prefs', JSON.stringify(pickKeys(state.ui, DEVICE_UI_KEYS)));
   localStorage.setItem('last_view', JSON.stringify({selectedRoom:state.selectedRoom, updatedAt:new Date().toISOString()}));
   applyUiPrefs();
   persistUiStateSoon();
@@ -115,7 +135,7 @@ function previewUiPrefsSoon(){
     updateZoomControls();
   });
   clearTimeout(state.previewPrefsSaveTimer);
-  state.previewPrefsSaveTimer=setTimeout(()=>saveUiPrefs(), 900);
+  state.previewPrefsSaveTimer=setTimeout(()=>saveGlobalPrefs().catch(()=>{}), 1200);
 }
 function bindRangePreview(id, key, valueId, opts={}){
   const input=el(id);
@@ -129,7 +149,7 @@ function bindRangePreview(id, key, valueId, opts={}){
     if(opts.render) opts.render();
   };
   input.oninput=update;
-  input.onchange=()=>saveUiPrefs();
+  input.onchange=()=>saveGlobalPrefs().catch(()=>{});
 }
 
 function shouldUseMobileMode(){
@@ -268,6 +288,9 @@ function applyUiPrefs(){
   const rls=el('pref-room-label-scale'); if(rls){ rls.value=String(Math.round(Number(state.ui.roomLabelScale ?? 1)*100)); const rv=el('pref-room-label-scale-value'); if(rv) rv.textContent=rls.value+'%'; }
   const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 0)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
   const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 0)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
+  const pmode=el('pref-panel-mode'); if(pmode && state.config?.security?.panelMode) pmode.value=state.config.security.panelMode;
+  const ad=el('pref-allow-dangerous'); if(ad) ad.checked=!!state.config?.security?.allowDangerousServices;
+  const cd=el('pref-confirm-dangerous'); if(cd) cd.checked=state.config?.security?.confirmDangerousServices!==false;
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
 function normalizedRoomId(id){return id==='boiler'?'laundry':id}
@@ -889,7 +912,22 @@ function openDeviceModal(d){
   modal.classList.remove('hidden'); bindDeviceModalActions(d);
 }
 function closeDeviceModal(){el('device-modal').classList.add('hidden')}
-async function callService(domain,service,data){ await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data})}); await loadStates(); }
+async function callService(domain,service,data,opts={}){
+  try{
+    await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data,confirmDangerous:!!opts.confirmDangerous})});
+    await loadStates();
+  }catch(e){
+    if(e.status===409 && e.data?.requiresConfirmation){
+      const msg=e.data.message || `Подтвердить опасную команду ${domain}.${service}?`;
+      if(window.confirm(msg)){
+        await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data,confirmDangerous:true})});
+        await loadStates();
+        return;
+      }
+    }
+    throw e;
+  }
+}
 function bindDeviceModalActions(d){
   const body=el('device-modal-body');
   qsa('[data-action]',body).forEach(ctrl=>{
@@ -1081,7 +1119,7 @@ async function toggleDevice(d){
   else if(domain==='script') { service='turn_on'; }
   else if(domain==='automation') { service=st==='on' ? 'trigger' : 'turn_on'; }
   else { openDevice(d); return; }
-  try{ await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data})}); showToast(`${displayName(d)}: команда отправлена`); await loadStates(); }
+  try{ await callService(domain,service,data); showToast(`${displayName(d)}: команда отправлена`); }
   catch(e){showToast('Ошибка управления: '+e.message)}
 }
 
@@ -1221,7 +1259,7 @@ function selectRoom(id){
   render();
 }
 function setConnection(ok,text){el('connection-dot').className='dot '+(ok?'connected':'disconnected');el('connection-text').textContent=text}
-async function apiJson(url,opt={}){const res=await fetch(url,{headers:{'Content-Type':'application/json'},...opt});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||data.message||res.status);return data}
+async function apiJson(url,opt={}){const res=await fetch(url,{headers:{'Content-Type':'application/json'},...opt});const data=await res.json().catch(()=>({}));if(!res.ok){const err=new Error(data.error||data.message||res.status);err.status=res.status;err.data=data;throw err;}return data}
 async function loadLayout(){try{const l=await apiJson('api/layout'); state.layout={version:8,coordinateSpace:'room-content-box',overviewRoomSync:false,roomCoordinateMigrated:{},overviewMarkers:{},roomMarkers:{},overviewMetrics:{},roomMetrics:{},zones:{},customNames:{},...l}; if(!('coordinateSpace' in (l||{}))) state.layout.coordinateSpace='legacy-stage'; if(!('roomCoordinateMigrated' in (l||{}))) state.layout.roomCoordinateMigrated={}; if(!state.layout.overviewMarkers&&state.layout.markers)state.layout.overviewMarkers=state.layout.markers; migrateLayout();}catch(e){console.warn('layout load failed',e)}}
 function migrateLayout(){
   if(!state.layout.roomMarkers)state.layout.roomMarkers={};
@@ -1242,13 +1280,13 @@ function migrateLayout(){
   state.layout.overviewRoomSync=false;
 }
 async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
-async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
+async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
 async function saveConfig(){
   const status=el('settings-status');
   try{
     status.textContent='Сохраняю настройки add-on...';
     saveUiPrefs();
-    const payload={dashboardPathText:(el('ha-dashboard-paths')?.value||'').trim(),pollIntervalMs:Math.max(2000,Number(el('poll-interval').value||6)*1000)};
+    const payload={dashboardPathText:(el('ha-dashboard-paths')?.value||'').trim(),pollIntervalMs:Math.max(2000,Number(el('poll-interval').value||6)*1000),...buildGlobalConfigPayload(),...buildSecurityConfigPayload()};
     const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
     status.textContent='Настройки сохранены. Проверяю подключение к Home Assistant...';
@@ -1384,7 +1422,7 @@ function renderInfoModal(){
     qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущий layout будет сохранён в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Layout восстановлен'); });
     qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=async()=>{ await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name:btn.dataset.deleteBackup})}); await loadDiagnostics(); });
   } else if(state.infoTab==='allowlist'){
-    box.innerHTML=`<h3>Разрешённые команды Home Assistant</h3><p class="muted">Сервер блокирует service calls вне этого списка.</p><div class="info-list">${Object.entries(d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div>`;
+    box.innerHTML=`<h3>Команды Home Assistant</h3><p class="muted">Safe-команды разрешены в control/admin. Dangerous-команды требуют отдельного разрешения и подтверждения.</p><div class="info-list"><b>Режим панели</b>: ${esc(d.security?.panelMode||'admin')}<br><b>Опасные команды</b>: ${d.security?.allowDangerousServices?'разрешены':'запрещены'}<br><b>Подтверждение</b>: ${d.security?.confirmDangerousServices!==false?'включено':'выключено'}</div><h4>Safe</h4><div class="info-list">${Object.entries(d.safeServices||d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div><h4>Dangerous</h4><div class="info-list">${Object.entries(d.dangerousServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>') || '—'}</div><h4>Последние команды</h4><div class="info-list">${(d.commandLog||[]).slice(0,30).map(x=>`${esc(x.time)} — <b>${esc(x.domain)}.${esc(x.service)}</b> ${esc(x.entity_id||'')} — ${esc(x.result||'')}`).join('<br>') || '—'}</div>`;
   }
 }
 
@@ -1444,11 +1482,12 @@ function bindGlobal(){
   el('pref-mobile-mode').onchange=e=>{state.ui.mobileMode=e.target.checked; saveUiPrefs();};
   el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
-  el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; saveUiPrefs();};
-  el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; saveUiPrefs(); renderKioskWidget();};
+  el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();};
+  el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; applyUiPrefs(); renderKioskWidget();};
   el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render();};
-  el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); saveUiPrefs(); renderKioskWidget();};
-  const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; saveUiPrefs(); renderDevices();};
+  el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();};
+  const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
+  ['pref-panel-mode','pref-allow-dangerous','pref-confirm-dangerous'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>saveGlobalPrefs().catch(()=>{}); });
   bindRangePreview('pref-halo-scale','haloScale','pref-halo-scale-value');
   bindRangePreview('pref-hardware-scale','hardwareScale','pref-hardware-scale-value');
   bindRangePreview('pref-marker-scale','markerScale','pref-marker-scale-value');

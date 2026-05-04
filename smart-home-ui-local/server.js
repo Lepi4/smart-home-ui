@@ -21,7 +21,7 @@ const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
 const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.1';
-const ALLOWED_SERVICES = {
+const SAFE_SERVICES = {
   light: ['turn_on','turn_off','toggle','set_brightness','set_temperature','set_color_temp','set_hs_color','set_rgb_color'],
   switch: ['turn_on','turn_off','toggle'],
   fan: ['turn_on','turn_off','toggle','set_percentage','set_preset_mode'],
@@ -30,13 +30,21 @@ const ALLOWED_SERVICES = {
   climate: ['turn_on','turn_off','set_temperature','set_hvac_mode','set_fan_mode','set_preset_mode'],
   media_player: ['turn_on','turn_off','media_play_pause','volume_down','volume_up','volume_set','media_stop','media_play','media_pause'],
   humidifier: ['turn_on','turn_off','set_humidity','set_mode'],
-  valve: ['open_valve','close_valve'],
-  lock: ['lock','unlock'],
   scene: ['turn_on'],
+  input_number: ['set_value'],
+  input_select: ['select_option'],
+  select: ['select_option'],
+  number: ['set_value']
+};
+const DANGEROUS_SERVICES = {
+  lock: ['lock','unlock'],
+  valve: ['open_valve','close_valve'],
   button: ['press'],
   script: ['turn_on'],
   automation: ['trigger','turn_on','turn_off']
 };
+const ALLOWED_SERVICES = Object.fromEntries([...Object.entries(SAFE_SERVICES), ...Object.entries(DANGEROUS_SERVICES)]);
+const COMMAND_LOG_PATH = path.join(DATA_DIR, 'command_log.json');
 function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
 
 function safeCopyIfMissing(src, dst){
@@ -247,6 +255,10 @@ async function buildDiagnostics(){
     storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
+    safeServices: SAFE_SERVICES,
+    dangerousServices: DANGEROUS_SERVICES,
+    security: normalizeSecurityConfig(loadAddonConfig().security),
+    commandLog: loadCommandLog(),
     generatedAt: new Date().toISOString()
   };
 }
@@ -310,18 +322,64 @@ app.get('/lovelace-source.js', (req,res)=>{
 app.use(express.static(path.join(__dirname, 'public')));
 
 
+function defaultAddonConfig(){
+  return {
+    pollIntervalMs: 6000,
+    dashboardPaths: [],
+    ui: {
+      darkTheme:true, kioskWidget:false, weatherEntity:'', showAllDevicesInRoom:false,
+      haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00
+    },
+    security: { panelMode:'admin', allowDangerousServices:false, confirmDangerousServices:true }
+  };
+}
+function normalizeUiConfig(input){
+  const d=defaultAddonConfig().ui, src=input||{};
+  const pct=(v,def,min=0.1,max=2)=>{ const n=Number(v); return Number.isFinite(n)?clamp(n,min,max):def; };
+  return {
+    darkTheme: src.darkTheme !== undefined ? !!src.darkTheme : d.darkTheme,
+    kioskWidget: !!src.kioskWidget,
+    weatherEntity: String(src.weatherEntity || ''),
+    showAllDevicesInRoom: !!src.showAllDevicesInRoom,
+    haloScale: pct(src.haloScale,d.haloScale,0.25,1.25),
+    hardwareScale: pct(src.hardwareScale,d.hardwareScale,0.30,1.50),
+    markerScale: pct(src.markerScale,d.markerScale,0.10,2.00),
+    sensorScale: pct(src.sensorScale,d.sensorScale,0.10,2.00),
+    roomLabelScale: pct(src.roomLabelScale,d.roomLabelScale,0.10,2.00),
+    markerOpacity: pct(src.markerOpacity,d.markerOpacity,0,1),
+    sensorOpacity: pct(src.sensorOpacity,d.sensorOpacity,0,1)
+  };
+}
+function normalizeSecurityConfig(input){
+  const src=input||{}; const mode=['viewer','control','admin'].includes(src.panelMode)?src.panelMode:'admin';
+  return { panelMode: mode, allowDangerousServices: !!src.allowDangerousServices, confirmDangerousServices: src.confirmDangerousServices !== false };
+}
+function loadCommandLog(){ return readJsonSafe(COMMAND_LOG_PATH, []); }
+function appendCommandLog(entry){
+  try{
+    const list=Array.isArray(loadCommandLog())?loadCommandLog():[];
+    list.unshift({...entry, time:new Date().toISOString()});
+    atomicWriteJson(COMMAND_LOG_PATH, list.slice(0,100));
+  }catch(e){ console.warn('[Smart Home UI] command log failed:', e.message); }
+}
+function serviceCategory(domain, service){
+  if((SAFE_SERVICES[String(domain)]||[]).includes(String(service))) return 'safe';
+  if((DANGEROUS_SERVICES[String(domain)]||[]).includes(String(service))) return 'dangerous';
+  return 'blocked';
+}
 function loadAddonConfig(){
-  const defaults = { pollIntervalMs: 6000, dashboardPaths: [] };
+  const defaults = defaultAddonConfig();
   try {
     const optionsPath = path.join(DATA_DIR, 'options.json');
     const options = fs.existsSync(optionsPath) ? JSON.parse(fs.readFileSync(optionsPath, 'utf8')) : {};
     const local = fs.existsSync(ADDON_CONFIG_PATH) ? JSON.parse(fs.readFileSync(ADDON_CONFIG_PATH, 'utf8')) : {};
+    const merged = { ...defaults, ...options, ...local };
     return {
-      ...defaults,
-      ...options,
-      ...local,
+      ...merged,
       pollIntervalMs: Number(local.pollIntervalMs || options.pollIntervalMs || defaults.pollIntervalMs),
-      dashboardPaths: normalizeDashboardPaths(local.dashboardPaths ?? local.dashboardPathText ?? options.dashboardPaths ?? options.dashboardPathText ?? '')
+      dashboardPaths: normalizeDashboardPaths(local.dashboardPaths ?? local.dashboardPathText ?? options.dashboardPaths ?? options.dashboardPathText ?? ''),
+      ui: normalizeUiConfig({ ...(options.ui||{}), ...(local.ui||{}), ...Object.fromEntries(Object.entries(local).filter(([k])=>Object.prototype.hasOwnProperty.call(defaults.ui,k))) }),
+      security: normalizeSecurityConfig({ ...(options.security||{}), ...(local.security||{}) })
     };
   } catch(e) {
     return defaults;
@@ -329,9 +387,13 @@ function loadAddonConfig(){
 }
 function saveAddonConfig(cfg){
   fs.mkdirSync(DATA_DIR, {recursive:true});
+  const current = loadAddonConfig();
   const next = {
-    pollIntervalMs: Math.max(2000, Number(cfg?.pollIntervalMs || 6000)),
-    dashboardPaths: normalizeDashboardPaths(cfg?.dashboardPaths ?? cfg?.dashboardPathText ?? '')
+    ...current,
+    pollIntervalMs: Math.max(2000, Number(cfg?.pollIntervalMs || current.pollIntervalMs || 6000)),
+    dashboardPaths: normalizeDashboardPaths(cfg?.dashboardPaths ?? cfg?.dashboardPathText ?? current.dashboardPaths ?? ''),
+    ui: normalizeUiConfig({ ...current.ui, ...(cfg?.ui||{}) }),
+    security: normalizeSecurityConfig({ ...current.security, ...(cfg?.security||{}) })
   };
   fs.writeFileSync(ADDON_CONFIG_PATH, JSON.stringify(next, null, 2), 'utf8');
   return next;
@@ -362,7 +424,9 @@ function publicConfig(cfg){
     hasToken: !!HA_TOKEN,
     pollIntervalMs: cfg?.pollIntervalMs || 6000,
     dashboardPaths,
-    dashboardPathText: dashboardPaths.join('\n')
+    dashboardPathText: dashboardPaths.join('\n'),
+    ui: normalizeUiConfig(cfg?.ui||{}),
+    security: normalizeSecurityConfig(cfg?.security||{})
   };
 }
 async function haFetch(endpoint, init={}){
@@ -682,7 +746,7 @@ function writeDeviceOutputs(parsed){
   fs.writeFileSync(LOVELACE_PATH, lovelaceJs, 'utf8');
   fs.writeFileSync(path.join(DATA_DIR,'device_parse_report.json'), JSON.stringify(parsed.stats, null, 2), 'utf8');
   const md = [
-    '# Device parse report v3.4.12',
+    '# Device parse report v3.4.13',
     '',
     `Generated: ${parsed.stats.generatedAt}`,
     `Source: HA Lovelace RAW`,
@@ -717,6 +781,8 @@ function importStoredLovelaceRaw(){
   writeDeviceOutputs(parsed);
   return { ok:true, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length } };
 }
+
+app.use('/media', express.static(DATA_IMAGES_DIR, {fallthrough:true}));
 
 app.get('/api/health', (req,res)=> res.json({ ok:true }));
 app.get('/api/layout', (req,res)=>{ try{res.json(loadLayout());}catch(e){res.status(500).json({error:e.message});} });
@@ -768,7 +834,37 @@ app.post('/api/ha/lovelace/import-stored', (req,res)=>{
   catch(e){ res.status(500).json({error:e.message}); }
 });
 app.get('/api/ha/states', async (req,res)=> { try { const states = await haFetch('/states'); res.json({ ok:true, states }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/ha/service', async (req,res)=> { try { const {domain, service, data} = req.body; if(!domain || !service) return res.status(400).json({error:'domain and service are required'}); const allowed=ALLOWED_SERVICES[String(domain)] || []; if(!allowed.includes(String(service))){ console.warn(`[Smart Home UI] Blocked service call ${domain}.${service}`); return res.status(403).json({error:`Service ${domain}.${service} запрещён allowlist`}); } const result = await haFetch(`/services/${domain}/${service}`, { method:'POST', body: JSON.stringify(data || {}) }); res.json({ ok:true, result }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/ha/service', async (req,res)=> {
+  const {domain, service, data, confirmDangerous} = req.body || {};
+  const entity_id = data?.entity_id || '';
+  try {
+    if(!domain || !service) return res.status(400).json({error:'domain and service are required'});
+    const cfg = loadAddonConfig();
+    const security = normalizeSecurityConfig(cfg.security);
+    const category = serviceCategory(domain, service);
+    if(security.panelMode === 'viewer'){
+      appendCommandLog({domain,service,entity_id,result:'blocked-viewer'});
+      return res.status(403).json({error:'Панель в режиме viewer: управление запрещено'});
+    }
+    if(category === 'blocked'){
+      appendCommandLog({domain,service,entity_id,result:'blocked-allowlist'});
+      console.warn(`[Smart Home UI] Blocked service call ${domain}.${service}`);
+      return res.status(403).json({error:`Service ${domain}.${service} запрещён allowlist`});
+    }
+    if(category === 'dangerous'){
+      if(security.panelMode !== 'admin' || !security.allowDangerousServices){
+        appendCommandLog({domain,service,entity_id,result:'blocked-dangerous'});
+        return res.status(403).json({error:`Опасная команда ${domain}.${service} отключена в настройках безопасности`});
+      }
+      if(security.confirmDangerousServices && !confirmDangerous){
+        return res.status(409).json({requiresConfirmation:true, message:`Подтвердить опасную команду ${domain}.${service}${entity_id ? ' для '+entity_id : ''}?`});
+      }
+    }
+    const result = await haFetch(`/services/${domain}/${service}`, { method:'POST', body: JSON.stringify(data || {}) });
+    appendCommandLog({domain,service,entity_id,result:'ok',category});
+    res.json({ ok:true, result, category });
+  } catch(e){ appendCommandLog({domain,service,entity_id,result:'error:'+e.message}); res.status(500).json({error:e.message}); }
+});
 
 const server = app.listen(PORT, ()=> console.log(`Smart Home UI HA Add-on listening on http://0.0.0.0:${PORT}`));
 server.on('error', err => {
