@@ -12,7 +12,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, showMarkers:true, showSensors:true },
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null
 };
@@ -28,7 +28,7 @@ const DRAG_SUPPRESS_MS = 420;
 
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
-const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom']);
+const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','debugMode']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','showZones','showMarkers','showSensors']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
@@ -316,6 +316,7 @@ function applyUiPrefs(){
   document.body.classList.toggle('auto-hide-menus', !!state.ui.autoHide);
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
   document.body.classList.toggle('dark-theme', !!state.ui.darkTheme);
+  document.body.classList.toggle('debug-mode', !!state.ui.debugMode);
   document.body.classList.toggle('kiosk-mode', !!state.ui.kioskMode);
   applyKioskLockUi();
   resetKioskAutoLock();
@@ -339,6 +340,7 @@ function applyUiPrefs(){
   const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
   const kw=el('pref-kiosk-widget'); if(kw) kw.checked=!!state.ui.kioskWidget;
   const km=el('pref-kiosk-mode'); if(km) km.checked=!!state.ui.kioskMode;
+  const dbg=el('pref-debug-mode'); if(dbg) dbg.checked=!!state.ui.debugMode;
   const kal=el('pref-kiosk-autolock'); if(kal) kal.checked=!!state.ui.kioskAutoLock;
   const kas=el('pref-kiosk-autolock-seconds'); if(kas) kas.value=String(Number(state.ui.kioskAutoLockSeconds||15));
   const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
@@ -827,11 +829,16 @@ function metricContent(r){
   return `<span class="temp">${t||'—'}°</span>${h?`<span class="drop">💧</span> ${h}%`:''}`;
 }
 function defaultMetricPos(r){return {x:clamp(r.x-r.w/4,2,98),y:clamp(r.y-r.h/4,2,98)}}
+function safeMetricPoint(stored, fallback){
+  const x=Number(stored?.x), y=Number(stored?.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||x>100||y<0.5||y>100) return fallback;
+  return {x:clamp(x,0,100), y:clamp(y,0,100)};
+}
 function renderOverviewMetrics(){
-  const layer=el('overview-metrics'); layer.innerHTML=''; if(state.edit) return; if(!el('toggle-sensors')?.checked)return;
+  const layer=el('overview-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
-    const p=state.layout.overviewMetrics?.[r.id] || defaultMetricPos(r);
+    const p=safeMetricPoint(state.layout.overviewMetrics?.[r.id], defaultMetricPos(r));
     const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('overviewMetric', r.id, 'overview')?' edit-selected':''); b.dataset.kind='overviewMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
     b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
   })
@@ -861,8 +868,8 @@ function renderRoom(){
   el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных датчиков температуры/влажности</span>';
 }
 function renderRoomMetrics(){
-  const layer=el('room-metrics'); layer.innerHTML=''; if(state.edit) return; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
-  const stored=state.layout.roomMetrics?.[r.id] || {x:16,y:16};
+  const layer=el('room-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
+  const stored=safeMetricPoint(state.layout.roomMetrics?.[r.id], {x:16,y:16});
   const p=roomStoredToImagePos(r.id, stored);
   const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
   b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
@@ -876,28 +883,60 @@ function renderRoomMarkers(){
   requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function markerEl(d,p,scope){
-  const b=document.createElement('button');
   const renderPos = scope==='room' ? roomStoredToImagePos(state.selectedRoom, p) : p;
   const editSimple = !!state.edit;
+  const isSensorAnchor = d.domain==='sensor' || d.domain==='binary_sensor' || shouldRenderSensorTextMarker(d, scope);
+  const anchor=document.createElement('div');
+  anchor.className='marker-anchor'+(isSensorAnchor?' sensor-anchor':'');
+  anchor.dataset.entity=d.entity_id;
+  anchor.dataset.scope=scope;
+  anchor.style.left=clamp(Number(renderPos.x)||0,0,100)+'%';
+  anchor.style.top=clamp(Number(renderPos.y)||0,0,100)+'%';
+
+  const b=document.createElement('button');
+  b.type='button';
   b.className='device-marker '+(editSimple?'edit-static':visualClass(d))+(shouldRenderSensorTextMarker(d, scope) && !editSimple?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
   b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.dataset.domain=d.domain||domainOf(d.entity_id); b.title=`${displayName(d)}\n${d.entity_id}`;
-  b.style.left=renderPos.x+'%'; b.style.top=renderPos.y+'%'; if(!editSimple) b.style.cssText += visualStyle(d); b.innerHTML=editSimple?`<span class="edit-marker-icon">${iconMarkup(d)}</span>`:markerInnerHtml(d, scope);
+  if(!editSimple) b.style.cssText += visualStyle(d);
+  b.innerHTML=editSimple?`<span class="edit-marker-icon">${iconMarkup(d)}</span>`:markerInnerHtml(d, scope);
+
   if(state.edit){
-    b.addEventListener('click', e=>{
-      e.preventDefault(); e.stopPropagation();
-      selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
-      openPlacementEditor(d.entity_id);
-    });
+    attachEditMarkerActions(b,d,scope);
   } else {
     attachPressActions(b,d);
-  }
-  if(!state.edit){
     b.addEventListener('contextmenu',e=>{
       e.preventDefault();
       openDeviceModal(d);
     });
   }
-  return b;
+  anchor.appendChild(b);
+  return anchor;
+}
+function attachEditMarkerActions(b,d,scope){
+  let timer=null, sx=0, sy=0, longFired=false;
+  const clear=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+  b.addEventListener('pointerdown', e=>{
+    if(e.button!==undefined && e.button!==0) return;
+    e.stopPropagation();
+    sx=e.clientX; sy=e.clientY; longFired=false;
+    clear();
+    timer=setTimeout(()=>{
+      longFired=true;
+      selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
+      openPlacementEditor(d.entity_id);
+    },650);
+  });
+  b.addEventListener('pointermove', e=>{
+    if(!timer) return;
+    if(Math.hypot(e.clientX-sx,e.clientY-sy)>8) clear();
+  });
+  ['pointerup','pointercancel','pointerleave'].forEach(evt=>b.addEventListener(evt, clear));
+  b.addEventListener('click', e=>{
+    e.preventDefault(); e.stopPropagation();
+    if(longFired){ longFired=false; return; }
+    selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
+    showToast('Маркер выбран. Удерживайте его для перемещения через SVG Layout Editor.');
+  });
 }
 function quickActionsHtml(list){
   return list.length?list.map(d=>`<button type="button" class="quick-action ${visualClass(d)}" style="${visualStyle(d)}" data-quick="${esc(d.entity_id)}"><span class="quick-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span>${esc(displayName(d))}</span><span class="muted">${esc(markerValueLabel(d)||stateText(d))}</span></button>`).join(''):'<p class="muted">Нет быстрых действий</p>';
@@ -1414,6 +1453,34 @@ function applyPlacementEditorViewBox(){
   img.setAttribute('width',String(d.w)); img.setAttribute('height',String(d.h));
   img.setAttribute('preserveAspectRatio','none');
   svg.style.aspectRatio=`${d.w} / ${d.h}`;
+  fitPlacementEditorSvg();
+}
+function fitPlacementEditorSvg(){
+  const svg=el('placement-editor-svg');
+  const wrap=svg?.closest('.placement-editor-canvas-wrap');
+  if(!svg || !wrap || !state.placementEditor) return;
+  const d=placementEditorDims();
+  if(!d.w || !d.h) return;
+  const rect=wrap.getBoundingClientRect();
+  const padX=0, padY=0;
+  const ww=Math.max(1, rect.width-padX);
+  const wh=Math.max(1, rect.height-padY);
+  const scale=Math.min(ww/d.w, wh/d.h);
+  if(!Number.isFinite(scale) || scale<=0) return;
+  const width=Math.max(1, Math.floor(d.w*scale));
+  const height=Math.max(1, Math.floor(d.h*scale));
+  svg.style.width=`${width}px`;
+  svg.style.height=`${height}px`;
+  svg.style.maxWidth='100%';
+  svg.style.maxHeight='100%';
+  updatePlacementDebug();
+}
+function refitPlacementEditorSoon(){
+  if(!state.placementEditor) return;
+  requestAnimationFrame(()=>{
+    fitPlacementEditorSvg();
+    requestAnimationFrame(()=>fitPlacementEditorSvg());
+  });
 }
 function buildPlacementGrid(){
   const g=el('placement-editor-grid'); if(!g) return;
@@ -1444,6 +1511,7 @@ function updatePlacementEditorAspect(src){
     buildPlacementGrid();
     renderPlacementEditorExisting();
     setPlacementEditorPoint(state.placementEditor.x, state.placementEditor.y);
+    refitPlacementEditorSoon();
   };
   img.src=src;
 }
@@ -1491,7 +1559,7 @@ function placementEditorImageMetrics(){
 }
 function updatePlacementDebug(extra){
   const box=el('placement-editor-debug');
-  if(!box || !state.placementEditor) return;
+  if(!box || !state.placementEditor || !state.ui.debugMode) return;
   const m=placementEditorImageMetrics();
   const wrap=el('placement-editor-svg')?.closest('.placement-editor-canvas-wrap');
   const pe=state.placementEditor;
@@ -1558,6 +1626,7 @@ function pointLine(name,p){
 function updateLiveCoordinateDebug(){
   const panel=el('live-coordinate-debug-panel'), box=el('live-coordinate-debug');
   if(!panel || !box) return;
+  if(!state.ui.debugMode){ panel.classList.add('hidden'); box.textContent='—'; return; }
   const sel=state.selectedEdit;
   if(!state.edit || !sel || sel.kind!=='marker'){
     panel.classList.add('hidden');
@@ -1620,7 +1689,7 @@ function openPlacementEditor(entityId){
   const kind=activeStageKind();
   closeDevicePicker();
   const initial=getInitialPlacementPoint(kind,entityId);
-  state.placementEditor={entityId,kind,x:initial.x,y:initial.y};
+  state.placementEditor={targetType:'marker', entityId, kind, x:initial.x, y:initial.y};
   const src=placementImageSrc(kind);
   const img=el('placement-editor-image'); if(img) img.setAttribute('href',src);
   updatePlacementEditorAspect(src);
@@ -1633,6 +1702,7 @@ function openPlacementEditor(entityId){
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(initial.x,initial.y);
+  refitPlacementEditorSoon();
 }
 function nudgePlacementEditor(dx,dy){
   if(!state.placementEditor) return;
@@ -1642,7 +1712,31 @@ function nudgePlacementEditor(dx,dy){
 function applyPlacementEditor(){
   if(!state.edit || !state.placementEditor) return;
   const pe=state.placementEditor;
-  const id=pe.entityId, kind=pe.kind, p={x:pe.x,y:pe.y};
+  const kind=pe.kind, p={x:pe.x,y:pe.y};
+  if(pe.targetType==='overviewMetric'){
+    if(!state.layout.overviewMetrics) state.layout.overviewMetrics={};
+    state.layout.overviewMetrics[pe.metricRoomId]=p;
+    closePlacementEditor();
+    setLayoutDirty(true);
+    renderOverviewMetrics();
+    selectEditObject({kind:'overviewMetric',id:pe.metricRoomId,scope:'overview',label:room(pe.metricRoomId)?.label||pe.metricRoomId});
+    renderEditSheet();
+    showToast('Показатель размещён');
+    return;
+  }
+  if(pe.targetType==='roomMetric'){
+    const rid=normalizedRoomId(pe.metricRoomId || state.selectedRoom);
+    if(!state.layout.roomMetrics) state.layout.roomMetrics={};
+    state.layout.roomMetrics[rid]=roomImageToStoredPos(rid,p);
+    closePlacementEditor();
+    setLayoutDirty(true);
+    renderRoomMetrics();
+    selectEditObject({kind:'roomMetric',id:rid,scope:'room',label:room(rid)?.label||rid});
+    renderEditSheet();
+    showToast('Показатель размещён');
+    return;
+  }
+  const id=pe.entityId;
   const d=devices().find(x=>x.entity_id===id);
   if(kind==='room' && d && normalizedRoomId(d.room)!==normalizedRoomId(state.selectedRoom)){
     showToast('Перенос устройств между комнатами пока отключён');
@@ -1657,8 +1751,36 @@ function applyPlacementEditor(){
   showToast('Устройство размещено');
 }
 
-
 function openDeviceLayoutEditor(entityId){ openPlacementEditor(entityId); }
+
+function openMetricLayoutEditor(metricKind, roomId){
+  if(!state.edit) return;
+  const rid=normalizedRoomId(roomId || state.selectedRoom);
+  const kind = metricKind==='overviewMetric' ? 'overview' : 'room';
+  closeDevicePicker();
+  let initial;
+  if(metricKind==='overviewMetric'){
+    const r=roomWithLayout(rid);
+    initial=safeMetricPoint(state.layout.overviewMetrics?.[rid], defaultMetricPos(r));
+  } else {
+    const stored=safeMetricPoint(state.layout.roomMetrics?.[rid], {x:16,y:16});
+    initial=roomStoredToImagePos(rid, stored);
+  }
+  state.placementEditor={targetType:metricKind, metricRoomId:rid, kind, x:initial.x, y:initial.y};
+  const src=placementImageSrc(kind);
+  const img=el('placement-editor-image'); if(img) img.setAttribute('href',src);
+  updatePlacementEditorAspect(src);
+  buildPlacementGrid();
+  renderPlacementEditorExisting();
+  const title=el('placement-editor-title'); if(title) title.textContent='Перемещение системного датчика';
+  const dev=el('placement-editor-device'); if(dev) dev.textContent=`${room(rid)?.label||rid}: температура/влажность`;
+  const scope=el('placement-editor-scope'); if(scope) scope.textContent=kind==='overview'?'Общий план':(room(rid)?.label||rid);
+  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  document.body.classList.add('placement-editor-open');
+  setPlacementEditorPoint(initial.x,initial.y);
+  refitPlacementEditorSoon();
+}
+
 
 function isSelectedEdit(kind,id,scope){
   const s=state.selectedEdit;
@@ -1693,7 +1815,7 @@ function renderEditSheet(){
   const title=el('edit-sheet-title'); if(title) title.textContent=selectedEditLabel();
   const hint=el('edit-sheet-hint');
   const isMetric=!!(state.selectedEdit && (state.selectedEdit.kind==='overviewMetric'||state.selectedEdit.kind==='roomMetric'));
-  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Его можно двигать и сбросить позицию, но нельзя удалить окончательно.' : 'Нажмите маркер, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.') : 'Нажмите маркер, чтобы открыть SVG Layout Editor. Позиция задаётся кликом/тапом по сетке и стрелками.';
+  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Короткий тап выбирает его, удержание открывает SVG Layout Editor для перемещения. Удалить окончательно нельзя.' : 'Маркер выбран. Для перемещения удерживайте его, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.') : 'Короткий тап выбирает маркер. Удержание открывает SVG Layout Editor для перемещения. Устройства добавляются через кнопку “Устройства”.';
   const del=el('btn-delete-selected');
   const reset=el('btn-reset-selected');
   if(del){ del.disabled=!(state.selectedEdit && state.selectedEdit.kind==='marker'); del.textContent='Удалить маркер'; }
@@ -1765,10 +1887,30 @@ function metricDown(e){
   if(!state.edit) return;
   e.preventDefault(); e.stopPropagation();
   const b=e.currentTarget;
-  selectEditObject({kind:b.dataset.kind,id:b.dataset.room,scope:b.dataset.kind==='overviewMetric'?'overview':'room',label:room(b.dataset.room)?.label||b.dataset.room});
-  showToast('Системные датчики защищены. Перемещение будет через Layout Editor.');
-}
-function pointerPoint(e){return {id:e.pointerId,x:e.clientX,y:e.clientY}}
+  const kind=b.dataset.kind;
+  const rid=b.dataset.room;
+  let timer=null, sx=e.clientX, sy=e.clientY, longFired=false;
+  const finish=()=>{ if(timer){clearTimeout(timer); timer=null;} };
+  const select=()=>{
+    selectEditObject({kind,id:rid,scope:kind==='overviewMetric'?'overview':'room',label:room(rid)?.label||rid});
+  };
+  timer=setTimeout(()=>{
+    longFired=true;
+    select();
+    openMetricLayoutEditor(kind, rid);
+  },650);
+  const move=ev=>{ if(timer && Math.hypot(ev.clientX-sx,ev.clientY-sy)>8) finish(); };
+  const up=ev=>{
+    finish();
+    window.removeEventListener('pointermove',move,true);
+    window.removeEventListener('pointerup',up,true);
+    window.removeEventListener('pointercancel',up,true);
+    if(!longFired) select();
+  };
+  window.addEventListener('pointermove',move,true);
+  window.addEventListener('pointerup',up,true);
+  window.addEventListener('pointercancel',up,true);
+}function pointerPoint(e){return {id:e.pointerId,x:e.clientX,y:e.clientY}}
 function stageKindFromEl(stage){return stage && stage.id==='overview-stage'?'overview':'room'}
 function isStageInteractiveTarget(target){return !!target.closest('.device-marker,.badge,.room-zone,button,a,input,textarea,select,label,.device-card,.edit-action-sheet,.quick-overlay')}
 function bindStageGestures(){
@@ -2076,7 +2218,7 @@ function bindGlobal(){
   el('device-search').oninput=renderDevices;
   el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
   const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
-  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); 
+  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room');refitPlacementEditorSoon()}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room');refitPlacementEditorSoon()},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); 
 
   el('btn-hide-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-show-sidebar').onclick=()=>setPanelHidden('hideSidebar', false);
@@ -2116,6 +2258,7 @@ function bindGlobal(){
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
   el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();};
   el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; applyUiPrefs(); renderKioskWidget();};
+  const dbgPref=el('pref-debug-mode'); if(dbgPref) dbgPref.onchange=e=>{state.ui.debugMode=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render(); resetKioskAutoLock();};
   const pal=el('pref-kiosk-autolock'); if(pal) pal.onchange=e=>{state.ui.kioskAutoLock=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
@@ -2140,8 +2283,8 @@ function bindGlobal(){
 
 (async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); loadKioskLockLocal(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
 
-window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, {passive:true});
-window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); }, 250), {passive:true});
+window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
+window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});
 window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
 document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});
 

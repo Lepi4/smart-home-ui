@@ -1278,7 +1278,7 @@ body.live-paused #connection-text::after{content:' · live paused';font-size:11p
 /* v3.4.31 — Placement Editor Rework: independent SVG coordinate layer */
 .placement-editor-modal{z-index:1900!important}
 .placement-editor-card{width:min(1180px,calc(100vw - 18px));height:min(94dvh,850px);max-height:94dvh;background:#0f141b!important;display:grid;grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden}
-.placement-editor-head{border-bottom:1px solid #26303d}.placement-editor-body{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:12px;padding:12px;background:#0b1016}.placement-editor-canvas-wrap{min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;overscroll-behavior:contain;background:#080c11;border:1px solid #27313d;border-radius:16px;padding:10px;touch-action:pan-x pan-y}.placement-editor-svg{width:100%;max-width:100%;height:auto;max-height:100%;display:block;border-radius:12px;background:#111820;box-shadow:0 16px 60px rgba(0,0,0,.40);touch-action:manipulation;cursor:crosshair}.placement-editor-grid line{stroke:rgba(240,179,75,.22);stroke-width:.10;vector-effect:non-scaling-stroke}.placement-editor-grid line.major{stroke:rgba(240,179,75,.42);stroke-width:.18}.placement-editor-grid text{fill:rgba(255,220,154,.82);font-size:2.1px;font-weight:800;text-shadow:0 .5px 1px rgba(0,0,0,.8);pointer-events:none}.placement-editor-existing circle{fill:rgba(75,132,255,.72);stroke:#fff;stroke-width:.26;vector-effect:non-scaling-stroke;opacity:.65}.placement-editor-marker{fill:#f0b34b;stroke:#fff;stroke-width:.40;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 3px rgba(0,0,0,.8))}.placement-editor-cross{stroke:#f0b34b;stroke-width:.16;stroke-dasharray:1 1;vector-effect:non-scaling-stroke;opacity:.9;pointer-events:none}.placement-editor-side{min-width:0;background:#111820;border:1px solid #26303d;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:12px}.placement-editor-selected{display:grid;gap:4px;padding:10px;border-radius:12px;background:#171f2a}.placement-editor-selected strong{font-size:15px}.placement-editor-selected small{color:#a8b4c2}.placement-editor-coords{display:grid;grid-template-columns:1fr 1fr;gap:8px}.placement-editor-coords label{display:grid;gap:5px;color:#bfc8d4;font-weight:800}.placement-editor-coords input,.placement-editor-step select{width:100%;background:#0b1016;border:1px solid #344151;color:#edf3fb;border-radius:10px;padding:8px}.placement-editor-nudge{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-areas:'. up .' 'left right right' '. down .';gap:8px}.placement-editor-nudge button{min-height:44px;border-radius:12px;font-size:18px}.placement-editor-nudge #btn-place-up{grid-area:up}.placement-editor-nudge #btn-place-left{grid-area:left}.placement-editor-nudge #btn-place-right{grid-area:right}.placement-editor-nudge #btn-place-down{grid-area:down}.placement-editor-help{font-size:12px;line-height:1.35}.placement-editor-actions{border-top:1px solid #26303d;background:#10161e}.placement-editor-actions button{min-height:44px}
+.placement-editor-head{border-bottom:1px solid #26303d}.placement-editor-body{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:12px;padding:12px;background:#0b1016}.placement-editor-canvas-wrap{min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;overscroll-behavior:contain;background:#080c11;border:1px solid #27313d;border-radius:16px;padding:10px;touch-action:none}.placement-editor-svg{width:auto;max-width:100%;height:auto;max-height:100%;display:block;border-radius:12px;background:#111820;box-shadow:0 16px 60px rgba(0,0,0,.40);touch-action:manipulation;cursor:crosshair}.placement-editor-grid line{stroke:rgba(240,179,75,.22);stroke-width:.10;vector-effect:non-scaling-stroke}.placement-editor-grid line.major{stroke:rgba(240,179,75,.42);stroke-width:.18}.placement-editor-grid text{fill:rgba(255,220,154,.82);font-size:2.1px;font-weight:800;text-shadow:0 .5px 1px rgba(0,0,0,.8);pointer-events:none}.placement-editor-existing circle{fill:rgba(75,132,255,.72);stroke:#fff;stroke-width:.26;vector-effect:non-scaling-stroke;opacity:.65}.placement-editor-marker{fill:#f0b34b;stroke:#fff;stroke-width:.40;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 3px rgba(0,0,0,.8))}.placement-editor-cross{stroke:#f0b34b;stroke-width:.16;stroke-dasharray:1 1;vector-effect:non-scaling-stroke;opacity:.9;pointer-events:none}.placement-editor-side{min-width:0;background:#111820;border:1px solid #26303d;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:12px}.placement-editor-selected{display:grid;gap:4px;padding:10px;border-radius:12px;background:#171f2a}.placement-editor-selected strong{font-size:15px}.placement-editor-selected small{color:#a8b4c2}.placement-editor-coords{display:grid;grid-template-columns:1fr 1fr;gap:8px}.placement-editor-coords label{display:grid;gap:5px;color:#bfc8d4;font-weight:800}.placement-editor-coords input,.placement-editor-step select{width:100%;background:#0b1016;border:1px solid #344151;color:#edf3fb;border-radius:10px;padding:8px}.placement-editor-nudge{display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-areas:'. up .' 'left right right' '. down .';gap:8px}.placement-editor-nudge button{min-height:44px;border-radius:12px;font-size:18px}.placement-editor-nudge #btn-place-up{grid-area:up}.placement-editor-nudge #btn-place-left{grid-area:left}.placement-editor-nudge #btn-place-right{grid-area:right}.placement-editor-nudge #btn-place-down{grid-area:down}.placement-editor-help{font-size:12px;line-height:1.35}.placement-editor-actions{border-top:1px solid #26303d;background:#10161e}.placement-editor-actions button{min-height:44px}
 
 .placement-editor-debug-wrap{border:1px solid #27313d;border-radius:12px;background:#0b1016;padding:8px;color:#a8b4c2}
 .placement-editor-debug-wrap summary{cursor:pointer;font-weight:900;color:#d9e4f2}
@@ -1301,10 +1301,48 @@ body.editing
 .device-card{}
 
 
-/* v3.4.39: live coordinate diagnostics for comparing editor vs live map overlay */
+/* v3.4.42: live coordinate diagnostics for comparing editor vs live map overlay */
 .live-coordinate-debug{position:absolute;right:18px;bottom:92px;z-index:1450;width:min(420px,46vw);max-height:46vh;overflow:auto;background:rgba(10,14,20,.92);border:1px solid rgba(120,160,220,.35);border-radius:14px;color:#dfe9ff;box-shadow:0 18px 60px rgba(0,0,0,.45);backdrop-filter:blur(10px)}
 .live-coordinate-debug.hidden{display:none!important}
 .live-coordinate-debug summary{cursor:pointer;font-weight:800;padding:10px 12px;color:#b8d2ff}
 .live-coordinate-debug pre{margin:0;padding:0 12px 12px;font-size:11px;line-height:1.35;white-space:pre-wrap;color:#dce8ff}
 body:not(.editing) .live-coordinate-debug{display:none!important}
 @media(max-width:760px){.live-coordinate-debug{left:8px;right:8px;bottom:74px;width:auto;max-height:36vh}}
+
+/* v3.4.42 — Unified Marker Anchor.
+   x/y belongs to .marker-anchor. The visual marker is always centered on that anchor.
+   Scale is applied to the zero-size anchor, so the marker center does not drift. */
+.marker-anchor{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:30;transform:scale(var(--marker-scale,1));transform-origin:0 0;}
+.marker-anchor.sensor-anchor{transform:scale(var(--sensor-scale,1));}
+.marker-anchor .device-marker{position:absolute!important;left:0!important;top:0!important;transform:translate(-50%,-50%)!important;pointer-events:auto;}
+.marker-anchor .device-marker.sensor-readout,
+.marker-anchor .device-marker[data-domain="sensor"],
+.marker-anchor .device-marker[data-domain="binary_sensor"]{transform:translate(-50%,-50%)!important;}
+.marker-anchor:has(.edit-selected){z-index:90;}
+body.editing .marker-anchor .device-marker{transform:translate(-50%,-50%)!important;}
+
+/* System temperature/humidity badges remain visible in edit mode and keep a stable anchor. */
+body.editing .badge{pointer-events:auto!important;}
+
+/* v3.4.42 — stable Placement/SVG Layout Editor sizing.
+   The editor canvas must never scroll: coordinates are calculated from a
+   fixed image rect fitted into this wrapper. */
+.placement-editor-canvas-wrap{overflow:hidden!important;touch-action:none!important;}
+.placement-editor-svg{flex:0 0 auto!important;max-width:100%!important;max-height:100%!important;}
+@media(max-width:760px),(orientation:landscape) and (max-height:760px){
+  .placement-editor-canvas-wrap{overflow:hidden!important;touch-action:none!important;}
+  .placement-editor-svg{flex:0 0 auto!important;max-width:100%!important;max-height:100%!important;}
+}
+
+
+/* v3.4.42: sensor badges must be positioned in both normal and edit modes.
+   Earlier CSS only made .badge absolute in .editing, so normal-mode system sensors
+   were laid out at the top of the overlay. */
+.overlay > .badge{position:absolute!important;transform:translate(-50%,-50%) scale(var(--sensor-scale,1));}
+
+/* v3.4.42: debug panels are opt-in from Settings. */
+.live-coordinate-debug, .placement-editor-debug-wrap{display:none!important;}
+body.debug-mode .live-coordinate-debug:not(.hidden),
+body.debug-mode .placement-editor-debug-wrap{display:block!important;}
+body.debug-mode .placement-editor-debug-wrap{display:block!important;}
+body.debug-mode details.live-coordinate-debug{display:block!important;}
