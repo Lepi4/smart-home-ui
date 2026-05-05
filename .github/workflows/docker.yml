@@ -51,8 +51,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            ghcr.io/lepi4/smart-home-ui-${{ matrix.arch }}:3.4.39
+            ghcr.io/lepi4/smart-home-ui-${{ matrix.arch }}:3.4.40
             ghcr.io/lepi4/smart-home-ui-${{ matrix.arch }}:latest
           build-args: |
-            BUILD_VERSION=3.4.39
+            BUILD_VERSION=3.4.40
             BUILD_ARCH=${{ matrix.arch }}
