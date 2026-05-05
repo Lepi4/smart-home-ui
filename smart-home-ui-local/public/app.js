@@ -795,6 +795,7 @@ function render(){
   renderEditSheet();
   renderKioskWidget();
   updateZoomControls();
+  requestAnimationFrame(updateLiveCoordinateDebug);
 }
 
 function renderOverview(){
@@ -841,6 +842,7 @@ function renderOverviewMarkers(){
     const d=devices().find(x=>x.entity_id===id); if(!d)return;
     layer.appendChild(markerEl(d,p,'overview'));
   });
+  requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function renderRoom(){
   const r=room(state.selectedRoom); if(!r)return;
@@ -871,6 +873,7 @@ function renderRoomMarkers(){
     const d=devices().find(x=>x.entity_id===id); if(!d)return;
     layer.appendChild(markerEl(d,p,'room'));
   });
+  requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function markerEl(d,p,scope){
   const b=document.createElement('button');
@@ -1511,6 +1514,87 @@ function updatePlacementDebug(extra){
   }
   box.textContent=lines.join('\n');
 }
+function liveMarkerElement(entityId, scope){
+  return qsa('.device-marker').find(n=>n.dataset.entity===entityId && n.dataset.scope===scope) || null;
+}
+function liveCoordinateMetrics(entityId, scope){
+  const kind = scope==='overview' ? 'overview' : 'room';
+  const img = el(kind==='overview'?'overview-image':'room-image');
+  const stage = el(kind==='overview'?'overview-stage':'room-stage');
+  const content = el(kind==='overview'?'overview-content':'room-content');
+  const layer = el(kind==='overview'?'overview-markers':'room-markers');
+  const marker = liveMarkerElement(entityId, scope);
+  const stored = scope==='overview'
+    ? state.layout.overviewMarkers?.[entityId]
+    : state.layout.roomMarkers?.[normalizedRoomId(state.selectedRoom)]?.[entityId];
+  const renderPos = stored ? (scope==='room' ? roomStoredToImagePos(state.selectedRoom, stored) : stored) : null;
+  const imgRect = img?.getBoundingClientRect?.();
+  const stageRect = stage?.getBoundingClientRect?.();
+  const contentRect = content?.getBoundingClientRect?.();
+  const layerRect = layer?.getBoundingClientRect?.();
+  const markerRect = marker?.getBoundingClientRect?.();
+  let expectedFromLayer=null, expectedFromImage=null, actualCenter=null;
+  if(renderPos && layerRect?.width && layerRect?.height){
+    expectedFromLayer={x:layerRect.left+layerRect.width*renderPos.x/100, y:layerRect.top+layerRect.height*renderPos.y/100};
+  }
+  if(renderPos && imgRect?.width && imgRect?.height){
+    expectedFromImage={x:imgRect.left+imgRect.width*renderPos.x/100, y:imgRect.top+imgRect.height*renderPos.y/100};
+  }
+  if(markerRect?.width || markerRect?.height){
+    actualCenter={x:markerRect.left+markerRect.width/2, y:markerRect.top+markerRect.height/2};
+  }
+  const diffLayer = expectedFromLayer && actualCenter ? {x:actualCenter.x-expectedFromLayer.x, y:actualCenter.y-expectedFromLayer.y} : null;
+  const diffImage = expectedFromImage && actualCenter ? {x:actualCenter.x-expectedFromImage.x, y:actualCenter.y-expectedFromImage.y} : null;
+  return {kind, img, stage, content, layer, marker, stored, renderPos, imgRect, stageRect, contentRect, layerRect, markerRect, expectedFromLayer, expectedFromImage, actualCenter, diffLayer, diffImage};
+}
+function rectLine(name,r){
+  if(!r) return `${name}: —`;
+  return `${name}: ${Math.round(r.width)}×${Math.round(r.height)} @ ${Math.round(r.left)},${Math.round(r.top)}`;
+}
+function pointLine(name,p){
+  if(!p) return `${name}: —`;
+  return `${name}: ${p.x.toFixed(1)}, ${p.y.toFixed(1)}`;
+}
+function updateLiveCoordinateDebug(){
+  const panel=el('live-coordinate-debug-panel'), box=el('live-coordinate-debug');
+  if(!panel || !box) return;
+  const sel=state.selectedEdit;
+  if(!state.edit || !sel || sel.kind!=='marker'){
+    panel.classList.add('hidden');
+    box.textContent='—';
+    return;
+  }
+  const m=liveCoordinateMetrics(sel.id, sel.scope||activeStageKind());
+  panel.classList.remove('hidden');
+  const v=getViewport(m.kind);
+  const hardware=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5);
+  const lines=[];
+  lines.push(`scope: ${sel.scope} | entity: ${sel.id}`);
+  lines.push(`selected label: ${sel.label||''}`);
+  lines.push(`stored x/y: ${m.stored ? `${Number(m.stored.x).toFixed(2)}%, ${Number(m.stored.y).toFixed(2)}%` : '—'}`);
+  lines.push(`render x/y: ${m.renderPos ? `${Number(m.renderPos.x).toFixed(2)}%, ${Number(m.renderPos.y).toFixed(2)}%` : '—'}`);
+  lines.push(`viewport zoom/pan/hw: ${Number(v?.zoom||1).toFixed(3)} / ${Math.round(v?.panX||0)},${Math.round(v?.panY||0)} / ${hardware.toFixed(2)}`);
+  lines.push(rectLine('stageRect', m.stageRect));
+  lines.push(rectLine('contentRect', m.contentRect));
+  lines.push(rectLine('imageRect', m.imgRect));
+  lines.push(rectLine('markerLayerRect', m.layerRect));
+  lines.push(rectLine('markerRect', m.markerRect));
+  lines.push(pointLine('expected from image', m.expectedFromImage));
+  lines.push(pointLine('expected from layer', m.expectedFromLayer));
+  lines.push(pointLine('actual marker center', m.actualCenter));
+  lines.push(pointLine('actual - image', m.diffImage));
+  lines.push(pointLine('actual - layer', m.diffLayer));
+  if(m.imgRect && m.layerRect){
+    lines.push(`image vs layer dXY: ${(m.layerRect.left-m.imgRect.left).toFixed(1)}, ${(m.layerRect.top-m.imgRect.top).toFixed(1)}`);
+    lines.push(`image vs layer dWH: ${(m.layerRect.width-m.imgRect.width).toFixed(1)}, ${(m.layerRect.height-m.imgRect.height).toFixed(1)}`);
+  }
+  if(m.contentRect && m.imgRect){
+    lines.push(`image vs content dXY: ${(m.imgRect.left-m.contentRect.left).toFixed(1)}, ${(m.imgRect.top-m.contentRect.top).toFixed(1)}`);
+    lines.push(`image vs content dWH: ${(m.imgRect.width-m.contentRect.width).toFixed(1)}, ${(m.imgRect.height-m.contentRect.height).toFixed(1)}`);
+  }
+  box.textContent=lines.join('\n');
+}
+
 function placementSvgPointFromEvent(e){
   const m=placementEditorImageMetrics();
   if(!m) return null;
@@ -1593,6 +1677,7 @@ function selectEditObject(obj){
         ? `.badge[data-kind="overviewMetric"][data-room="${CSS.escape(obj.id)}"]`
         : `.badge[data-kind="roomMetric"][data-room="${CSS.escape(obj.id)}"]`;
   document.querySelector(selector)?.classList.add('edit-selected');
+  requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function selectedEditLabel(){
   const s=state.selectedEdit;
