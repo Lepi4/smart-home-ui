@@ -8,15 +8,13 @@ const state = {
   edit: false,
   editSnapshot: null,
   layoutDirty: false,
-  dragged: null,
-  dragMoved: false,
   selectedEdit: null,
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', placeByTap:false, showZones:true, showMarkers:true, showSensors:true },
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, showMarkers:true, showSensors:true },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, placingKind:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placingCrosshair:{overview:{x:50,y:50},room:{x:50,y:50}}, crosshairDragging:false, placementEditor:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -30,7 +28,7 @@ const DRAG_SUPPRESS_MS = 420;
 
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
-const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','placeByTap']);
+const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','showZones','showMarkers','showSensors']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
@@ -244,14 +242,6 @@ function clampViewportPan(kind, v){
   // This prevents the old "endless scroll" feeling on mobile/landscape.
   let maxX = contentW > stageW ? Math.ceil((contentW-stageW)/2 + 80) : 0;
   let maxY = contentH > stageH ? Math.ceil((contentH-stageH)/2 + 80) : 0;
-  // v3.4.30: in placement mode the user must be able to move the map
-  // under the crosshair in both directions, even when the fitted image is
-  // narrower/wider than the stage. Limit the extra pan to roughly half a
-  // screen so it stays bounded and does not reintroduce endless scrolling.
-  if(state.edit && state.placingDeviceId){
-    maxX = Math.max(maxX, Math.ceil(stageW * 0.50));
-    maxY = Math.max(maxY, Math.ceil(stageH * 0.50));
-  }
   v.panX=clamp(Number(v.panX)||0, -maxX, maxX);
   v.panY=clamp(Number(v.panY)||0, -maxY, maxY);
   return v;
@@ -280,7 +270,6 @@ function applyStageTransform(kind){
   content.style.transformOrigin='0 0';
   content.style.transform=`translate3d(${v.panX}px, ${v.panY}px, 0) scale(${scale})`;
   content.dataset.scale=String(scale);
-  if(state.edit && state.placingDeviceId) requestAnimationFrame(updatePlacementAim);
 }
 function activeStageKind(){ return state.selectedRoom==='overview'?'overview':'room'; }
 function updateZoomControls(){
@@ -355,7 +344,6 @@ function applyUiPrefs(){
   const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
   const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
-  const pbt=el('pref-place-by-tap'); if(pbt) pbt.checked=!!state.ui.placeByTap;
   const tz=el('toggle-zones'); if(tz) tz.checked=state.ui.showZones!==false;
   const tdv=el('toggle-devices'); if(tdv) tdv.checked=state.ui.showMarkers!==false;
   const ts=el('toggle-sensors'); if(ts) ts.checked=state.ui.showSensors!==false;
@@ -705,10 +693,6 @@ function closePlacementEditor(){
   if(modal) modal.classList.add('hidden');
   document.body.classList.remove('placement-editor-open');
   state.placementEditor=null;
-  state.placingDeviceId=null;
-  state.placingKind=null;
-  state.crosshairDragging=false;
-  renderPlacementBar();
 }
 
 function pauseLiveDashboard(){
@@ -735,6 +719,7 @@ function updateEditButtons(){
   if(cancelBtn) cancelBtn.classList.toggle('hidden', !state.edit);
 }
 function enterEditMode(){
+  state.stageGesture=null;
   pauseLiveDashboard();
   state.editSnapshot=cloneLayout(state.layout);
   state.selectedEdit=null;
@@ -753,6 +738,7 @@ async function saveEditChanges(){
   if(!state.edit) return;
   if(!state.layoutDirty){
     state.edit=false;
+    state.stageGesture=null;
     state.editSnapshot=null;
     closePlacementEditor();
     resumeLiveDashboard();
@@ -763,6 +749,7 @@ async function saveEditChanges(){
   }
   await saveLayout(true);
   state.edit=false;
+  state.stageGesture=null;
   state.editSnapshot=null;
   state.selectedEdit=null;
   closePlacementEditor();
@@ -775,6 +762,7 @@ function cancelEditChanges(){
   if(!state.edit) return;
   if(state.editSnapshot) state.layout=cloneLayout(state.editSnapshot);
   state.edit=false;
+  state.stageGesture=null;
   state.editSnapshot=null;
   state.selectedEdit=null;
   closePlacementEditor();
@@ -785,10 +773,7 @@ function cancelEditChanges(){
 }
 
 function render(){
-  if(!state.edit && (state.placingDeviceId || state.placementEditor)){
-    state.placingDeviceId=null;
-    state.placingKind=null;
-    state.crosshairDragging=false;
+  if(!state.edit && state.placementEditor){
     closePlacementEditor();
   }
   document.body.classList.toggle('editing', state.edit);
@@ -808,7 +793,6 @@ function render(){
   if(isOverview){ renderOverview(); } else { renderRoom(); }
   renderDevices();
   renderEditSheet();
-  renderPlacementBar();
   renderKioskWidget();
   updateZoomControls();
 }
@@ -827,7 +811,7 @@ function renderOverviewZones(){
     const z=document.createElement('button');
     z.className='room-zone'+(isSelectedEdit('zone', r.id, 'overview')?' edit-selected':''); z.dataset.room=r.id;
     Object.assign(z.style,{left:r.x+'%',top:r.y+'%',width:r.w+'%',height:r.h+'%'});
-    z.innerHTML=`<span class="zone-label">${esc(r.label)}</span><span class="zone-handle" data-handle="resize"></span>`;
+    z.innerHTML=`<span class="zone-label">${esc(r.label)}</span>`;
     z.addEventListener('pointerdown', zoneDown);
     z.onclick=e=>{if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(state.edit||state.suppressClick){state.suppressClick=false;return} selectRoom(r.id)};
     layer.appendChild(z);
@@ -895,12 +879,21 @@ function markerEl(d,p,scope){
   b.className='device-marker '+(editSimple?'edit-static':visualClass(d))+(shouldRenderSensorTextMarker(d, scope) && !editSimple?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
   b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.dataset.domain=d.domain||domainOf(d.entity_id); b.title=`${displayName(d)}\n${d.entity_id}`;
   b.style.left=renderPos.x+'%'; b.style.top=renderPos.y+'%'; if(!editSimple) b.style.cssText += visualStyle(d); b.innerHTML=editSimple?`<span class="edit-marker-icon">${iconMarkup(d)}</span>`:markerInnerHtml(d, scope);
-  attachPressActions(b,d,{dragHandler:markerDown});
-  b.addEventListener('contextmenu',e=>{
-    e.preventDefault();
-    if(state.edit){ selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)}); }
-    else openDeviceModal(d);
-  });
+  if(state.edit){
+    b.addEventListener('click', e=>{
+      e.preventDefault(); e.stopPropagation();
+      selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
+      openPlacementEditor(d.entity_id);
+    });
+  } else {
+    attachPressActions(b,d);
+  }
+  if(!state.edit){
+    b.addEventListener('contextmenu',e=>{
+      e.preventDefault();
+      openDeviceModal(d);
+    });
+  }
   return b;
 }
 function quickActionsHtml(list){
@@ -915,43 +908,39 @@ function renderQuickActions(){
   const box=el('quick-actions'); if(box){ box.innerHTML=quickActionsHtml(list); bindQuickActions(box); }
   const over=el('quick-overlay-list'); if(over){ over.innerHTML=quickActionsHtml(list); bindQuickActions(over); }
 }
-function canDragDeviceFromList(d){
+function canEditDeviceInCurrentScope(d){
   if(!state.edit) return false;
   if(state.selectedRoom==='overview') return true;
   return normalizedRoomId(d.room)===normalizedRoomId(state.selectedRoom);
 }
 function deviceCardHtml(d, showAllInRoom=false){
   const sameRoom = state.selectedRoom==='overview' || normalizedRoomId(d.room)===normalizedRoomId(state.selectedRoom);
-  const draggable = canDragDeviceFromList(d);
+  const canPlace = canEditDeviceInCurrentScope(d);
   const roomLabel = ROOM_MAP[normalizedRoomId(d.room)]?.label || d.room || 'Без комнаты';
   const extra = showAllInRoom && !sameRoom ? ` · ${esc(roomLabel)}` : '';
-  const title = draggable ? d.entity_id : `${d.entity_id}\nУстройство из другой комнаты. В этом патче перенос в текущую комнату отключён.`;
-  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" draggable="${draggable?'true':'false'}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div><button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button></div>`;
+  const title = canPlace ? `${d.entity_id}
+Редактирование через SVG Layout Editor` : `${d.entity_id}
+Устройство из другой комнаты. Перенос между комнатами отключён.`;
+  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div><button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button></div>`;
 }
 function bindDeviceCards(list){
   qsa('.device-card',list).forEach(card=>{
-    card.ondragstart=e=>{
-      const d=devices().find(x=>x.entity_id===card.dataset.entity);
-      if(!d || !canDragDeviceFromList(d)){ e.preventDefault(); showToast('Перенос устройств между комнатами пока отключён'); return; }
-      e.dataTransfer.setData('text/entity-id',card.dataset.entity);e.dataTransfer.effectAllowed='copy';
-    };
-    card.addEventListener('click', e=>{
-      if(!state.edit) return;
-      if(e.target.closest('button')) return;
-      const d=devices().find(x=>x.entity_id===card.dataset.entity);
-      if(!d) return;
-      e.preventDefault();
-      e.stopPropagation();
-      startTouchPlaceDevice(d.entity_id);
-    });
-    const d=devices().find(x=>x.entity_id===card.dataset.entity); if(d) attachPressActions(card,d,{ignoreSelector:'button'});
+    const d=devices().find(x=>x.entity_id===card.dataset.entity);
+    if(state.edit){
+      card.addEventListener('click', e=>{
+        if(e.target.closest('button')) return;
+        if(!d) return;
+        e.preventDefault(); e.stopPropagation();
+        openPlacementEditor(d.entity_id);
+      });
+    } else if(d){
+      attachPressActions(card,d,{ignoreSelector:'button'});
+    }
   });
-  qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d) attachPressActions(btn,d)});
+  qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d && !state.edit) attachPressActions(btn,d)});
 }
 
-// v3.4.27: stable edit workflow. In edit mode the device list is a separate
-// lightweight picker, not a live panel over the map. This avoids mobile/landscape
-// scroll glitches and platform-specific panel bugs.
+// Stable edit workflow: edit mode uses a lightweight picker and SVG Layout Editor, not the live map.
 function devicePickerCardHtml(d){
   const rid=effectiveDeviceRoomId(d);
   const roomLabel = ROOM_MAP[normalizedRoomId(rid)]?.label || d.room || d.haArea?.name || 'Без комнаты';
@@ -1002,7 +991,7 @@ function renderDevicePicker(){
   if(!state.openDevicePickerGroup && q && ordered.length===1) state.openDevicePickerGroup=ordered[0].id;
   const count=el('device-picker-count'); if(count) count.textContent=`${ordered.length} групп · ${visible.length} устройств`;
   const title=el('device-picker-title'); if(title) title.textContent=state.selectedRoom==='overview'?'Выбрать устройство для общего плана':`Выбрать устройство: ${room(state.selectedRoom)?.label||state.selectedRoom}`;
-  const subtitle=el('device-picker-subtitle'); if(subtitle) subtitle.textContent='Тапните устройство: откроется отдельный координатный редактор размещения.';
+  const subtitle=el('device-picker-subtitle'); if(subtitle) subtitle.textContent='Тапните устройство: откроется SVG Layout Editor. Перетаскивание отключено.';
   if(!ordered.length){ list.innerHTML=`<p class="muted device-empty">Нет устройств для размещения. Включите “Показать уже размещённые” или измените поиск.</p>`; return; }
   list.innerHTML=`<div class="device-picker-groups">${ordered.map(g=>{
     const open=g.id===state.openDevicePickerGroup;
@@ -1012,7 +1001,7 @@ function renderDevicePicker(){
     return `<section class="device-picker-group ${open?'open':''}"><button type="button" class="device-picker-group-head" data-picker-group="${esc(g.id)}"><span>${open?'▾':'▸'} ${esc(g.label)}</span><b>${esc(sub)}</b></button>${open?`<div class="device-picker-items">${g.items.map(devicePickerCardHtml).join('')}</div>`:''}</section>`;
   }).join('')}</div>`;
   qsa('[data-picker-group]',list).forEach(btn=>btn.onclick=()=>{state.openDevicePickerGroup=state.openDevicePickerGroup===btn.dataset.pickerGroup?'':btn.dataset.pickerGroup; renderDevicePicker();});
-  qsa('[data-picker-entity]',list).forEach(btn=>btn.onclick=()=>{ const id=btn.dataset.pickerEntity; closeDevicePicker(); startTouchPlaceDevice(id); });
+  qsa('[data-picker-entity]',list).forEach(btn=>btn.onclick=()=>{ const id=btn.dataset.pickerEntity; closeDevicePicker(); openDeviceLayoutEditor(id); });
 }
 function openDevicePicker(){
   if(!state.edit){ setPanelHidden('hideDevicePanel', false); return; }
@@ -1189,7 +1178,6 @@ function attachPressActions(node,d,opts={}){
   const cancelTimer=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
   node.addEventListener('pointerdown', e=>{
     if(opts.ignoreSelector && e.target.closest(opts.ignoreSelector)) return;
-    if(opts.dragHandler && state.edit){ opts.dragHandler(e); return; }
     if(state.edit) return;
     if(e.button !== undefined && e.button !== 0) return;
     pointerId=e.pointerId; sx=e.clientX; sy=e.clientY; longFired=false;
@@ -1325,7 +1313,7 @@ function ensureRoomMarkerMap(roomId){ if(!state.layout.roomMarkers)state.layout.
 function roomBounds(roomId){ const r=roomWithLayout(normalizedRoomId(roomId)); if(!r) return null; return {left:r.x-r.w/2, top:r.y-r.h/2, w:r.w, h:r.h}; }
 function roomToOverviewPos(roomId,p){ const b=roomBounds(roomId); if(!b) return p; return {x:clamp(b.left + (Number(p.x)||0)/100*b.w,0,100), y:clamp(b.top + (Number(p.y)||0)/100*b.h,0,100)}; }
 function overviewToRoomPos(roomId,p){ const b=roomBounds(roomId); if(!b) return p; return {x:clamp(((Number(p.x)||0)-b.left)/b.w*100,0,100), y:clamp(((Number(p.y)||0)-b.top)/b.h*100,0,100)}; }
-function currentRoomGeometry(){
+function legacyCurrentRoomGeometryForMigrationOnly(){
   const stage = el('room-stage');
   const content = el('room-content');
   if(!stage || !content) return null;
@@ -1341,8 +1329,8 @@ function currentRoomGeometry(){
     offsetY: contentRect.top - stageRect.top
   };
 }
-function legacyStageToRoomContentPos(p){
-  const g=currentRoomGeometry(); if(!g) return p;
+function legacyStageToRoomContentPosForMigrationOnly(p){
+  const g=legacyCurrentRoomGeometryForMigrationOnly(); if(!g) return p;
   const absX=(Number(p.x)||0)/100*g.stageW;
   const absY=(Number(p.y)||0)/100*g.stageH;
   const imagePos = {
@@ -1360,12 +1348,12 @@ function migrateCurrentRoomCoordinateSpace(){
   const metrics=state.layout.roomMetrics||{};
   let changed=false;
   for(const [eid,p] of Object.entries(map)){
-    const np=legacyStageToRoomContentPos(p);
+    const np=legacyStageToRoomContentPosForMigrationOnly(p);
     state.layout.roomMarkers[roomId][eid]=np;
     changed=true;
   }
   if(metrics[roomId]){
-    state.layout.roomMetrics[roomId]=legacyStageToRoomContentPos(metrics[roomId]);
+    state.layout.roomMetrics[roomId]=legacyStageToRoomContentPosForMigrationOnly(metrics[roomId]);
     changed=true;
   }
   if(!state.layout.roomCoordinateMigrated) state.layout.roomCoordinateMigrated={};
@@ -1500,13 +1488,9 @@ function getInitialPlacementPoint(kind,entityId){
 function openPlacementEditor(entityId){
   if(!state.edit) return;
   const d=devices().find(x=>x.entity_id===entityId);
-  if(!d || !canDragDeviceFromList(d)){ showToast('Это устройство нельзя разместить на текущем экране'); return; }
+  if(!d || !canEditDeviceInCurrentScope(d)){ showToast('Это устройство нельзя редактировать в текущем scope'); return; }
   const kind=activeStageKind();
   closeDevicePicker();
-  state.placingDeviceId=null;
-  state.placingKind=null;
-  state.crosshairDragging=false;
-  renderPlacementBar();
   const initial=getInitialPlacementPoint(kind,entityId);
   state.placementEditor={entityId,kind,x:initial.x,y:initial.y};
   const src=placementImageSrc(kind);
@@ -1514,7 +1498,8 @@ function openPlacementEditor(entityId){
   updatePlacementEditorAspect(src);
   buildPlacementGrid();
   renderPlacementEditorExisting();
-  const title=el('placement-editor-title'); if(title) title.textContent='Размещение устройства';
+  const exists = !!(kind==='overview' ? state.layout.overviewMarkers?.[entityId] : state.layout.roomMarkers?.[normalizedRoomId(state.selectedRoom)]?.[entityId]);
+  const title=el('placement-editor-title'); if(title) title.textContent=exists?'Перемещение устройства':'Размещение устройства';
   const dev=el('placement-editor-device'); if(dev) dev.textContent=d?displayName(d):entityId;
   const scope=el('placement-editor-scope'); if(scope) scope.textContent=kind==='overview'?'Общий план':(room(state.selectedRoom)?.label||state.selectedRoom);
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
@@ -1544,131 +1529,8 @@ function applyPlacementEditor(){
   showToast('Устройство размещено');
 }
 
-function renderPlacementBar(){
-  const bar=el('placement-bar');
-  if(!bar) return;
-  const active=!!(state.edit && state.placingDeviceId);
-  bar.classList.toggle('hidden', !active);
-  document.body.classList.toggle('placing-mode', active);
-  const aim=el('placement-aim');
-  if(!active){
-    if(aim) aim.classList.add('hidden');
-    state.crosshairDragging=false;
-    return;
-  }
-  // Re-apply viewport constraints now that placement mode allows extra bounded pan.
-  applyStageTransform(activeStageKind());
-  const d=devices().find(x=>x.entity_id===state.placingDeviceId);
-  const title=el('placement-title');
-  const hint=el('placement-hint');
-  if(title) title.textContent=`Размещение: ${d?displayName(d):state.placingDeviceId}`;
-  if(hint) hint.textContent=state.ui.placeByTap ? 'Передвиньте план под прицел и нажмите “Поставить здесь”. Тап по карте включён в настройках как быстрый вариант.' : 'Тап по карте не размещает устройство. Передвиньте план под прицел или перетащите прицел, затем нажмите “Поставить здесь”.';
-  updatePlacementAim();
-}
-function startTouchPlaceDevice(entityId){
-  openPlacementEditor(entityId);
-}
-function cancelPlacement(){
-  state.placingDeviceId=null;
-  state.placingKind=null;
-  state.crosshairDragging=false;
-  renderPlacementBar();
-  showToast('Размещение отменено');
-}
-function ensurePlacementAim(){
-  let aim=el('placement-aim');
-  if(aim) return aim;
-  aim=document.createElement('div');
-  aim.id='placement-aim';
-  aim.className='placement-aim hidden';
-  aim.title='Перетащите прицел или двигайте карту под ним';
-  document.body.appendChild(aim);
-  aim.addEventListener('pointerdown', e=>{
-    if(!state.edit || !state.placingDeviceId) return;
-    e.preventDefault(); e.stopPropagation();
-    state.crosshairDragging=true;
-    try{ aim.setPointerCapture(e.pointerId); }catch(_){}
-  }, {passive:false});
-  aim.addEventListener('pointermove', e=>{
-    if(!state.crosshairDragging) return;
-    e.preventDefault(); e.stopPropagation();
-    movePlacementAimToClient(e.clientX, e.clientY);
-  }, {passive:false});
-  const stop=e=>{ if(state.crosshairDragging){ e.preventDefault(); e.stopPropagation(); } state.crosshairDragging=false; };
-  aim.addEventListener('pointerup', stop, {passive:false});
-  aim.addEventListener('pointercancel', stop, {passive:false});
-  return aim;
-}
-function activeStageEl(kind=activeStageKind()){
-  return el(kind==='overview'?'overview-stage':'room-stage');
-}
-function updatePlacementAim(){
-  const aim=ensurePlacementAim();
-  const active=!!(state.edit && state.placingDeviceId);
-  aim.classList.toggle('hidden', !active);
-  if(!active) return;
-  const kind=activeStageKind();
-  const stage=activeStageEl(kind);
-  if(!stage) return;
-  const r=stage.getBoundingClientRect();
-  const pos=state.placingCrosshair[kind] || {x:50,y:50};
-  aim.style.left=(r.left + r.width*clamp(pos.x,0,100)/100)+'px';
-  aim.style.top=(r.top + r.height*clamp(pos.y,0,100)/100)+'px';
-}
-function movePlacementAimToClient(cx,cy){
-  const kind=activeStageKind();
-  const stage=activeStageEl(kind);
-  if(!stage) return;
-  const r=stage.getBoundingClientRect();
-  const x=clamp((cx-r.left)/Math.max(1,r.width)*100,0,100);
-  const y=clamp((cy-r.top)/Math.max(1,r.height)*100,0,100);
-  state.placingCrosshair[kind]={x,y};
-  updatePlacementAim();
-}
-function placementAimClientPoint(){
-  const kind=activeStageKind();
-  const stage=activeStageEl(kind);
-  if(!stage) return null;
-  const r=stage.getBoundingClientRect();
-  const pos=state.placingCrosshair[kind] || {x:50,y:50};
-  return {x:r.left + r.width*clamp(pos.x,0,100)/100, y:r.top + r.height*clamp(pos.y,0,100)/100};
-}
-function placeDeviceAtImagePercent(kind,p){
-  if(!state.edit || !state.placingDeviceId) return false;
-  const id=state.placingDeviceId;
-  const d=devices().find(x=>x.entity_id===id);
-  if(!d){ cancelPlacement(); return false; }
-  if(kind==='room' && normalizedRoomId(d.room)!==normalizedRoomId(state.selectedRoom)){
-    showToast('Перенос устройств между комнатами пока отключён');
-    cancelPlacement();
-    return true;
-  }
-  setMarkerPosition(id,kind,kind==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
-  state.placingDeviceId=null;
-  state.placingKind=null;
-  state.crosshairDragging=false;
-  renderPlacementBar();
-  setLayoutDirty(true);
-  if(kind==='overview') renderOverviewMarkers(); else renderRoomMarkers();
-  selectEditObject({kind:'marker',id,scope:kind,label:d?displayName(d):id});
-  renderEditSheet();
-  showToast('Устройство размещено');
-  return true;
-}
-function placePendingDevice(kind,e){
-  if(!state.edit || !state.placingDeviceId) return false;
-  return placeDeviceAtImagePercent(kind, eventImagePercent(kind,e));
-}
-function placePendingDeviceAtCrosshair(){
-  if(!state.edit || !state.placingDeviceId) return;
-  const kind=activeStageKind();
-  const stage=el(kind==='overview'?'overview-stage':'room-stage');
-  if(!stage) return;
-  const pt=placementAimClientPoint();
-  if(!pt) return;
-  const p=imagePercentIn(kind, pt.x, pt.y);
-  placeDeviceAtImagePercent(kind,p);
-}
+
+function openDeviceLayoutEditor(entityId){ openPlacementEditor(entityId); }
 
 function isSelectedEdit(kind,id,scope){
   const s=state.selectedEdit;
@@ -1702,7 +1564,7 @@ function renderEditSheet(){
   const title=el('edit-sheet-title'); if(title) title.textContent=selectedEditLabel();
   const hint=el('edit-sheet-hint');
   const isMetric=!!(state.selectedEdit && (state.selectedEdit.kind==='overviewMetric'||state.selectedEdit.kind==='roomMetric'));
-  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Его можно двигать и сбросить позицию, но нельзя удалить окончательно.' : 'Перетащите выбранный объект пальцем или мышью. Управление устройствами в редакторе отключено.') : 'Коснитесь зоны, маркера или показателя, чтобы выбрать. Затем перетащите.';
+  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Его можно двигать и сбросить позицию, но нельзя удалить окончательно.' : 'Нажмите маркер, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.') : 'Нажмите маркер, чтобы открыть SVG Layout Editor. Позиция задаётся кликом/тапом по сетке и стрелками.';
   const del=el('btn-delete-selected');
   const reset=el('btn-reset-selected');
   if(del){ del.disabled=!(state.selectedEdit && state.selectedEdit.kind==='marker'); del.textContent='Удалить маркер'; }
@@ -1763,50 +1625,31 @@ async function toggleDevice(d){
   catch(e){showToast('Ошибка управления: '+e.message)}
 }
 
-function percentIn(element,cx,cy){const r=element.getBoundingClientRect();return {x:clamp((cx-r.left)/Math.max(1,r.width)*100,0,100),y:clamp((cy-r.top)/Math.max(1,r.height)*100,0,100)}}
-// v3.4.27: for placing and dragging markers use the actual rendered image rect,
-// not the stage/container box. This keeps tap-to-place accurate with zoom/pan,
-// hardwareScale, landscape mode and Home Assistant ingress scaling.
-function imagePercentIn(kind,cx,cy){
-  const img = el(kind==='overview' ? 'overview-image' : 'room-image');
-  const content = el(kind==='overview' ? 'overview-content' : 'room-content');
-  const target = img || content;
-  if(!target) return {x:50,y:50};
-  const r = target.getBoundingClientRect();
-  if(!r.width || !r.height) return percentIn(content || target, cx, cy);
-  return {x:clamp((cx-r.left)/r.width*100,0,100),y:clamp((cy-r.top)/r.height*100,0,100)};
+function zoneDown(e){
+  if(!state.edit) return;
+  e.preventDefault(); e.stopPropagation();
+  const z=e.currentTarget; const id=z.dataset.room; const r=roomWithLayout(id);
+  selectEditObject({kind:'zone',id,scope:'overview',label:r.label});
+  showToast('Зоны будут редактироваться в отдельном Zone Editor. Перетаскивание отключено.');
 }
-function eventImagePercent(kind,e){
-  const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
-  return imagePercentIn(kind, t.clientX, t.clientY);
+function metricDown(e){
+  if(!state.edit) return;
+  e.preventDefault(); e.stopPropagation();
+  const b=e.currentTarget;
+  selectEditObject({kind:b.dataset.kind,id:b.dataset.room,scope:b.dataset.kind==='overviewMetric'?'overview':'room',label:room(b.dataset.room)?.label||b.dataset.room});
+  showToast('Системные датчики защищены. Перемещение будет через Layout Editor.');
 }
-function zoneDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const z=e.currentTarget; const id=z.dataset.room; const r=roomWithLayout(id); selectEditObject({kind:'zone',id,scope:'overview',label:r.label}); const p=percentIn(el('overview-content'),e.clientX,e.clientY); state.dragged={kind:e.target.dataset.handle==='resize'?'zoneResize':'zone',id,start:p,room:{...r},el:z}; bindDrag(); }
-function metricDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const parent=b.dataset.kind==='overviewMetric'?el('overview-content'):el('room-content'); selectEditObject({kind:b.dataset.kind,id:b.dataset.room,scope:b.dataset.kind==='overviewMetric'?'overview':'room',label:room(b.dataset.room)?.label||b.dataset.room}); state.dragged={kind:b.dataset.kind,id:b.dataset.room,el:b,parent}; bindDrag(); }
-function markerDown(e){ if(!state.edit)return; e.preventDefault(); e.stopPropagation(); const b=e.currentTarget; const d=devices().find(x=>x.entity_id===b.dataset.entity); selectEditObject({kind:'marker',id:b.dataset.entity,scope:b.dataset.scope,label:d?displayName(d):b.dataset.entity}); const parent=b.dataset.scope==='overview'?el('overview-content'):el('room-content'); state.dragged={kind:'marker',id:b.dataset.entity,scope:b.dataset.scope,el:b,parent}; bindDrag(); }
-function bindDrag(){state.dragMoved=false; document.addEventListener('pointermove',dragMove); document.addEventListener('pointerup',dragUp,{once:true})}
-function dragMove(e){ const d=state.dragged; if(!d)return; state.dragMoved=true; if(d.kind==='zone'||d.kind==='zoneResize'){ const p=percentIn(el('overview-content'),e.clientX,e.clientY); const dx=p.x-d.start.x, dy=p.y-d.start.y; let nr={...d.room}; if(d.kind==='zone'){nr.x=clamp(d.room.x+dx,nr.w/2,100-nr.w/2); nr.y=clamp(d.room.y+dy,nr.h/2,100-nr.h/2)} else {nr.w=clamp(d.room.w+dx,4,55); nr.h=clamp(d.room.h+dy,4,55)} state.layout.zones[d.id]={x:nr.x,y:nr.y,w:nr.w,h:nr.h}; Object.assign(d.el.style,{left:nr.x+'%',top:nr.y+'%',width:nr.w+'%',height:nr.h+'%'}); return; }
-  const p=percentIn(d.parent,e.clientX,e.clientY);
-  if(d.kind==='overviewMetric'){ d.el.style.left=p.x+'%'; d.el.style.top=p.y+'%'; state.layout.overviewMetrics[d.id]=p; }
-  else if(d.kind==='roomMetric'){ const stored=roomImageToStoredPos(d.id, p); const renderPos=roomStoredToImagePos(d.id, stored); d.el.style.left=renderPos.x+'%'; d.el.style.top=renderPos.y+'%'; if(!state.layout.roomMetrics)state.layout.roomMetrics={}; state.layout.roomMetrics[d.id]=stored; }
-  else if(d.kind==='marker'){ const mp=imagePercentIn(d.scope,e.clientX,e.clientY); if(d.scope==='room'){ const stored=roomImageToStoredPos(state.selectedRoom, mp); const renderPos=roomStoredToImagePos(state.selectedRoom, stored); d.el.style.left=renderPos.x+'%'; d.el.style.top=renderPos.y+'%'; setMarkerPosition(d.id,d.scope,stored); } else { d.el.style.left=mp.x+'%'; d.el.style.top=mp.y+'%'; setMarkerPosition(d.id,d.scope,mp); } } }
-function dragUp(){ if(state.dragMoved){ state.suppressClick=true; setLayoutDirty(true); renderEditSheet(); } state.dragged=null; setTimeout(()=>state.suppressClick=false,DRAG_SUPPRESS_MS) }
-
-
 function pointerPoint(e){return {id:e.pointerId,x:e.clientX,y:e.clientY}}
 function stageKindFromEl(stage){return stage && stage.id==='overview-stage'?'overview':'room'}
-function isStageInteractiveTarget(target){return !!target.closest('.device-marker,.badge,.room-zone,.zone-handle,button,a,input,textarea,select,label,.device-card,.edit-action-sheet,.quick-overlay')}
+function isStageInteractiveTarget(target){return !!target.closest('.device-marker,.badge,.room-zone,button,a,input,textarea,select,label,.device-card,.edit-action-sheet,.quick-overlay')}
 function bindStageGestures(){
   [[el('overview-stage'),'overview'],[el('room-stage'),'room']].forEach(([stage,kind])=>{
     if(!stage || stage.dataset.gestureBound) return;
     stage.dataset.gestureBound='1';
     stage.addEventListener('pointerdown', e=>{
+      if(state.edit) return;
       if(e.button !== undefined && e.button !== 0) return;
       const isInteractive=isStageInteractiveTarget(e.target);
-      if(state.edit && state.placingDeviceId && !isInteractive && state.ui.placeByTap){
-        e.preventDefault();
-        placePendingDevice(kind,e);
-        return;
-      }
       if(isInteractive && !state.stageGesture) return;
       e.preventDefault();
       if(!state.stageGesture || state.stageGesture.kind!==kind){
@@ -1864,26 +1707,6 @@ function bindStageGestures(){
     stage.addEventListener('pointercancel', end, {passive:false});
     stage.addEventListener('dblclick', e=>{ if(isStageInteractiveTarget(e.target)) return; e.preventDefault(); resetViewport(kind); });
     stage.addEventListener('wheel', e=>{ if(!e.ctrlKey && !e.metaKey) return; e.preventDefault(); zoomViewport(kind, e.deltaY<0?1.12:.89); }, {passive:false});
-  });
-}
-
-function bindDrops(){
-  [[el('overview-stage'),'overview'],[el('room-stage'),'room']].forEach(([stage,scope])=>{
-    stage.addEventListener('dragover',e=>{
-      if(state.edit && e.dataTransfer.types.includes('text/entity-id')){e.preventDefault();e.dataTransfer.dropEffect='copy'}
-    });
-    stage.addEventListener('drop',e=>{
-      if(!state.edit) return;
-      const id=e.dataTransfer.getData('text/entity-id'); if(!id)return;
-      const d=devices().find(x=>x.entity_id===id);
-      if(scope==='room' && d && normalizedRoomId(d.room)!==normalizedRoomId(state.selectedRoom)){ e.preventDefault(); showToast('Перенос устройств между комнатами пока отключён'); return; }
-      e.preventDefault();
-      const p=eventImagePercent(scope,e);
-      setMarkerPosition(id,scope,scope==='room' ? roomImageToStoredPos(state.selectedRoom, p) : p);
-      setLayoutDirty(true);
-      if(scope==='overview') renderOverviewMarkers(); else renderRoomMarkers();
-      selectEditObject({kind:'marker',id,scope,label:d?displayName(d):id});
-    });
   });
 }
 
@@ -2095,8 +1918,7 @@ function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncM
 
 function bindGlobal(){
   loadUiPrefs();
-  window.addEventListener('resize', updatePlacementAim);
-  document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
+    document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
   ['pointerdown','touchstart','keydown'].forEach(evt=>document.addEventListener(evt, registerKioskActivity, {passive:true}));
   el('btn-settings').onclick=()=>openModal('settings-modal');
   el('btn-close-settings').onclick=()=>closeModal('settings-modal');
@@ -2120,14 +1942,12 @@ function bindGlobal(){
   const delSel=el('btn-delete-selected'); if(delSel) delSel.onclick=deleteSelectedEditObject;
   const resetSel=el('btn-reset-selected'); if(resetSel) resetSel.onclick=resetSelectedEditObject;
   const closeEdit=el('btn-close-edit-sheet'); if(closeEdit) closeEdit.onclick=()=>{state.selectedEdit=null; render();};
-  const placeHere=el('btn-place-here'); if(placeHere) placeHere.onclick=placePendingDeviceAtCrosshair;
-  const cancelPlace=el('btn-cancel-placement'); if(cancelPlace) cancelPlace.onclick=cancelPlacement;
   const sheetSave=el('btn-sheet-save-edit'); if(sheetSave) sheetSave.onclick=()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message));
   const sheetCancel=el('btn-sheet-cancel-edit'); if(sheetCancel) sheetCancel.onclick=cancelEditChanges;
   el('device-search').oninput=renderDevices;
   el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
   const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
-  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); bindDrops();
+  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room')},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); 
 
   el('btn-hide-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
   el('btn-show-sidebar').onclick=()=>setPanelHidden('hideSidebar', false);
@@ -2172,7 +1992,6 @@ function bindGlobal(){
   const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();};
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
-  const placeByTapPref=el('pref-place-by-tap'); if(placeByTapPref) placeByTapPref.onchange=e=>{state.ui.placeByTap=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{}); renderPlacementBar();};
   ['pref-panel-mode','pref-allow-dangerous','pref-confirm-dangerous'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>saveGlobalPrefs().catch(()=>{}); });
   bindRangePreview('pref-halo-scale','haloScale','pref-halo-scale-value');
   bindRangePreview('pref-hardware-scale','hardwareScale','pref-hardware-scale-value');

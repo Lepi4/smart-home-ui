@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.32</title>
+  <title>Smart Home UI HA Add-on v3.4.37</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -93,7 +93,7 @@
               <div class="detail-card">
                 <h2 id="room-title">Комната</h2>
                 <div id="room-climate-line" class="climate-line"></div>
-                <p class="muted">Маркеры можно перетаскивать из списка справа. В режиме редактирования двигаются зоны, показатели и устройства.</p>
+                <p class="muted">В режиме редактирования используется SVG Layout Editor: выберите устройство или маркер, кликните/тапните точку на сетке и нажмите “Применить”. Перетаскивание отключено.</p>
               </div>
               <div class="detail-card">
                 <h3>Быстрые действия</h3>
@@ -107,7 +107,7 @@
         <div id="edit-action-sheet" class="edit-action-sheet hidden">
           <div>
             <strong id="edit-sheet-title">Ничего не выбрано</strong>
-            <p id="edit-sheet-hint">Коснитесь зоны, маркера или показателя, чтобы выбрать. Затем перетащите.</p>
+            <p id="edit-sheet-hint">Коснитесь маркера, чтобы открыть Layout Editor. Затем кликните/тапните новую точку на сетке и нажмите “Применить”.</p>
           </div>
           <div class="edit-sheet-actions">
             <button type="button" id="btn-reset-selected">Сбросить/убрать</button>
@@ -118,18 +118,6 @@
           </div>
         </div>
 
-
-        <div id="placement-bar" class="placement-bar hidden">
-          <div class="placement-crosshair" aria-hidden="true"></div>
-          <div class="placement-info">
-            <strong id="placement-title">Размещение устройства</strong>
-            <p id="placement-hint">Передвиньте план под прицел и нажмите “Поставить здесь”.</p>
-          </div>
-          <div class="placement-actions">
-            <button type="button" id="btn-place-here" class="sheet-save">Поставить здесь</button>
-            <button type="button" id="btn-cancel-placement" class="sheet-cancel">Отмена</button>
-          </div>
-        </div>
 
         <button type="button" id="btn-quick-overlay" class="quick-overlay-button hidden">Быстрые действия</button>
         <div id="quick-overlay" class="quick-overlay hidden">
@@ -175,7 +163,6 @@
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-mode"> Режим киоска: скрыть панели и оставить только план</label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-autolock"> Автоблокировка киоска</label>
-        <label class="settings-check"><input type="checkbox" id="pref-place-by-tap"> Размещать устройство по тапу на карте</label>
         <label>Автоблокировка после, сек<input id="pref-kiosk-autolock-seconds" type="number" min="5" max="300" value="15"></label>
         <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
         <label>Режим панели
@@ -243,7 +230,7 @@
       <div class="modal-head">
         <div>
           <h2 id="device-picker-title">Выбрать устройство</h2>
-          <p id="device-picker-subtitle" class="muted">Выберите устройство, затем тапните место на карте.</p>
+          <p id="device-picker-subtitle" class="muted">Выберите устройство: откроется SVG Layout Editor.</p>
         </div>
         <button type="button" id="btn-close-device-picker" class="close-word">× Закрыть</button>
       </div>
@@ -262,7 +249,7 @@
       <div class="modal-head placement-editor-head">
         <div>
           <h2 id="placement-editor-title">Размещение устройства</h2>
-          <p id="placement-editor-subtitle" class="muted">Кликните/тапните точку на изображении или подстройте стрелками.</p>
+          <p id="placement-editor-subtitle" class="muted">Кликните/тапните точку на сетке, затем при необходимости подстройте X/Y или стрелками.</p>
         </div>
         <button type="button" id="btn-close-placement-editor" class="close-word">× Закрыть</button>
       </div>
@@ -300,7 +287,7 @@
               <option value="2">2%</option>
             </select>
           </label>
-          <p class="muted placement-editor-help">Редактор использует отдельный SVG-слой 0–100. Zoom/pan live-карты не участвуют в расчёте координат.</p>
+          <p class="muted placement-editor-help">Layout Editor использует отдельный SVG-слой изображения. Live-карта, zoom/pan и перетаскивание не участвуют в расчёте координат.</p>
         </div>
       </div>
       <div class="modal-actions placement-editor-actions">

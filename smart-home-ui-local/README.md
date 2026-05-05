@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.32
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.32
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.37
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.37
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.32
+## Что умеет текущая версия v3.4.37
 
 ### Home Assistant add-on
 
@@ -47,7 +47,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 - Короткий тап — основное действие устройства.
 - Долгое удержание — меню функций.
-- Drag — только в режиме редактирования.
+- Редактирование координат — только через SVG Layout Editor. Перетаскивание отключён.
 - ПКМ на desktop можно использовать как дополнительный shortcut, но он не обязателен.
 
 ### Безопасное редактирование layout
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.32"
+git commit -m "Update Smart Home UI add-on to v3.4.37"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.32
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.32
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.37
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.37
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,31 +294,31 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.32
+## Изменения v3.4.37
 
 - В режиме редактирования общего плана панель устройств теперь сгруппирована по комнатам.
 - Одновременно раскрыта только одна группа: открытие второй комнаты автоматически сворачивает предыдущую.
 - Добавлена группа «Неразмещённые» для устройств без маркера на общем плане.
 - В закрытых группах не рендерятся карточки устройств, поэтому общий план в edit mode меньше нагружает мобильный/landscape UI.
-- Сценарий размещения через touch сохранён: открыть комнату в списке → тапнуть устройство → тапнуть место на карте.
+- Сценарий размещения в режиме редактирования переведён в SVG Layout Editor: выбрать устройство → клик/тап по сетке → точная подстройка X/Y → Применить.
 - Поиск работает поверх групп и показывает только подходящие комнаты/устройства.
 
-## v3.4.32 — overview edit accordion
+## v3.4.37 — overview edit accordion
 
-This release optimizes overview editing on touch devices and landscape screens. Instead of rendering 180+ device cards at once, the Devices panel shows room groups as an accordion. Only the active group renders its cards, which reduces layout/repaint cost and makes placing devices on the overview map easier.
+This release optimizes overview editing on touch devices and landscape screens. Instead of rendering 180+ device cards at once, the Devices panel shows room groups as an accordion. Only the active group renders its cards, which reduces layout/repaint cost and makes selecting devices for the SVG Layout Editor easier.
 
-## Изменения v3.4.32
+## Изменения v3.4.37
 
 - В режиме редактирования общего плана список устройств всегда работает как аккордеон по комнатам.
 - Закрытые комнаты не рендерят карточки устройств, что снижает нагрузку на мобильных и в landscape.
 - Одновременно раскрыта только одна группа; повторный тап закрывает группу.
 
-## v3.4.32 — grouped edit device panel
+## v3.4.37 — grouped edit device panel
 
 In edit mode the device panel is now grouped by room on every screen, not only on mobile. Closed room groups do not render device cards, which reduces UI load on large dashboards. The media Lovelace parser also uses `heading` cards as source groups and tries to infer the actual room from the device name, so entries like “Алиса кабинет”, “Алиса гостиная”, or “ТВ гостиная” can be grouped with the corresponding room instead of falling into “Неразмещённые”.
 
 
-## v3.4.32 — HA Area fallback and edit groups
+## v3.4.37 — HA Area fallback and edit groups
 
 - В режиме редактирования панель устройств всегда группируется по комнатам, без зависимости от мобильной/desktop версии.
 - При редактировании конкретной комнаты её группа открывается сразу, чтобы не надо было раскрывать список вручную.
@@ -330,38 +330,22 @@ In edit mode the device panel is now grouped by room on every screen, not only o
 
 В режиме киоска доступна кнопка Lock/Unlock в нижнем углу. В состоянии Lock тапы по устройствам, датчикам и зонам игнорируются, чтобы случайно ничего не включить. В настройках есть Auto-lock: при включении киоск автоматически блокируется после заданного времени бездействия, по умолчанию 15 секунд.
 
-## v3.4.32: Device Picker в режиме редактирования
+## v3.4.37: Device Picker в режиме редактирования
 
 В режиме редактирования кнопка **Устройства** открывает отдельное окно выбора устройства. После выбора окно закрывается, а устройство ставится на карту следующим тапом. Это заменяет тяжёлую панель устройств поверх карты и работает одинаково на ПК и мобильных.
 
 
-## v3.4.32 — Lightweight Edit Mode
+## v3.4.37 — Lightweight Edit Mode
 
-В режиме редактирования приложение временно отключает живые обновления HA, glow-анимации, hover/long-press меню, быстрые действия и тяжёлые визуальные состояния маркеров. Редактор становится статичным и лёгким: выбрать устройство можно через Device Picker, затем тапнуть место на карте. После сохранения или отмены live dashboard включается снова.
+В режиме редактирования приложение временно отключает живые обновления HA, glow-анимации, hover/long-press меню, быстрые действия и тяжёлые визуальные состояния маркеров. Редактор становится статичным и лёгким: выбрать устройство можно через Device Picker, затем открыть SVG Layout Editor, кликнуть/тапнуть точку на сетке, подстроить X/Y и нажать «Применить». После сохранения или отмены live dashboard включается снова.
 
-## Изменения v3.4.32
+## Изменения v3.4.37
 
-- Исправлена точность размещения устройств в редакторе: tap-to-place теперь считает координаты от фактического прямоугольника изображения, а не от контейнера карты.
 - Это особенно важно при zoom/pan, hardwareScale, landscape-режиме и запуске через Home Assistant Ingress/Android WebView.
 - Drag существующих маркеров также использует image-space координаты, чтобы маркер оставался там, где его отпустили.
 
 
-## v3.4.32 — precise placement and protected sensors
-
-- В редакторе после выбора устройства появляется режим точного размещения с прицелом.
-- Для мобильных/landscape сценариев рекомендуется передвинуть план под прицел и нажать **Поставить здесь**.
-- Тап по карте остаётся быстрым вариантом, но прицел даёт стабильные координаты при zoom/pan/hardware scale.
-- Системные сдвоенные показатели температуры/влажности защищены от окончательного удаления: их можно двигать и сбрасывать позицию.
-
-
-## v3.4.32 — placement crosshair fix
-
-- Прицел размещения теперь скрывается при выходе из режима редактирования.
-- В placement mode карта может двигаться под прицелом по обеим осям в ограниченных пределах.
-- Размещение по тапу остаётся выключенным по умолчанию; основной способ — прицел + кнопка “Поставить здесь”.
-
-
-## v3.4.32 — Placement Editor Rework
+## v3.4.37 — Placement Editor Rework
 
 Новые устройства больше не размещаются через живую dashboard-карту с zoom/pan/transform. В режиме редактирования после выбора устройства открывается отдельный лёгкий редактор размещения на SVG-слое `viewBox 0 0 100 100`:
 
@@ -375,6 +359,29 @@ In edit mode the device panel is now grouped by room on every screen, not only o
 Это основной способ точного размещения на мобильном, планшете и ПК.
 
 
-## v3.4.32 — Placement Editor coordinate round-trip
+## v3.4.37 — Placement Editor coordinate round-trip
 
 Placement Editor now uses the natural image size as the SVG coordinate system and stores only percentages in layout. This fixes mismatches where a marker preview was correct in the editor but appeared shifted after applying it on the live overview/room map.
+
+
+## v3.4.37 — Unified SVG Layout Editor
+
+- Перетаскивание removed from edit mode.
+- New device placement: Edit → Devices → select device → SVG Layout Editor → click/tap grid → adjust X/Y/arrows → Apply.
+- Existing marker movement uses the same flow: select marker → click/tap new point in Layout Editor → adjust → Apply.
+- Live dashboard, zoom/pan, hardware scale and old live placement overlay no longer participate in coordinate editing.
+
+
+## v3.4.37 — cleanup old edit mechanisms
+
+- Removed/disabled old старое размещение поверх live-карты UI.
+- Disabled подсказки перетаскивания and старое размещение поверх live-карты in edit mode.
+- Stage pan/zoom handlers do not run in edit mode.
+- SVG Layout Editor is the only supported way to place or move markers.
+
+## v3.4.37 — финальная очистка старого редактора
+
+- Удалены устаревшие пользовательские сценарии размещения поверх live-карты.
+- В режиме редактирования координаты меняются только через SVG Layout Editor.
+- Список устройств открывает редактор; маркер выбирается кликом и редактируется кликом по сетке, X/Y и стрелками.
+- Старое перетаскивание, live-map размещение и связанные подсказки отключены.
