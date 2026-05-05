@@ -827,11 +827,16 @@ function metricContent(r){
   return `<span class="temp">${t||'—'}°</span>${h?`<span class="drop">💧</span> ${h}%`:''}`;
 }
 function defaultMetricPos(r){return {x:clamp(r.x-r.w/4,2,98),y:clamp(r.y-r.h/4,2,98)}}
+function safeMetricPoint(stored, fallback){
+  const x=Number(stored?.x), y=Number(stored?.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||x>100||y<0.5||y>100) return fallback;
+  return {x:clamp(x,0,100), y:clamp(y,0,100)};
+}
 function renderOverviewMetrics(){
-  const layer=el('overview-metrics'); layer.innerHTML=''; if(state.edit) return; if(!el('toggle-sensors')?.checked)return;
+  const layer=el('overview-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
-    const p=state.layout.overviewMetrics?.[r.id] || defaultMetricPos(r);
+    const p=safeMetricPoint(state.layout.overviewMetrics?.[r.id], defaultMetricPos(r));
     const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('overviewMetric', r.id, 'overview')?' edit-selected':''); b.dataset.kind='overviewMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
     b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
   })
@@ -861,8 +866,8 @@ function renderRoom(){
   el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных датчиков температуры/влажности</span>';
 }
 function renderRoomMetrics(){
-  const layer=el('room-metrics'); layer.innerHTML=''; if(state.edit) return; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
-  const stored=state.layout.roomMetrics?.[r.id] || {x:16,y:16};
+  const layer=el('room-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
+  const stored=safeMetricPoint(state.layout.roomMetrics?.[r.id], {x:16,y:16});
   const p=roomStoredToImagePos(r.id, stored);
   const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
   b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
@@ -876,28 +881,60 @@ function renderRoomMarkers(){
   requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function markerEl(d,p,scope){
-  const b=document.createElement('button');
   const renderPos = scope==='room' ? roomStoredToImagePos(state.selectedRoom, p) : p;
   const editSimple = !!state.edit;
+  const isSensorAnchor = d.domain==='sensor' || d.domain==='binary_sensor' || shouldRenderSensorTextMarker(d, scope);
+  const anchor=document.createElement('div');
+  anchor.className='marker-anchor'+(isSensorAnchor?' sensor-anchor':'');
+  anchor.dataset.entity=d.entity_id;
+  anchor.dataset.scope=scope;
+  anchor.style.left=clamp(Number(renderPos.x)||0,0,100)+'%';
+  anchor.style.top=clamp(Number(renderPos.y)||0,0,100)+'%';
+
+  const b=document.createElement('button');
+  b.type='button';
   b.className='device-marker '+(editSimple?'edit-static':visualClass(d))+(shouldRenderSensorTextMarker(d, scope) && !editSimple?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
   b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.dataset.domain=d.domain||domainOf(d.entity_id); b.title=`${displayName(d)}\n${d.entity_id}`;
-  b.style.left=renderPos.x+'%'; b.style.top=renderPos.y+'%'; if(!editSimple) b.style.cssText += visualStyle(d); b.innerHTML=editSimple?`<span class="edit-marker-icon">${iconMarkup(d)}</span>`:markerInnerHtml(d, scope);
+  if(!editSimple) b.style.cssText += visualStyle(d);
+  b.innerHTML=editSimple?`<span class="edit-marker-icon">${iconMarkup(d)}</span>`:markerInnerHtml(d, scope);
+
   if(state.edit){
-    b.addEventListener('click', e=>{
-      e.preventDefault(); e.stopPropagation();
-      selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
-      openPlacementEditor(d.entity_id);
-    });
+    attachEditMarkerActions(b,d,scope);
   } else {
     attachPressActions(b,d);
-  }
-  if(!state.edit){
     b.addEventListener('contextmenu',e=>{
       e.preventDefault();
       openDeviceModal(d);
     });
   }
-  return b;
+  anchor.appendChild(b);
+  return anchor;
+}
+function attachEditMarkerActions(b,d,scope){
+  let timer=null, sx=0, sy=0, longFired=false;
+  const clear=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+  b.addEventListener('pointerdown', e=>{
+    if(e.button!==undefined && e.button!==0) return;
+    e.stopPropagation();
+    sx=e.clientX; sy=e.clientY; longFired=false;
+    clear();
+    timer=setTimeout(()=>{
+      longFired=true;
+      selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
+      openPlacementEditor(d.entity_id);
+    },650);
+  });
+  b.addEventListener('pointermove', e=>{
+    if(!timer) return;
+    if(Math.hypot(e.clientX-sx,e.clientY-sy)>8) clear();
+  });
+  ['pointerup','pointercancel','pointerleave'].forEach(evt=>b.addEventListener(evt, clear));
+  b.addEventListener('click', e=>{
+    e.preventDefault(); e.stopPropagation();
+    if(longFired){ longFired=false; return; }
+    selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
+    showToast('Маркер выбран. Удерживайте его для перемещения через SVG Layout Editor.');
+  });
 }
 function quickActionsHtml(list){
   return list.length?list.map(d=>`<button type="button" class="quick-action ${visualClass(d)}" style="${visualStyle(d)}" data-quick="${esc(d.entity_id)}"><span class="quick-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span>${esc(displayName(d))}</span><span class="muted">${esc(markerValueLabel(d)||stateText(d))}</span></button>`).join(''):'<p class="muted">Нет быстрых действий</p>';
@@ -1693,7 +1730,7 @@ function renderEditSheet(){
   const title=el('edit-sheet-title'); if(title) title.textContent=selectedEditLabel();
   const hint=el('edit-sheet-hint');
   const isMetric=!!(state.selectedEdit && (state.selectedEdit.kind==='overviewMetric'||state.selectedEdit.kind==='roomMetric'));
-  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Его можно двигать и сбросить позицию, но нельзя удалить окончательно.' : 'Нажмите маркер, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.') : 'Нажмите маркер, чтобы открыть SVG Layout Editor. Позиция задаётся кликом/тапом по сетке и стрелками.';
+  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Его можно двигать и сбросить позицию, но нельзя удалить окончательно.' : 'Маркер выбран. Для перемещения удерживайте его, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.') : 'Короткий тап выбирает маркер. Удержание открывает SVG Layout Editor для перемещения. Устройства добавляются через кнопку “Устройства”.';
   const del=el('btn-delete-selected');
   const reset=el('btn-reset-selected');
   if(del){ del.disabled=!(state.selectedEdit && state.selectedEdit.kind==='marker'); del.textContent='Удалить маркер'; }
