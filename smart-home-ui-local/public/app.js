@@ -1401,37 +1401,81 @@ function existingMarkerEntriesForPlacement(kind){
   const rid=normalizedRoomId(state.selectedRoom);
   return Object.entries(state.layout.roomMarkers?.[rid]||{}).map(([id,p])=>({id,p:roomStoredToImagePos(rid,p)}));
 }
+function placementEditorDims(){
+  const pe=state.placementEditor || {};
+  return {w: Number(pe.w)||100, h: Number(pe.h)||100};
+}
+function pctToPlacementSvgPoint(x,y){
+  const d=placementEditorDims();
+  return {x: clamp(Number(x)||0,0,100)/100*d.w, y: clamp(Number(y)||0,0,100)/100*d.h};
+}
+function placementSvgPointToPct(x,y){
+  const d=placementEditorDims();
+  return {x: clamp((Number(x)||0)/Math.max(1,d.w)*100,0,100), y: clamp((Number(y)||0)/Math.max(1,d.h)*100,0,100)};
+}
+function applyPlacementEditorViewBox(){
+  const svg=el('placement-editor-svg'), img=el('placement-editor-image');
+  if(!svg || !img || !state.placementEditor) return;
+  const d=placementEditorDims();
+  svg.setAttribute('viewBox',`0 0 ${d.w} ${d.h}`);
+  svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+  img.setAttribute('x','0'); img.setAttribute('y','0');
+  img.setAttribute('width',String(d.w)); img.setAttribute('height',String(d.h));
+  img.setAttribute('preserveAspectRatio','none');
+  svg.style.aspectRatio=`${d.w} / ${d.h}`;
+}
 function buildPlacementGrid(){
   const g=el('placement-editor-grid'); if(!g) return;
+  const d=placementEditorDims();
   let html='';
   for(let i=0;i<=100;i+=5){
     const major=i%10===0;
-    html+=`<line class="${major?'major':''}" x1="${i}" x2="${i}" y1="0" y2="100"></line><line class="${major?'major':''}" y1="${i}" y2="${i}" x1="0" x2="100"></line>`;
+    const x=i/100*d.w, y=i/100*d.h;
+    html+=`<line class="${major?'major':''}" x1="${x}" x2="${x}" y1="0" y2="${d.h}"></line><line class="${major?'major':''}" y1="${y}" y2="${y}" x1="0" x2="${d.w}"></line>`;
   }
-  for(const i of [0,25,50,75,100]) html+=`<text x="${i===100?98:i+1}" y="3.2">${i}</text><text x="1" y="${i===0?4:i===100?98:i}">${i}</text>`;
+  const fs=Math.max(10, Math.min(d.w,d.h)*0.025);
+  for(const i of [0,25,50,75,100]){
+    const x=i/100*d.w, y=i/100*d.h;
+    html+=`<text font-size="${fs}" x="${i===100?d.w-fs*2:x+fs*.35}" y="${fs*1.25}">${i}</text><text font-size="${fs}" x="${fs*.35}" y="${i===0?fs*1.25:i===100?d.h-fs*.5:y}">${i}</text>`;
+  }
   g.innerHTML=html;
 }
 function updatePlacementEditorAspect(src){
-  const svg=el('placement-editor-svg'); if(!svg) return;
+  const svg=el('placement-editor-svg'); if(!svg || !state.placementEditor) return;
   const img=new Image();
-  img.onload=()=>{ const w=img.naturalWidth||16,h=img.naturalHeight||9; svg.style.aspectRatio=`${w} / ${h}`; };
+  img.onload=()=>{
+    const w=img.naturalWidth||100,h=img.naturalHeight||100;
+    // v3.4.32: the editor uses the real image pixel coordinate space.
+    // The UI still stores percentages, but SVG works in natural image units,
+    // so the point applied to the live map round-trips without aspect distortion.
+    state.placementEditor.w=w; state.placementEditor.h=h;
+    applyPlacementEditorViewBox();
+    buildPlacementGrid();
+    renderPlacementEditorExisting();
+    setPlacementEditorPoint(state.placementEditor.x, state.placementEditor.y);
+  };
   img.src=src;
 }
 function renderPlacementEditorExisting(){
   const layer=el('placement-editor-existing'); if(!layer || !state.placementEditor) return;
   const current=state.placementEditor.entityId;
+  const d=placementEditorDims();
+  const r=Math.max(3, Math.min(d.w,d.h)*0.009);
   layer.innerHTML=existingMarkerEntriesForPlacement(state.placementEditor.kind)
     .filter(x=>x.id!==current)
-    .map(x=>`<circle cx="${clamp(Number(x.p?.x)||0,0,100)}" cy="${clamp(Number(x.p?.y)||0,0,100)}" r="0.9"><title>${esc(x.id)}</title></circle>`).join('');
+    .map(x=>{ const p=pctToPlacementSvgPoint(x.p?.x, x.p?.y); return `<circle cx="${p.x}" cy="${p.y}" r="${r}"><title>${esc(x.id)}</title></circle>`; }).join('');
 }
 function setPlacementEditorPoint(x,y){
   if(!state.placementEditor) return;
   state.placementEditor.x=clamp(Number(x)||0,0,100);
   state.placementEditor.y=clamp(Number(y)||0,0,100);
+  const d=placementEditorDims();
+  const p=pctToPlacementSvgPoint(state.placementEditor.x,state.placementEditor.y);
   const m=el('placement-editor-marker'), hl=el('placement-editor-hline'), vl=el('placement-editor-vline');
-  if(m){ m.setAttribute('cx',state.placementEditor.x); m.setAttribute('cy',state.placementEditor.y); }
-  if(hl){ hl.setAttribute('y1',state.placementEditor.y); hl.setAttribute('y2',state.placementEditor.y); }
-  if(vl){ vl.setAttribute('x1',state.placementEditor.x); vl.setAttribute('x2',state.placementEditor.x); }
+  const r=Math.max(5, Math.min(d.w,d.h)*0.018);
+  if(m){ m.setAttribute('cx',p.x); m.setAttribute('cy',p.y); m.setAttribute('r',String(r)); }
+  if(hl){ hl.setAttribute('x1','0'); hl.setAttribute('x2',String(d.w)); hl.setAttribute('y1',p.y); hl.setAttribute('y2',p.y); }
+  if(vl){ vl.setAttribute('y1','0'); vl.setAttribute('y2',String(d.h)); vl.setAttribute('x1',p.x); vl.setAttribute('x2',p.x); }
   const xi=el('placement-editor-x'), yi=el('placement-editor-y');
   if(xi) xi.value=state.placementEditor.x.toFixed(1);
   if(yi) yi.value=state.placementEditor.y.toFixed(1);
@@ -1442,7 +1486,7 @@ function placementSvgPointFromEvent(e){
   pt.x=e.clientX; pt.y=e.clientY;
   const ctm=svg.getScreenCTM(); if(!ctm) return null;
   const pnt=pt.matrixTransform(ctm.inverse());
-  return {x:clamp(pnt.x,0,100), y:clamp(pnt.y,0,100)};
+  return placementSvgPointToPct(pnt.x,pnt.y);
 }
 function getInitialPlacementPoint(kind,entityId){
   if(kind==='overview'){
