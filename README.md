@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.42
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.42
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.44
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.44
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.42
+## Что умеет текущая версия v3.4.44
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.42"
+git commit -m "Update Smart Home UI add-on to v3.4.44"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.42
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.42
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.44
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.44
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,52 +294,31 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.42
+## Изменения v3.4.44
 
-- Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
-- Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.
-- Preview слайдеров применяется через `requestAnimationFrame`, сохранение происходит с debounce и при отпускании.
-- README расширен: добавлено подробное описание проекта, установка, структура, GHCR, Lovelace source, `/data`, layout coordinate rules и roadmap.
+- В режиме редактирования общего плана панель устройств теперь сгруппирована по комнатам.
+- Одновременно раскрыта только одна группа: открытие второй комнаты автоматически сворачивает предыдущую.
+- Добавлена группа «Неразмещённые» для устройств без маркера на общем плане.
+- В закрытых группах не рендерятся карточки устройств, поэтому общий план в edit mode меньше нагружает мобильный/landscape UI.
+- Сценарий размещения в режиме редактирования переведён в SVG Layout Editor: выбрать устройство → клик/тап по сетке → точная подстройка X/Y → Применить.
+- Поиск работает поверх групп и показывает только подходящие комнаты/устройства.
 
-## v3.4.42 — data consistency and security
+## v3.4.44 — overview edit accordion
 
-This release separates shared settings from device-local state:
+This release optimizes overview editing on touch devices and landscape screens. Instead of rendering 180+ device cards at once, the Devices panel shows room groups as an accordion. Only the active group renders its cards, which reduces layout/repaint cost and makes selecting devices for the SVG Layout Editor easier.
 
-- shared settings are stored in `/data/addon_config.json` and are the same on PC, mobile and kiosk panels;
-- device-local state such as zoom, pan, last opened room, hidden panels and kiosk state is stored separately in `/data/ui_state.json` / browser local state;
-- marker/sensor/room-label scale, background transparency, dark theme and clock/weather visibility are global settings.
+## Изменения v3.4.44
 
-Security hardening:
+- В режиме редактирования общего плана список устройств всегда работает как аккордеон по комнатам.
+- Закрытые комнаты не рендерят карточки устройств, что снижает нагрузку на мобильных и в landscape.
+- Одновременно раскрыта только одна группа; повторный тап закрывает группу.
 
-- service calls are split into safe and dangerous groups;
-- dangerous commands are disabled by default;
-- dangerous commands can require confirmation;
-- panel mode can be `viewer`, `control` or `admin`;
-- the last service calls are logged in `/data/command_log.json` and shown in diagnostics.
+## v3.4.44 — grouped edit device panel
 
-Setup-from-scratch foundation:
-
-- `/data/images` is created automatically;
-- images from `/data/images` are exposed as `/media/...`, ready for the upcoming room/image manager.
+In edit mode the device panel is now grouped by room on every screen, not only on mobile. Closed room groups do not render device cards, which reduces UI load on large dashboards. The media Lovelace parser also uses `heading` cards as source groups and tries to infer the actual room from the device name, so entries like “Алиса кабинет”, “Алиса гостиная”, or “ТВ гостиная” can be grouped with the corresponding room instead of falling into “Неразмещённые”.
 
 
-## v3.4.42 — mobile panel stability
-
-This release fixes mobile panel behavior after the security/data-consistency update:
-
-- Rooms and Devices mobile panels are now mutually exclusive; opening one closes the other.
-- Tapping outside an open mobile panel closes it.
-- Rooms and Devices are rendered as compact bottom sheets above the mobile navigation bar.
-- The map is dimmed while a mobile panel is open, but the bottom navigation remains usable.
-- Selecting a room on mobile closes open panels automatically.
-- Device list scrolling is contained inside the panel and no longer тянет всю страницу.
-
-## v3.4.42
-
-Исправлен режим редактирования общего плана: устройства теперь действительно отображаются аккордеоном по комнатам, а не старым плоским списком.
-
-
-## v3.4.42 — HA Area fallback and edit groups
+## v3.4.44 — HA Area fallback and edit groups
 
 - В режиме редактирования панель устройств всегда группируется по комнатам, без зависимости от мобильной/desktop версии.
 - При редактировании конкретной комнаты её группа открывается сразу, чтобы не надо было раскрывать список вручную.
@@ -351,33 +330,22 @@ This release fixes mobile panel behavior after the security/data-consistency upd
 
 В режиме киоска доступна кнопка Lock/Unlock в нижнем углу. В состоянии Lock тапы по устройствам, датчикам и зонам игнорируются, чтобы случайно ничего не включить. В настройках есть Auto-lock: при включении киоск автоматически блокируется после заданного времени бездействия, по умолчанию 15 секунд.
 
-## v3.4.42: Device Picker в режиме редактирования
+## v3.4.44: Device Picker в режиме редактирования
 
-В режиме редактирования кнопка **Устройства** больше не открывает тяжёлую живую панель поверх карты. Вместо этого открывается отдельное лёгкое окно выбора устройства:
-
-1. Нажать **Устройства**.
-2. Выбрать комнату/группу.
-3. Выбрать устройство.
-4. Тапнуть место на карте.
-
-Такая логика используется одинаково на ПК, телефоне, планшете и в landscape, чтобы не зависеть от определения платформы и не вызывать мерцание/сброс скролла.
+В режиме редактирования кнопка **Устройства** открывает отдельное окно выбора устройства. После выбора окно закрывается, а устройство ставится на карту следующим тапом. Это заменяет тяжёлую панель устройств поверх карты и работает одинаково на ПК и мобильных.
 
 
-## v3.4.42 — Lightweight Edit Mode
+## v3.4.44 — Lightweight Edit Mode
 
 В режиме редактирования приложение временно отключает живые обновления HA, glow-анимации, hover/long-press меню, быстрые действия и тяжёлые визуальные состояния маркеров. Редактор становится статичным и лёгким: выбрать устройство можно через Device Picker, затем открыть SVG Layout Editor, кликнуть/тапнуть точку на сетке, подстроить X/Y и нажать «Применить». После сохранения или отмены live dashboard включается снова.
 
+## Изменения v3.4.44
 
-## v3.4.42 — precise placement and protected sensors
-
-- Системные сдвоенные показатели температуры/влажности защищены от окончательного удаления: их можно двигать и сбрасывать позицию.
-
-
-
-- Прицел размещения теперь скрывается при выходе из режима редактирования.
+- Это особенно важно при zoom/pan, hardwareScale, landscape-режиме и запуске через Home Assistant Ingress/Android WebView.
+- Drag существующих маркеров также использует image-space координаты, чтобы маркер оставался там, где его отпустили.
 
 
-## v3.4.42 — Placement Editor Rework
+## v3.4.44 — Placement Editor Rework
 
 Новые устройства больше не размещаются через живую dashboard-карту с zoom/pan/transform. В режиме редактирования после выбора устройства открывается отдельный лёгкий редактор размещения на SVG-слое `viewBox 0 0 100 100`:
 
@@ -391,51 +359,60 @@ This release fixes mobile panel behavior after the security/data-consistency upd
 Это основной способ точного размещения на мобильном, планшете и ПК.
 
 
-## v3.4.42 — Placement Editor coordinate round-trip
+## v3.4.44 — Placement Editor coordinate round-trip
 
 Placement Editor now uses the natural image size as the SVG coordinate system and stores only percentages in layout. This fixes mismatches where a marker preview was correct in the editor but appeared shifted after applying it on the live overview/room map.
 
 
-## v3.4.42 — Unified SVG Layout Editor
+## v3.4.44 — Unified SVG Layout Editor
 
 - Перетаскивание removed from edit mode.
 - New device placement: Edit → Devices → select device → SVG Layout Editor → click/tap grid → adjust X/Y/arrows → Apply.
 - Existing marker movement uses the same flow: select marker → click/tap new point in Layout Editor → adjust → Apply.
+- Live dashboard, zoom/pan, hardware scale and old live placement overlay no longer participate in coordinate editing.
 
 
-## v3.4.42 — cleanup old edit mechanisms
+## v3.4.44 — cleanup old edit mechanisms
 
+- Removed/disabled old старое размещение поверх live-карты UI.
 - Disabled подсказки перетаскивания and старое размещение поверх live-карты in edit mode.
 - Stage pan/zoom handlers do not run in edit mode.
 - SVG Layout Editor is the only supported way to place or move markers.
 
-## v3.4.42 — финальная очистка старого редактора
+## v3.4.44 — финальная очистка старого редактора
 
 - Удалены устаревшие пользовательские сценарии размещения поверх live-карты.
 - В режиме редактирования координаты меняются только через SVG Layout Editor.
 - Список устройств открывает редактор; маркер выбирается кликом и редактируется кликом по сетке, X/Y и стрелками.
 - Старое перетаскивание, live-map размещение и связанные подсказки отключены.
 
-## v3.4.42 — Placement Editor coordinate debug
+## v3.4.44 — Placement Editor coordinate debug
 
 - Расчёт точки клика в SVG Layout Editor больше не использует `getScreenCTM()`.
 - Новый расчёт использует `getBoundingClientRect()` и вручную учитывает letterbox от `preserveAspectRatio="xMidYMid meet"`.
 - В редактор добавлен раскрываемый debug-блок с `clientX/clientY`, SVG rect, image rect, scale, offset и рассчитанными x/y процентами.
 
 
-## v3.4.42
+## v3.4.44
 
 - Unified Marker Anchor: координата `x/y` теперь принадлежит нулевому anchor-слою, а визуальный маркер всегда центрируется на нём. Это убирает смещение разных типов маркеров из-за scale/transform.
 - В режиме редактирования короткий тап по установленному устройству только выбирает маркер. Перемещение открывается долгим удержанием и выполняется через SVG Layout Editor.
 - Системные сдвоенные датчики остаются видимыми в режиме редактирования и больше не должны падать в `y=0`; некорректные координаты заменяются безопасной дефолтной позицией.
 
-## v3.4.42 — Stable Placement Editor Sizing
+## v3.4.44 — Stable Placement Editor Sizing
 
-The SVG Layout Editor canvas is now non-scrollable and the SVG is explicitly sized in JavaScript. This stabilizes pointer-to-coordinate mapping across desktop, mobile and WebView/BlueStacks while preserving the v3.4.40 unified marker-anchor behavior.
+Placement/SVG Layout Editor no longer relies on a scrollable canvas or CSS `max-height: 100%` flex sizing. The editor canvas is locked with `overflow: hidden` and `touch-action: none`, while the SVG size is explicitly fitted in JavaScript using the image natural size and the available canvas rectangle. This keeps `getBoundingClientRect()` stable across desktop, mobile, BlueStacks/WebView and orientation changes.
+
+This version keeps the v3.4.40 behavior: unified marker anchor, short tap selects a marker, long press opens the SVG editor for moving it, and system temperature/humidity badges remain protected.
 
 
-## v3.4.42 — датчики и debug mode
+## v3.4.44 — датчики и debug mode
 
 - Системные датчики температуры/влажности снова позиционируются одинаково в режиме просмотра и редактирования.
 - Системные датчики нельзя удалить, но их можно переместить: короткий тап выбирает, долгое удержание открывает SVG Layout Editor.
 - Добавлена настройка Debug mode: координатные debug-окна показываются только при включённой галке.
+
+
+## v3.4.44 — Kiosk Attention Monitor
+
+Добавлена глобальная функция “Внимание!” для kiosk mode. Правило добавляется в существующем long press меню устройства, без второго меню. Нормальным считается состояние entity в момент включения правила. Кнопка “Внимание!” в киоске показывает alert независимо от текущей комнаты. Список правил хранится в `/data/attention_rules.json`; удаление одного правила и очистка всего списка выполняются удержанием 3 секунды и доступны только в admin mode при разблокированном киоске.

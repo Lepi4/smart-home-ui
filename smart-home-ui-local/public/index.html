@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.42</title>
+  <title>Smart Home UI HA Add-on v3.4.44</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <button type="button" id="btn-kiosk-rooms" class="kiosk-rooms-btn" title="Открыть список комнат в режиме киоска">☰ Комнаты</button>
+  <button type="button" id="btn-kiosk-attention" class="kiosk-attention-btn" title="Открыть окно Внимание">Внимание!</button>
   <button type="button" id="btn-kiosk-lock" class="kiosk-lock-btn" title="Заблокировать/разблокировать киоск">🔓 Unlock</button>
   <button type="button" id="btn-exit-kiosk" class="kiosk-exit-btn" title="Выйти из режима киоска">⋮ Выйти</button>
   <div id="kiosk-lock-badge" class="kiosk-lock-badge hidden">🔒 Заблокировано</div>
@@ -306,6 +307,20 @@
       </div>
     </div>
   </div>
+
+  <div id="attention-modal" class="modal hidden attention-modal">
+    <div class="modal-card attention-card">
+      <div class="modal-head">
+        <h2>Внимание</h2>
+        <button type="button" id="btn-close-attention" class="close-word">× Закрыть</button>
+      </div>
+      <div id="attention-body" class="attention-body"></div>
+      <div class="modal-actions attention-actions">
+        <button type="button" id="btn-clear-attention" class="danger-hold">Очистить — удерживать 3 сек</button>
+      </div>
+    </div>
+  </div>
+
   <div id="device-modal" class="modal hidden">
     <div class="modal-card device-modal-card">
       <div class="modal-head">

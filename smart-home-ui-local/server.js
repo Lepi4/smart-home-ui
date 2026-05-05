@@ -16,6 +16,7 @@ const LAYOUT_BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const SOURCE_CONFIG_PATH = path.join(DATA_DIR, 'source_config.json');
 const UI_STATE_PATH = path.join(DATA_DIR, 'ui_state.json');
 const DATA_IMAGES_DIR = path.join(DATA_DIR, 'images');
+const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
 
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
@@ -61,6 +62,7 @@ function ensureDataStore(){
   fs.mkdirSync(DATA_IMAGES_DIR, {recursive:true});
   safeCopyIfMissing(FALLBACK_DEVICES_PATH, DEVICES_PATH);
   safeCopyIfMissing(path.join(__dirname, 'public', 'lovelace-source.js'), LOVELACE_PATH);
+  if(!fs.existsSync(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
 }
 function atomicWriteJson(file, payload){
   fs.mkdirSync(path.dirname(file), {recursive:true});
@@ -252,7 +254,7 @@ async function buildDiagnostics(){
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     safeServices: SAFE_SERVICES,
@@ -857,6 +859,47 @@ app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollInterval
 app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', haApiBase:HA_API_BASE, haWsUrl:HA_WS_URL, hasSupervisorToken:!!HA_TOKEN, dataDir:DATA_DIR }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ui-state', (req,res)=> { try { res.json(loadUiState()); } catch(e){ res.status(500).json({error:e.message}); } });
+
+app.get('/api/attention', async (req,res)=> {
+  try {
+    const rules = loadAttentionRules();
+    let states = [];
+    try { states = await haFetch('/states'); } catch(e) { states = []; }
+    res.json(evaluateAttentionRules(rules, states));
+  } catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/api/attention', async (req,res)=> {
+  try {
+    const entity_id = String(req.body?.entity_id || '').trim();
+    if(!entity_id) return res.status(400).json({error:'entity_id is required'});
+    let st = null;
+    try { st = await haFetch('/states/' + encodeURIComponent(entity_id)); } catch(e) { st = null; }
+    const current = st ? String(st.state) : String(req.body?.normal_state || 'unknown');
+    const name = String(req.body?.name || st?.attributes?.friendly_name || entity_id);
+    const data = loadAttentionRules();
+    const rest = data.rules.filter(r=>r.entity_id !== entity_id);
+    rest.push({ entity_id, name, normal_state: current, enabled:true, created_at:new Date().toISOString() });
+    const saved = saveAttentionRules({version:1, rules: rest});
+    let states = [];
+    try { states = await haFetch('/states'); } catch(e) { states = []; }
+    res.json(evaluateAttentionRules(saved, states));
+  } catch(e){ res.status(500).json({error:e.message}); }
+});
+app.delete('/api/attention/:entity_id', async (req,res)=> {
+  try {
+    const entity_id = decodeURIComponent(String(req.params.entity_id || ''));
+    const data = loadAttentionRules();
+    const saved = saveAttentionRules({version:1, rules: data.rules.filter(r=>r.entity_id !== entity_id)});
+    let states = [];
+    try { states = await haFetch('/states'); } catch(e) { states = []; }
+    res.json(evaluateAttentionRules(saved, states));
+  } catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/api/attention/clear', async (req,res)=> {
+  try { res.json(evaluateAttentionRules(saveAttentionRules(attentionDefault()), [])); }
+  catch(e){ res.status(500).json({error:e.message}); }
+});
+
 app.post('/api/ui-state', (req,res)=> { try { res.json({ok:true, state: saveUiState(req.body || {})}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics()); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:listBackups()}); } catch(e){ res.status(500).json({error:e.message}); } });

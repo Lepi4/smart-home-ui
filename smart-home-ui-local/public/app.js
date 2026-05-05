@@ -14,7 +14,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, attention:{ok:true,hasAlerts:false,rules:[]}
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -147,7 +147,7 @@ function resetKioskAutoLock(){
 }
 function registerKioskActivity(e){
   if(!state.ui.kioskMode) return;
-  if(e && e.target && e.target.closest('.kiosk-lock-btn,.kiosk-exit-btn,.kiosk-rooms-btn,.kiosk-room-overlay')) return;
+  if(e && e.target && e.target.closest('.kiosk-lock-btn,.kiosk-attention-btn,.kiosk-exit-btn,.kiosk-rooms-btn,.kiosk-room-overlay,.attention-modal')) return;
   if(!state.kioskLocked) resetKioskAutoLock();
 }
 function isKioskInputLocked(){ return !!(state.ui.kioskMode && state.kioskLocked); }
@@ -1297,7 +1297,7 @@ function openDeviceModal(d){
     ${a.current_temperature!==undefined?modalRow('Текущая температура', String(a.current_temperature).replace('.',',')+'°'):''}
     ${a.hvac_action?modalRow('Действие климата', a.hvac_action):''}
     ${a.current_position!==undefined?modalRow('Позиция', a.current_position+'%'):''}
-    <div class="device-controls">${domainControls(d)}</div>`;
+    <div class="device-controls">${domainControls(d)}${attentionSectionHtml(d)}</div>`;
   modal.classList.remove('hidden'); bindDeviceModalActions(d);
 }
 function closeDeviceModal(){el('device-modal').classList.add('hidden')}
@@ -1333,6 +1333,7 @@ function bindDeviceModalActions(d){
     } else {
       const runAction=async()=>{try{
         const action=ctrl.dataset.action;
+        if(action==='attention-toggle'){ await toggleAttentionRule(d); return; }
         if(action==='rename-save'){ const input=body.querySelector('[data-action=\"rename-local\"]'); const name=(input?.value||'').trim(); if(!state.layout.customNames) state.layout.customNames={}; if(name) state.layout.customNames[d.entity_id]=name; else delete state.layout.customNames[d.entity_id]; await saveLayout(false); showToast('Имя сохранено'); render(); openDeviceModal(d); return; }
         if(action==='rename-local') return;
         if(action==='toggle') await toggleDevice(d);
@@ -1986,6 +1987,66 @@ function hideKioskRooms(){
   if(o) o.classList.add('hidden');
   if(state.kioskRoomTimer){ clearTimeout(state.kioskRoomTimer); state.kioskRoomTimer=null; }
 }
+
+function panelMode(){ return state.config?.security?.panelMode || 'admin'; }
+function canManageAttention(){ return panelMode()==='admin' && !isKioskInputLocked(); }
+function attentionRule(entityId){ return (state.attention?.rules||[]).find(r=>r.entity_id===entityId); }
+function updateAttentionFromStates(){
+  const rules=(state.attention?.rules||[]).map(r=>{
+    const st=getState(r.entity_id);
+    const current_state = st ? String(st.state) : (r.current_state || 'unknown');
+    return {...r, current_state, alert: r.enabled!==false && current_state !== String(r.normal_state), last_changed: st?.last_changed || r.last_changed || null};
+  });
+  state.attention={ok:true, rules, hasAlerts: rules.some(r=>r.alert)};
+  renderAttentionButton();
+}
+async function loadAttention(){
+  try{ state.attention=await apiJson('api/attention'); updateAttentionFromStates(); }
+  catch(e){ console.warn('attention load failed', e); state.attention={ok:false,hasAlerts:false,rules:[]}; renderAttentionButton(); }
+}
+function renderAttentionButton(){
+  const btn=el('btn-kiosk-attention'); if(!btn) return;
+  const count=(state.attention?.rules||[]).filter(r=>r.alert).length;
+  btn.classList.toggle('has-alert', !!state.attention?.hasAlerts);
+  btn.textContent = state.attention?.hasAlerts ? `ВНИМАНИЕ! ${count}` : 'Внимание!';
+}
+function attentionStatusText(rule){ return rule?.alert ? 'Внимание' : 'OK'; }
+function renderAttentionModal(){
+  updateAttentionFromStates();
+  const body=el('attention-body'); if(!body) return;
+  const rules=state.attention?.rules||[];
+  const active=rules.filter(r=>r.alert), ok=rules.filter(r=>!r.alert);
+  const section=(title,list)=>`<h3>${esc(title)}</h3>`+(list.length?`<div class="attention-list">${list.map(r=>`<div class="attention-row ${r.alert?'alert':'ok'}" data-attention-entity="${esc(r.entity_id)}"><div><b>${esc(r.name||r.entity_id)}</b><span>${esc(r.entity_id)}</span></div><div><span>Сейчас: <b>${esc(r.current_state)}</b></span><span>Норма: <b>${esc(r.normal_state)}</b></span><span>${esc(attentionStatusText(r))}</span></div></div>`).join('')}</div>`:'<p class="muted">—</p>');
+  body.innerHTML=`<p class="muted">Список глобальный: alert показывается в киоске независимо от текущей комнаты.</p>${section('Активные',active)}${section('Наблюдаются',ok)}`;
+  qsa('[data-attention-entity]', body).forEach(row=>bindHold(row, async()=>{
+    if(!canManageAttention()){ showToast('Изменение доступно только в admin mode и при разблокированном киоске'); return; }
+    const eid=row.dataset.attentionEntity;
+    await apiJson('api/attention/'+encodeURIComponent(eid),{method:'DELETE'});
+    await loadAttention(); renderAttentionModal(); showToast('Удалено из Внимание');
+  }));
+}
+function openAttentionModal(){ renderAttentionModal(); el('attention-modal')?.classList.remove('hidden'); document.body.classList.add('modal-open'); }
+function closeAttentionModal(){ el('attention-modal')?.classList.add('hidden'); document.body.classList.remove('modal-open'); }
+function bindHold(node, fn, ms=3000){
+  let t=null, done=false;
+  const clear=()=>{ if(t){ clearTimeout(t); t=null; } node.classList.remove('holding'); };
+  node.addEventListener('pointerdown', e=>{ done=false; node.classList.add('holding'); t=setTimeout(async()=>{ done=true; clear(); await fn(e); }, ms); }, {passive:true});
+  ['pointerup','pointercancel','pointerleave'].forEach(ev=>node.addEventListener(ev, e=>{ clear(); if(done){ e.preventDefault?.(); e.stopPropagation?.(); } }, {passive:false}));
+}
+async function toggleAttentionRule(d){
+  if(!canManageAttention()){ showToast('Изменение доступно только в admin mode и при разблокированном киоске'); return; }
+  const exists=attentionRule(d.entity_id);
+  if(exists) await apiJson('api/attention/'+encodeURIComponent(d.entity_id),{method:'DELETE'});
+  else await apiJson('api/attention',{method:'POST',body:JSON.stringify({entity_id:d.entity_id,name:displayName(d)})});
+  await loadAttention();
+  openDeviceModal(d);
+}
+function attentionSectionHtml(d){
+  const r=attentionRule(d.entity_id); const admin=canManageAttention();
+  const current=stateText(d);
+  return `<section class="device-attention-section"><h3>Внимание</h3><p class="muted">Правило глобальное: кнопка “Внимание!” в киоске сработает независимо от комнаты, где сейчас открыт экран.</p>${r?`<div class="attention-mini ${r.alert?'alert':'ok'}"><b>${r.alert?'Внимание':'OK'}</b><span>Норма: ${esc(r.normal_state)}</span><span>Сейчас: ${esc(r.current_state||current)}</span></div>`:`<p class="muted">Сейчас: ${esc(current)}. При включении это состояние будет сохранено как норма.</p>`}<button type="button" data-action="attention-toggle" ${admin?'':'disabled'}>${r?'Не следить':'Следить за изменением состояния'}</button>${admin?'':'<p class="muted">Изменение доступно только в admin mode и при разблокированном киоске.</p>'}</section>`;
+}
+
 function renderKioskRoomOverlay(){
   const list=el('kiosk-room-list'); if(!list) return;
   list.innerHTML='';
@@ -2067,7 +2128,7 @@ async function clearConfig(){
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();if(!state.edit && !state.livePaused) render();setConnection(true,state.edit?'Редактор · live paused':'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();setConnection(true,state.edit?'Редактор · live paused':'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
 function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer); if(state.edit || state.livePaused) return; state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
 
 function defaultSourceConfig(){return{version:1,selectedCards:{},defaultInclude:true,excludedCards:{'Физические устройства::Системные':true,'Вирт.устройства::Вирт.устройства':true},includeUnknownFromApi:false}}
@@ -2249,6 +2310,10 @@ function bindGlobal(){
   el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
   const exitKiosk=el('btn-exit-kiosk');
   if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
+  const kioskAttention=el('btn-kiosk-attention'); if(kioskAttention) kioskAttention.onclick=openAttentionModal;
+  const closeAttention=el('btn-close-attention'); if(closeAttention) closeAttention.onclick=closeAttentionModal;
+  const attentionModal=el('attention-modal'); if(attentionModal) attentionModal.addEventListener('click',e=>{ if(e.target.id==='attention-modal') closeAttentionModal(); });
+  const clearAttention=el('btn-clear-attention'); if(clearAttention) bindHold(clearAttention, async()=>{ if(!canManageAttention()){ showToast('Очистка доступна только в admin mode и при разблокированном киоске'); return; } await apiJson('api/attention/clear',{method:'POST'}); await loadAttention(); renderAttentionModal(); showToast('Список Внимание очищен'); });
   const kioskLock=el('btn-kiosk-lock'); if(kioskLock) kioskLock.onclick=()=>setKioskLocked(!state.kioskLocked);
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
   const closeKioskRooms=el('btn-close-kiosk-rooms'); if(closeKioskRooms) closeKioskRooms.onclick=hideKioskRooms;
@@ -2281,7 +2346,7 @@ function bindGlobal(){
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
 }
 
-(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); loadKioskLockLocal(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
+(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); await loadAttention(); loadKioskLockLocal(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
 
 window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});
