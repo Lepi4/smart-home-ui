@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Smart Home UI HA Add-on v3.4.30</title>
+  <title>Smart Home UI HA Add-on v3.4.31</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -256,6 +256,59 @@
     </div>
   </div>
 
+
+  <div id="placement-editor-modal" class="modal hidden placement-editor-modal">
+    <div class="modal-card placement-editor-card">
+      <div class="modal-head placement-editor-head">
+        <div>
+          <h2 id="placement-editor-title">Размещение устройства</h2>
+          <p id="placement-editor-subtitle" class="muted">Кликните/тапните точку на изображении или подстройте стрелками.</p>
+        </div>
+        <button type="button" id="btn-close-placement-editor" class="close-word">× Закрыть</button>
+      </div>
+      <div class="placement-editor-body">
+        <div class="placement-editor-canvas-wrap">
+          <svg id="placement-editor-svg" class="placement-editor-svg" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Координатный редактор размещения">
+            <image id="placement-editor-image" x="0" y="0" width="100" height="100" preserveAspectRatio="none" href="" />
+            <g id="placement-editor-grid" class="placement-editor-grid"></g>
+            <g id="placement-editor-existing" class="placement-editor-existing"></g>
+            <circle id="placement-editor-marker" class="placement-editor-marker" cx="50" cy="50" r="1.8" />
+            <line id="placement-editor-hline" class="placement-editor-cross" x1="0" x2="100" y1="50" y2="50" />
+            <line id="placement-editor-vline" class="placement-editor-cross" y1="0" y2="100" x1="50" x2="50" />
+          </svg>
+        </div>
+        <div class="placement-editor-side">
+          <div class="placement-editor-selected">
+            <strong id="placement-editor-device">Устройство</strong>
+            <small id="placement-editor-scope">Общий план</small>
+          </div>
+          <div class="placement-editor-coords">
+            <label>X, %<input id="placement-editor-x" type="number" min="0" max="100" step="0.1"></label>
+            <label>Y, %<input id="placement-editor-y" type="number" min="0" max="100" step="0.1"></label>
+          </div>
+          <div class="placement-editor-nudge">
+            <button type="button" id="btn-place-up">↑</button>
+            <button type="button" id="btn-place-left">←</button>
+            <button type="button" id="btn-place-right">→</button>
+            <button type="button" id="btn-place-down">↓</button>
+          </div>
+          <label class="settings-check placement-editor-step">Шаг
+            <select id="placement-editor-step">
+              <option value="0.1">0.1%</option>
+              <option value="0.5" selected>0.5%</option>
+              <option value="1">1%</option>
+              <option value="2">2%</option>
+            </select>
+          </label>
+          <p class="muted placement-editor-help">Редактор использует отдельный SVG-слой 0–100. Zoom/pan live-карты не участвуют в расчёте координат.</p>
+        </div>
+      </div>
+      <div class="modal-actions placement-editor-actions">
+        <button type="button" id="btn-apply-placement-editor" class="sheet-save">Применить</button>
+        <button type="button" id="btn-cancel-placement-editor" class="sheet-cancel">Отмена</button>
+      </div>
+    </div>
+  </div>
   <div id="device-modal" class="modal hidden">
     <div class="modal-card device-modal-card">
       <div class="modal-head">

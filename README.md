@@ -5,8 +5,8 @@
 Репозиторий подготовлен под GitHub Container Registry:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.30
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.30
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.31
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.31
 ```
 
 Add-on устанавливается в Home Assistant через Ingress и не требует ввода Home Assistant URL или long-lived token.
@@ -26,7 +26,7 @@ Add-on устанавливается в Home Assistant через Ingress и н
 
 ---
 
-## Что умеет текущая версия v3.4.30
+## Что умеет текущая версия v3.4.31
 
 ### Home Assistant add-on
 
@@ -170,15 +170,15 @@ data/
 
 ```bash
 git add .
-git commit -m "Update Smart Home UI add-on to v3.4.30"
+git commit -m "Update Smart Home UI add-on to v3.4.31"
 git push
 ```
 
 Затем GitHub Actions соберёт images:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.30
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.30
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.31
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.31
 ```
 
 Если пакет GHCR private, Home Assistant не сможет скачать image. Нужно сделать package публичным:
@@ -294,14 +294,14 @@ entity.name = отображаемое имя устройства
 
 ---
 
-## Изменения v3.4.30
+## Изменения v3.4.31
 
 - Настройки переведены на более лёгкое окно: один внутренний scroll-контейнер, без тяжёлых sticky-слоёв внутри прокрутки.
 - Слайдеры масштаба/прозрачности больше не сохраняют `/data/ui_state.json` на каждое движение пальца.
 - Preview слайдеров применяется через `requestAnimationFrame`, сохранение происходит с debounce и при отпускании.
 - README расширен: добавлено подробное описание проекта, установка, структура, GHCR, Lovelace source, `/data`, layout coordinate rules и roadmap.
 
-## v3.4.30 — data consistency and security
+## v3.4.31 — data consistency and security
 
 This release separates shared settings from device-local state:
 
@@ -323,7 +323,7 @@ Setup-from-scratch foundation:
 - images from `/data/images` are exposed as `/media/...`, ready for the upcoming room/image manager.
 
 
-## v3.4.30 — mobile panel stability
+## v3.4.31 — mobile panel stability
 
 This release fixes mobile panel behavior after the security/data-consistency update:
 
@@ -334,12 +334,12 @@ This release fixes mobile panel behavior after the security/data-consistency upd
 - Selecting a room on mobile closes open panels automatically.
 - Device list scrolling is contained inside the panel and no longer drags the whole page.
 
-## v3.4.30
+## v3.4.31
 
 Исправлен режим редактирования общего плана: устройства теперь действительно отображаются аккордеоном по комнатам, а не старым плоским списком.
 
 
-## v3.4.30 — HA Area fallback and edit groups
+## v3.4.31 — HA Area fallback and edit groups
 
 - В режиме редактирования панель устройств всегда группируется по комнатам, без зависимости от мобильной/desktop версии.
 - При редактировании конкретной комнаты её группа открывается сразу, чтобы не надо было раскрывать список вручную.
@@ -351,7 +351,7 @@ This release fixes mobile panel behavior after the security/data-consistency upd
 
 В режиме киоска доступна кнопка Lock/Unlock в нижнем углу. В состоянии Lock тапы по устройствам, датчикам и зонам игнорируются, чтобы случайно ничего не включить. В настройках есть Auto-lock: при включении киоск автоматически блокируется после заданного времени бездействия, по умолчанию 15 секунд.
 
-## v3.4.30: Device Picker в режиме редактирования
+## v3.4.31: Device Picker в режиме редактирования
 
 В режиме редактирования кнопка **Устройства** больше не открывает тяжёлую живую панель поверх карты. Вместо этого открывается отдельное лёгкое окно выбора устройства:
 
@@ -363,12 +363,12 @@ This release fixes mobile panel behavior after the security/data-consistency upd
 Такая логика используется одинаково на ПК, телефоне, планшете и в landscape, чтобы не зависеть от определения платформы и не вызывать мерцание/сброс скролла.
 
 
-## v3.4.30 — Lightweight Edit Mode
+## v3.4.31 — Lightweight Edit Mode
 
 В режиме редактирования приложение временно отключает живые обновления HA, glow-анимации, hover/long-press меню, быстрые действия и тяжёлые визуальные состояния маркеров. Редактор становится статичным и лёгким: выбрать устройство можно через Device Picker, затем тапнуть место на карте. После сохранения или отмены live dashboard включается снова.
 
 
-## v3.4.30 — precise placement and protected sensors
+## v3.4.31 — precise placement and protected sensors
 
 - В редакторе после выбора устройства появляется режим точного размещения с прицелом.
 - Для мобильных/landscape сценариев рекомендуется передвинуть план под прицел и нажать **Поставить здесь**.
@@ -376,8 +376,22 @@ This release fixes mobile panel behavior after the security/data-consistency upd
 - Системные сдвоенные показатели температуры/влажности защищены от окончательного удаления: их можно двигать и сбрасывать позицию.
 
 
-## v3.4.30 — placement crosshair fix
+## v3.4.31 — placement crosshair fix
 
 - Прицел размещения теперь скрывается при выходе из режима редактирования.
 - В placement mode карта может двигаться под прицелом по обеим осям в ограниченных пределах.
 - Размещение по тапу остаётся выключенным по умолчанию; основной способ — прицел + кнопка “Поставить здесь”.
+
+
+## v3.4.31 — Placement Editor Rework
+
+Новые устройства больше не размещаются через живую dashboard-карту с zoom/pan/transform. В режиме редактирования после выбора устройства открывается отдельный лёгкий редактор размещения на SVG-слое `viewBox 0 0 100 100`:
+
+- картинка overview/room используется как координатная подложка;
+- поверх неё показывается сетка 0–100%;
+- клик/тап по изображению задаёт preview-точку;
+- стрелки позволяют подстроить координаты шагом 0.1/0.5/1/2%;
+- кнопка “Применить” записывает координаты в layout;
+- live HA polling, меню, long press, hover и zoom/pan dashboard-карты не участвуют в расчёте координат.
+
+Это основной способ точного размещения на мобильном, планшете и ПК.

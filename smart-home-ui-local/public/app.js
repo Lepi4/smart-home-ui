@@ -16,7 +16,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', placeByTap:false, showZones:true, showMarkers:true, showSensors:true },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, placingKind:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placingCrosshair:{overview:{x:50,y:50},room:{x:50,y:50}}, crosshairDragging:false
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, placingDeviceId:null, placingKind:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placingCrosshair:{overview:{x:50,y:50},room:{x:50,y:50}}, crosshairDragging:false, placementEditor:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -700,6 +700,17 @@ function renderNav(){
 }
 
 
+function closePlacementEditor(){
+  const modal=el('placement-editor-modal');
+  if(modal) modal.classList.add('hidden');
+  document.body.classList.remove('placement-editor-open');
+  state.placementEditor=null;
+  state.placingDeviceId=null;
+  state.placingKind=null;
+  state.crosshairDragging=false;
+  renderPlacementBar();
+}
+
 function pauseLiveDashboard(){
   state.livePaused = true;
   if(state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer=null; }
@@ -727,8 +738,7 @@ function enterEditMode(){
   pauseLiveDashboard();
   state.editSnapshot=cloneLayout(state.layout);
   state.selectedEdit=null;
-  state.placingDeviceId=null;
-  state.placingKind=null;
+  closePlacementEditor();
   state.edit=true;
   // On a touch overview screen the full 180+ device list is expensive and covers the map.
   // Start with both panels closed; the user opens Devices only when they need to place something.
@@ -744,7 +754,7 @@ async function saveEditChanges(){
   if(!state.layoutDirty){
     state.edit=false;
     state.editSnapshot=null;
-    state.placingDeviceId=null; state.placingKind=null; state.crosshairDragging=false; renderPlacementBar();
+    closePlacementEditor();
     resumeLiveDashboard();
     updateEditButtons();
     showToast('Изменений нет');
@@ -755,7 +765,7 @@ async function saveEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
-  state.placingDeviceId=null; state.placingKind=null; state.crosshairDragging=false; renderPlacementBar();
+  closePlacementEditor();
   resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения сохранены');
@@ -767,7 +777,7 @@ function cancelEditChanges(){
   state.edit=false;
   state.editSnapshot=null;
   state.selectedEdit=null;
-  state.placingDeviceId=null; state.placingKind=null; state.crosshairDragging=false; renderPlacementBar();
+  closePlacementEditor();
   resumeLiveDashboard();
   setLayoutDirty(false);
   showToast('Изменения отменены');
@@ -775,10 +785,11 @@ function cancelEditChanges(){
 }
 
 function render(){
-  if(!state.edit && state.placingDeviceId){
+  if(!state.edit && (state.placingDeviceId || state.placementEditor)){
     state.placingDeviceId=null;
     state.placingKind=null;
     state.crosshairDragging=false;
+    closePlacementEditor();
   }
   document.body.classList.toggle('editing', state.edit);
   document.body.classList.toggle('viewing', !state.edit);
@@ -991,7 +1002,7 @@ function renderDevicePicker(){
   if(!state.openDevicePickerGroup && q && ordered.length===1) state.openDevicePickerGroup=ordered[0].id;
   const count=el('device-picker-count'); if(count) count.textContent=`${ordered.length} групп · ${visible.length} устройств`;
   const title=el('device-picker-title'); if(title) title.textContent=state.selectedRoom==='overview'?'Выбрать устройство для общего плана':`Выбрать устройство: ${room(state.selectedRoom)?.label||state.selectedRoom}`;
-  const subtitle=el('device-picker-subtitle'); if(subtitle) subtitle.textContent='Тапните устройство, окно закроется, затем тапните место на карте.';
+  const subtitle=el('device-picker-subtitle'); if(subtitle) subtitle.textContent='Тапните устройство: откроется отдельный координатный редактор размещения.';
   if(!ordered.length){ list.innerHTML=`<p class="muted device-empty">Нет устройств для размещения. Включите “Показать уже размещённые” или измените поиск.</p>`; return; }
   list.innerHTML=`<div class="device-picker-groups">${ordered.map(g=>{
     const open=g.id===state.openDevicePickerGroup;
@@ -1379,6 +1390,116 @@ function setMarkerPosition(entityId,scope,p){
   }
 }
 
+
+function placementImageSrc(kind){
+  if(kind==='overview') return el('overview-image')?.getAttribute('src') || 'assets/overview-plan.png';
+  const r=room(state.selectedRoom);
+  return r?.image || el('room-image')?.getAttribute('src') || '';
+}
+function existingMarkerEntriesForPlacement(kind){
+  if(kind==='overview') return Object.entries(state.layout.overviewMarkers||{}).map(([id,p])=>({id,p}));
+  const rid=normalizedRoomId(state.selectedRoom);
+  return Object.entries(state.layout.roomMarkers?.[rid]||{}).map(([id,p])=>({id,p:roomStoredToImagePos(rid,p)}));
+}
+function buildPlacementGrid(){
+  const g=el('placement-editor-grid'); if(!g) return;
+  let html='';
+  for(let i=0;i<=100;i+=5){
+    const major=i%10===0;
+    html+=`<line class="${major?'major':''}" x1="${i}" x2="${i}" y1="0" y2="100"></line><line class="${major?'major':''}" y1="${i}" y2="${i}" x1="0" x2="100"></line>`;
+  }
+  for(const i of [0,25,50,75,100]) html+=`<text x="${i===100?98:i+1}" y="3.2">${i}</text><text x="1" y="${i===0?4:i===100?98:i}">${i}</text>`;
+  g.innerHTML=html;
+}
+function updatePlacementEditorAspect(src){
+  const svg=el('placement-editor-svg'); if(!svg) return;
+  const img=new Image();
+  img.onload=()=>{ const w=img.naturalWidth||16,h=img.naturalHeight||9; svg.style.aspectRatio=`${w} / ${h}`; };
+  img.src=src;
+}
+function renderPlacementEditorExisting(){
+  const layer=el('placement-editor-existing'); if(!layer || !state.placementEditor) return;
+  const current=state.placementEditor.entityId;
+  layer.innerHTML=existingMarkerEntriesForPlacement(state.placementEditor.kind)
+    .filter(x=>x.id!==current)
+    .map(x=>`<circle cx="${clamp(Number(x.p?.x)||0,0,100)}" cy="${clamp(Number(x.p?.y)||0,0,100)}" r="0.9"><title>${esc(x.id)}</title></circle>`).join('');
+}
+function setPlacementEditorPoint(x,y){
+  if(!state.placementEditor) return;
+  state.placementEditor.x=clamp(Number(x)||0,0,100);
+  state.placementEditor.y=clamp(Number(y)||0,0,100);
+  const m=el('placement-editor-marker'), hl=el('placement-editor-hline'), vl=el('placement-editor-vline');
+  if(m){ m.setAttribute('cx',state.placementEditor.x); m.setAttribute('cy',state.placementEditor.y); }
+  if(hl){ hl.setAttribute('y1',state.placementEditor.y); hl.setAttribute('y2',state.placementEditor.y); }
+  if(vl){ vl.setAttribute('x1',state.placementEditor.x); vl.setAttribute('x2',state.placementEditor.x); }
+  const xi=el('placement-editor-x'), yi=el('placement-editor-y');
+  if(xi) xi.value=state.placementEditor.x.toFixed(1);
+  if(yi) yi.value=state.placementEditor.y.toFixed(1);
+}
+function placementSvgPointFromEvent(e){
+  const svg=el('placement-editor-svg'); if(!svg) return null;
+  const pt=svg.createSVGPoint();
+  pt.x=e.clientX; pt.y=e.clientY;
+  const ctm=svg.getScreenCTM(); if(!ctm) return null;
+  const pnt=pt.matrixTransform(ctm.inverse());
+  return {x:clamp(pnt.x,0,100), y:clamp(pnt.y,0,100)};
+}
+function getInitialPlacementPoint(kind,entityId){
+  if(kind==='overview'){
+    const p=state.layout.overviewMarkers?.[entityId];
+    return p ? {x:clamp(Number(p.x)||50,0,100), y:clamp(Number(p.y)||50,0,100)} : {x:50,y:50};
+  }
+  const rid=normalizedRoomId(state.selectedRoom);
+  const p=state.layout.roomMarkers?.[rid]?.[entityId];
+  return p ? roomStoredToImagePos(rid,p) : {x:50,y:50};
+}
+function openPlacementEditor(entityId){
+  if(!state.edit) return;
+  const d=devices().find(x=>x.entity_id===entityId);
+  if(!d || !canDragDeviceFromList(d)){ showToast('Это устройство нельзя разместить на текущем экране'); return; }
+  const kind=activeStageKind();
+  closeDevicePicker();
+  state.placingDeviceId=null;
+  state.placingKind=null;
+  state.crosshairDragging=false;
+  renderPlacementBar();
+  const initial=getInitialPlacementPoint(kind,entityId);
+  state.placementEditor={entityId,kind,x:initial.x,y:initial.y};
+  const src=placementImageSrc(kind);
+  const img=el('placement-editor-image'); if(img) img.setAttribute('href',src);
+  updatePlacementEditorAspect(src);
+  buildPlacementGrid();
+  renderPlacementEditorExisting();
+  const title=el('placement-editor-title'); if(title) title.textContent='Размещение устройства';
+  const dev=el('placement-editor-device'); if(dev) dev.textContent=d?displayName(d):entityId;
+  const scope=el('placement-editor-scope'); if(scope) scope.textContent=kind==='overview'?'Общий план':(room(state.selectedRoom)?.label||state.selectedRoom);
+  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  document.body.classList.add('placement-editor-open');
+  setPlacementEditorPoint(initial.x,initial.y);
+}
+function nudgePlacementEditor(dx,dy){
+  if(!state.placementEditor) return;
+  const step=Number(el('placement-editor-step')?.value||0.5);
+  setPlacementEditorPoint(state.placementEditor.x+dx*step,state.placementEditor.y+dy*step);
+}
+function applyPlacementEditor(){
+  if(!state.edit || !state.placementEditor) return;
+  const pe=state.placementEditor;
+  const id=pe.entityId, kind=pe.kind, p={x:pe.x,y:pe.y};
+  const d=devices().find(x=>x.entity_id===id);
+  if(kind==='room' && d && normalizedRoomId(d.room)!==normalizedRoomId(state.selectedRoom)){
+    showToast('Перенос устройств между комнатами пока отключён');
+    return;
+  }
+  setMarkerPosition(id,kind,kind==='room'?roomImageToStoredPos(state.selectedRoom,p):p);
+  closePlacementEditor();
+  setLayoutDirty(true);
+  if(kind==='overview') renderOverviewMarkers(); else renderRoomMarkers();
+  selectEditObject({kind:'marker',id,scope:kind,label:d?displayName(d):id});
+  renderEditSheet();
+  showToast('Устройство размещено');
+}
+
 function renderPlacementBar(){
   const bar=el('placement-bar');
   if(!bar) return;
@@ -1401,14 +1522,7 @@ function renderPlacementBar(){
   updatePlacementAim();
 }
 function startTouchPlaceDevice(entityId){
-  if(!state.edit) return;
-  const d=devices().find(x=>x.entity_id===entityId);
-  if(!d || !canDragDeviceFromList(d)){ showToast('Это устройство нельзя разместить на текущем экране'); return; }
-  state.placingDeviceId=entityId;
-  state.placingKind=activeStageKind();
-  closeMobilePanels();
-  renderPlacementBar();
-  showToast('Передвиньте план под прицел и нажмите “Поставить здесь”');
+  openPlacementEditor(entityId);
 }
 function cancelPlacement(){
   state.placingDeviceId=null;
@@ -1984,6 +2098,18 @@ function bindGlobal(){
   const pickerModal=el('device-picker-modal'); if(pickerModal) pickerModal.addEventListener('click',e=>{ if(e.target.id==='device-picker-modal') closeDevicePicker(); });
   const pickerSearch=el('device-picker-search'); if(pickerSearch) pickerSearch.oninput=renderDevicePicker;
   const pickerShowAll=el('device-picker-show-all'); if(pickerShowAll) pickerShowAll.onchange=e=>{ state.devicePickerShowAll=e.target.checked; renderDevicePicker(); };
+
+  const placementModal=el('placement-editor-modal'); if(placementModal) placementModal.addEventListener('click',e=>{ if(e.target.id==='placement-editor-modal') closePlacementEditor(); });
+  const placementSvg=el('placement-editor-svg'); if(placementSvg) placementSvg.addEventListener('pointerdown',e=>{ const p=placementSvgPointFromEvent(e); if(p){ setPlacementEditorPoint(p.x,p.y); } });
+  const px=el('placement-editor-x'); if(px) px.onchange=()=>setPlacementEditorPoint(px.value, state.placementEditor?.y ?? 50);
+  const py=el('placement-editor-y'); if(py) py.onchange=()=>setPlacementEditorPoint(state.placementEditor?.x ?? 50, py.value);
+  const bpu=el('btn-place-up'); if(bpu) bpu.onclick=()=>nudgePlacementEditor(0,-1);
+  const bpd=el('btn-place-down'); if(bpd) bpd.onclick=()=>nudgePlacementEditor(0,1);
+  const bpl=el('btn-place-left'); if(bpl) bpl.onclick=()=>nudgePlacementEditor(-1,0);
+  const bpr=el('btn-place-right'); if(bpr) bpr.onclick=()=>nudgePlacementEditor(1,0);
+  const bpa=el('btn-apply-placement-editor'); if(bpa) bpa.onclick=applyPlacementEditor;
+  const bpc=el('btn-cancel-placement-editor'); if(bpc) bpc.onclick=closePlacementEditor;
+  const bpx=el('btn-close-placement-editor'); if(bpx) bpx.onclick=closePlacementEditor;
   const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); resetKioskAutoLock(); showToast('Режим киоска включён'); };
   el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
   const exitKiosk=el('btn-exit-kiosk');
