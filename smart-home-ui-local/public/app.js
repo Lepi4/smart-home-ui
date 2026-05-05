@@ -1467,14 +1467,58 @@ function setPlacementEditorPoint(x,y){
   const xi=el('placement-editor-x'), yi=el('placement-editor-y');
   if(xi) xi.value=state.placementEditor.x.toFixed(1);
   if(yi) yi.value=state.placementEditor.y.toFixed(1);
+  updatePlacementDebug();
+}
+function placementEditorImageMetrics(){
+  const svg=el('placement-editor-svg');
+  if(!svg) return null;
+  const rect=svg.getBoundingClientRect();
+  if(!rect.width || !rect.height) return null;
+  const d=placementEditorDims();
+  if(!d.w || !d.h) return null;
+  // v3.4.38: do not use getScreenCTM() for pointer coordinates.
+  // In Chromium/WebView, getScreenCTM() may be wrong when an ancestor has
+  // overflow:auto scroll or when the SVG is letterboxed by xMidYMid meet.
+  // getBoundingClientRect() is viewport-relative and already includes ancestor
+  // scrolling, so we manually map the visible image rectangle to 0..100%.
+  const scale=Math.min(rect.width/d.w, rect.height/d.h);
+  const imgW=d.w*scale, imgH=d.h*scale;
+  const offsetX=(rect.width-imgW)/2, offsetY=(rect.height-imgH)/2;
+  return {rect,d,scale,imgW,imgH,offsetX,offsetY};
+}
+function updatePlacementDebug(extra){
+  const box=el('placement-editor-debug');
+  if(!box || !state.placementEditor) return;
+  const m=placementEditorImageMetrics();
+  const wrap=el('placement-editor-svg')?.closest('.placement-editor-canvas-wrap');
+  const pe=state.placementEditor;
+  const lines=[];
+  lines.push(`scope: ${pe.kind} | entity: ${pe.entityId||''}`);
+  lines.push(`saved/edit x/y: ${Number(pe.x||0).toFixed(2)}%, ${Number(pe.y||0).toFixed(2)}%`);
+  if(m){
+    lines.push(`natural: ${Math.round(m.d.w)} × ${Math.round(m.d.h)}`);
+    lines.push(`svg rect: ${Math.round(m.rect.width)} × ${Math.round(m.rect.height)} @ ${Math.round(m.rect.left)},${Math.round(m.rect.top)}`);
+    lines.push(`image rect: ${Math.round(m.imgW)} × ${Math.round(m.imgH)} offset ${m.offsetX.toFixed(1)},${m.offsetY.toFixed(1)}`);
+    lines.push(`scale: ${m.scale.toFixed(5)}`);
+  }
+  if(wrap){
+    lines.push(`wrap scroll: ${Math.round(wrap.scrollLeft||0)}, ${Math.round(wrap.scrollTop||0)}`);
+  }
+  if(extra){
+    if(extra.clientX!=null) lines.push(`event client: ${Math.round(extra.clientX)}, ${Math.round(extra.clientY)}`);
+    if(extra.rawX!=null) lines.push(`raw x/y: ${extra.rawX.toFixed(2)}%, ${extra.rawY.toFixed(2)}%`);
+    if(extra.clampedX!=null) lines.push(`clamped x/y: ${extra.clampedX.toFixed(2)}%, ${extra.clampedY.toFixed(2)}%`);
+  }
+  box.textContent=lines.join('\n');
 }
 function placementSvgPointFromEvent(e){
-  const svg=el('placement-editor-svg'); if(!svg) return null;
-  const pt=svg.createSVGPoint();
-  pt.x=e.clientX; pt.y=e.clientY;
-  const ctm=svg.getScreenCTM(); if(!ctm) return null;
-  const pnt=pt.matrixTransform(ctm.inverse());
-  return placementSvgPointToPct(pnt.x,pnt.y);
+  const m=placementEditorImageMetrics();
+  if(!m) return null;
+  const rawX=((e.clientX-m.rect.left-m.offsetX)/Math.max(1,m.imgW))*100;
+  const rawY=((e.clientY-m.rect.top-m.offsetY)/Math.max(1,m.imgH))*100;
+  const p={x:clamp(rawX,0,100), y:clamp(rawY,0,100)};
+  updatePlacementDebug({clientX:e.clientX,clientY:e.clientY,rawX,rawY,clampedX:p.x,clampedY:p.y});
+  return p;
 }
 function getInitialPlacementPoint(kind,entityId){
   if(kind==='overview'){
