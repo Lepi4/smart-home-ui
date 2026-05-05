@@ -48,6 +48,68 @@ const ALLOWED_SERVICES = Object.fromEntries([...Object.entries(SAFE_SERVICES), .
 const COMMAND_LOG_PATH = path.join(DATA_DIR, 'command_log.json');
 function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
 
+
+function attentionDefault(){
+  return { version: 1, rules: [] };
+}
+function normalizeAttentionRules(payload){
+  const src = payload && typeof payload === 'object' ? payload : attentionDefault();
+  const seen = new Set();
+  const rules = Array.isArray(src.rules) ? src.rules : [];
+  const normalized = [];
+  for(const raw of rules){
+    if(!raw || typeof raw !== 'object') continue;
+    const entity_id = String(raw.entity_id || '').trim();
+    if(!entity_id || seen.has(entity_id)) continue;
+    seen.add(entity_id);
+    normalized.push({
+      entity_id,
+      name: String(raw.name || entity_id),
+      normal_state: String(raw.normal_state ?? 'unknown'),
+      enabled: raw.enabled !== false,
+      created_at: raw.created_at || null
+    });
+  }
+  return { version: Number(src.version) || 1, rules: normalized };
+}
+function loadAttentionRules(){
+  return normalizeAttentionRules(readJsonSafe(ATTENTION_RULES_PATH, attentionDefault()));
+}
+function saveAttentionRules(payload){
+  const normalized = normalizeAttentionRules(payload);
+  atomicWriteJson(ATTENTION_RULES_PATH, normalized);
+  return normalized;
+}
+function evaluateAttentionRules(payload, states){
+  const rulesData = normalizeAttentionRules(payload);
+  const byEntity = new Map();
+  if(Array.isArray(states)){
+    for(const st of states){
+      if(st && st.entity_id) byEntity.set(String(st.entity_id), st);
+    }
+  }
+  const evaluated = rulesData.rules.map(rule => {
+    const st = byEntity.get(rule.entity_id);
+    const current_state = st ? String(st.state) : 'unknown';
+    const alert = rule.enabled !== false && current_state !== String(rule.normal_state);
+    return {
+      ...rule,
+      current_state,
+      alert,
+      last_changed: st?.last_changed || null,
+      last_updated: st?.last_updated || null,
+      friendly_name: st?.attributes?.friendly_name || rule.name || rule.entity_id
+    };
+  });
+  return {
+    ok: true,
+    version: rulesData.version,
+    hasAlerts: evaluated.some(r => r.alert),
+    alertCount: evaluated.filter(r => r.alert).length,
+    rules: evaluated
+  };
+}
+
 function safeCopyIfMissing(src, dst){
   try{
     if(src && fs.existsSync(src) && !fs.existsSync(dst)){
