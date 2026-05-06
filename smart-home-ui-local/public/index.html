@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-3D HA Add-on v3.4.48</title>
+  <title>ALLHA-3D HA Add-on v3.4.50</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -182,7 +182,7 @@
         </label>
         <label class="settings-check"><input type="checkbox" id="pref-confirm-dangerous" checked> Подтверждать опасные команды</label>
         <label class="settings-check"><input type="checkbox" id="pref-dangerous-pin"> Запускать опасные команды через PIN в control panel</label>
-        <div class="pin-settings"><span id="pin-status" class="muted">PIN не установлен</span> <button type="button" id="btn-change-pin">Сменить PIN-код</button><p class="muted">PIN — 4 цифры. Цифры отображаются при вводе. Аварийный PIN <b>0000</b> всегда работает для повышения режима, dangerous-команд и сброса PIN.</p></div>
+        <div class="pin-settings"><span id="pin-status" class="muted">PIN не установлен</span> <button type="button" id="btn-change-pin">Установить / сменить PIN-код</button> <button type="button" id="btn-reset-pin">Сбросить PIN-код</button><p class="muted">PIN — 4 цифры. Цифры отображаются при вводе. Сохранённый PIN не показывается.</p></div>
         <label>Размер ореолов <input id="pref-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-halo-scale-value">50%</span></label>
         <label>Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
         <label>Масштаб маркеров устройств <input id="pref-marker-scale" type="range" min="10" max="200" value="100"><span id="pref-marker-scale-value">100%</span></label>
@@ -269,6 +269,7 @@
             <image id="placement-editor-image" x="0" y="0" width="100" height="100" preserveAspectRatio="none" href="" />
             <g id="placement-editor-grid" class="placement-editor-grid"></g>
             <g id="placement-editor-existing" class="placement-editor-existing"></g>
+            <rect id="placement-editor-zone-rect" class="placement-editor-zone-rect hidden" x="10" y="10" width="20" height="20" />
             <circle id="placement-editor-marker" class="placement-editor-marker" cx="50" cy="50" r="1.8" />
             <line id="placement-editor-hline" class="placement-editor-cross" x1="0" x2="100" y1="50" y2="50" />
             <line id="placement-editor-vline" class="placement-editor-cross" y1="0" y2="100" x1="50" x2="50" />
@@ -282,6 +283,16 @@
           <div class="placement-editor-coords">
             <label>X, %<input id="placement-editor-x" type="number" min="0" max="100" step="0.1"></label>
             <label>Y, %<input id="placement-editor-y" type="number" min="0" max="100" step="0.1"></label>
+          </div>
+          <div id="placement-editor-size-controls" class="placement-editor-size-controls hidden">
+            <label>Ширина, %<input id="placement-editor-w" type="number" min="1" max="100" step="0.1"></label>
+            <label>Высота, %<input id="placement-editor-h" type="number" min="1" max="100" step="0.1"></label>
+            <div class="placement-editor-size-buttons">
+              <button type="button" id="btn-zone-w-dec">W −</button>
+              <button type="button" id="btn-zone-w-inc">W +</button>
+              <button type="button" id="btn-zone-h-dec">H −</button>
+              <button type="button" id="btn-zone-h-inc">H +</button>
+            </div>
           </div>
           <div class="placement-editor-nudge">
             <button type="button" id="btn-place-up">↑</button>

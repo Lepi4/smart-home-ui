@@ -6,7 +6,7 @@
 
 - **Developer:** Lepi4
 - **GitHub:** https://github.com/Lepi4/smart-home-ui
-- **Version:** v3.4.48
+- **Version:** v3.4.50
 - **Copyright:** © Lepi4
 
 Репозиторий остаётся прежним: `https://github.com/Lepi4/smart-home-ui`.
@@ -55,8 +55,8 @@ https://github.com/Lepi4/smart-home-ui
 GitHub Actions публикует образы:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.48
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.48
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.50
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.50
 ```
 
 ## Структура данных
@@ -136,17 +136,25 @@ GitHub: https://github.com/Lepi4/smart-home-ui
 Copyright: © Lepi4
 
 
-## v3.4.48
+## v3.4.50
 
 - Added “Невидимые зоны”: zones can remain clickable while visually hidden.
 - Edit button is hidden outside admin mode.
 - Kiosk Attention button is now compact: no button when there are no alerts, “!” when alert is active.
 
 
-## v3.4.48 — Roles, PIN and dangerous devices
+## v3.4.50 — Roles, PIN and dangerous devices
 
 - Panel modes simplified to `viewer`, `control panel`, and `admin`.
 - `control panel` can run device actions; dangerous actions require confirmation or PIN if enabled.
 - `admin` can mark any entity as dangerous or explicitly make an inherently dangerous entity safe from the long-press device menu.
-- PIN is 4 digits; emergency PIN `0000` always works for elevation/reset/dangerous confirmation.
+- PIN is 4 digits and can be changed or reset from Settings.
 - Attention rules can be changed only in admin mode.
+
+
+## v3.4.50 — Zones / UI polish
+
+- Rectangular zones are now edited through the SVG Layout Editor.
+- Zones remain rectangles: X/Y move the zone, W changes width, H changes height. Width and height can be changed independently.
+- Short tap/click on a zone in edit mode selects it; long press opens the zone editor.
+- “Invisible zones” now depends on the main “Zones” checkbox: if Zones are off, zones are not visible and not clickable; if Zones are on and Invisible zones are on, zones stay clickable but are visually hidden outside edit mode.

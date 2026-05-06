@@ -23,7 +23,7 @@ const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.48';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.50';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -479,6 +479,12 @@ function setSecurityPin(pin){
   const salt=crypto.randomBytes(16).toString('hex');
   const pinHash=hashPin(pin, salt);
   const next={...cfg, security: normalizeSecurityConfig({...cfg.security, pinEnabled:true, pinSalt:salt, pinHash})};
+  saveAddonConfig(next);
+  return publicConfig(loadAddonConfig()).security;
+}
+function clearSecurityPin(){
+  const cfg=loadAddonConfig();
+  const next={...cfg, security: normalizeSecurityConfig({...cfg.security, pinEnabled:false, pinSalt:'', pinHash:''})};
   saveAddonConfig(next);
   return publicConfig(loadAddonConfig()).security;
 }
@@ -996,6 +1002,15 @@ app.post('/api/security/pin/change', (req,res)=>{
     const {pin,pin2}=req.body||{};
     if(String(pin)!==String(pin2)) return res.status(400).json({error:'PIN-коды не совпадают'});
     const security=setSecurityPin(pin);
+    res.json({ok:true, security});
+  }catch(e){ res.status(400).json({error:e.message}); }
+});
+app.post('/api/security/pin/reset', (req,res)=>{
+  try{
+    const {pin,pin2}=req.body||{};
+    if(String(pin)!==String(pin2)) return res.status(400).json({error:'PIN-коды не совпадают'});
+    if(!verifySecurityPin(pin)) return res.status(403).json({error:'Неверный PIN'});
+    const security=clearSecurityPin();
     res.json({ok:true, security});
   }catch(e){ res.status(400).json({error:e.message}); }
 });

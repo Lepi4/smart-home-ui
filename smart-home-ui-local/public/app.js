@@ -329,7 +329,8 @@ function applyUiPrefs(){
   document.body.classList.toggle('kiosk-mode', !!state.ui.kioskMode);
   document.body.classList.toggle('debug-mode', !!state.ui.debugMode);
   document.body.classList.toggle('can-edit', canEditLayout());
-  document.body.classList.toggle('invisible-zones', !!state.ui.invisibleZones);
+  document.body.classList.toggle('invisible-zones', !!state.ui.invisibleZones && state.ui.showZones!==false);
+  const invZonesBox=el('pref-invisible-zones'); if(invZonesBox) invZonesBox.disabled=state.ui.showZones===false;
   applyKioskLockUi();
   resetKioskAutoLock();
   const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
@@ -373,6 +374,7 @@ function applyUiPrefs(){
   const cd=el('pref-confirm-dangerous'); if(cd) cd.checked=state.config?.security?.confirmDangerousServices!==false;
   const dp=el('pref-dangerous-pin'); if(dp) dp.checked=!!state.config?.security?.dangerousRequirePin;
   const pinBadge=el('pin-status'); if(pinBadge) pinBadge.textContent=state.config?.security?.pinEnabled?'PIN установлен':'PIN не установлен';
+  const resetPinBtn=el('btn-reset-pin'); if(resetPinBtn) resetPinBtn.disabled=!state.config?.security?.pinEnabled;
   updateEditButtons();
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
@@ -710,6 +712,9 @@ function closePlacementEditor(){
   if(modal) modal.classList.add('hidden');
   document.body.classList.remove('placement-editor-open');
   state.placementEditor=null;
+  const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
+  const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
+  const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
 }
 
 function pauseLiveDashboard(){
@@ -825,7 +830,7 @@ function renderOverview(){
 }
 function renderOverviewZones(){
   const layer=el('overview-zones'); layer.innerHTML='';
-  if(state.ui.showZones===false && !state.ui.invisibleZones)return;
+  if(state.ui.showZones===false)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id);
     const z=document.createElement('button');
@@ -1319,7 +1324,7 @@ function openDeviceModal(d){
 }
 function closeDeviceModal(){el('device-modal').classList.add('hidden')}
 async function requestPin(message='Введите PIN-код'){
-  const pin=window.prompt(message+'\n4 цифры. Аварийный PIN: 0000','');
+  const pin=window.prompt(message+'\n4 цифры.','');
   if(pin===null) return null;
   return String(pin).trim();
 }
@@ -1558,8 +1563,11 @@ function renderPlacementEditorExisting(){
 }
 function setPlacementEditorPoint(x,y){
   if(!state.placementEditor) return;
-  state.placementEditor.x=clamp(Number(x)||0,0,100);
-  state.placementEditor.y=clamp(Number(y)||0,0,100);
+  const isZone=state.placementEditor.targetType==='zone';
+  const w=isZone ? clamp(Number(state.placementEditor.wPct)||10,1,100) : 0;
+  const h=isZone ? clamp(Number(state.placementEditor.hPct)||10,1,100) : 0;
+  state.placementEditor.x=clamp(Number(x)||0,0,isZone?100-w:100);
+  state.placementEditor.y=clamp(Number(y)||0,0,isZone?100-h:100);
   const d=placementEditorDims();
   const p=pctToPlacementSvgPoint(state.placementEditor.x,state.placementEditor.y);
   const m=el('placement-editor-marker'), hl=el('placement-editor-hline'), vl=el('placement-editor-vline');
@@ -1570,7 +1578,46 @@ function setPlacementEditorPoint(x,y){
   const xi=el('placement-editor-x'), yi=el('placement-editor-y');
   if(xi) xi.value=state.placementEditor.x.toFixed(1);
   if(yi) yi.value=state.placementEditor.y.toFixed(1);
+  renderPlacementEditorZoneRect();
   updatePlacementDebug();
+}
+function setZoneEditorSize(w,h){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  const x=Number(state.placementEditor.x)||0;
+  const y=Number(state.placementEditor.y)||0;
+  state.placementEditor.wPct=clamp(Number(w)||1,1,100-x);
+  state.placementEditor.hPct=clamp(Number(h)||1,1,100-y);
+  renderPlacementEditorZoneRect();
+  const wi=el('placement-editor-w'), hi=el('placement-editor-h');
+  if(wi) wi.value=state.placementEditor.wPct.toFixed(1);
+  if(hi) hi.value=state.placementEditor.hPct.toFixed(1);
+  updatePlacementDebug();
+}
+function renderPlacementEditorZoneRect(){
+  const z=el('placement-editor-zone-rect');
+  const m=el('placement-editor-marker'), hl=el('placement-editor-hline'), vl=el('placement-editor-vline');
+  if(!z || !state.placementEditor) return;
+  const isZone=state.placementEditor.targetType==='zone';
+  z.classList.toggle('hidden', !isZone);
+  if(m) m.classList.toggle('hidden', isZone);
+  if(hl) hl.classList.toggle('hidden', false);
+  if(vl) vl.classList.toggle('hidden', false);
+  if(!isZone) return;
+  const d=placementEditorDims();
+  const x=clamp(Number(state.placementEditor.x)||0,0,100);
+  const y=clamp(Number(state.placementEditor.y)||0,0,100);
+  const w=clamp(Number(state.placementEditor.wPct)||10,1,100-x);
+  const h=clamp(Number(state.placementEditor.hPct)||10,1,100-y);
+  const p=pctToPlacementSvgPoint(x,y);
+  z.setAttribute('x',p.x);
+  z.setAttribute('y',p.y);
+  z.setAttribute('width',String(w/100*d.w));
+  z.setAttribute('height',String(h/100*d.h));
+}
+function nudgeZoneEditorSize(dw,dh){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  const step=Number(el('placement-editor-step')?.value||0.5);
+  setZoneEditorSize((state.placementEditor.wPct||10)+dw*step,(state.placementEditor.hPct||10)+dh*step);
 }
 function placementEditorImageMetrics(){
   const svg=el('placement-editor-svg');
@@ -1731,6 +1778,9 @@ function openPlacementEditor(entityId){
   const title=el('placement-editor-title'); if(title) title.textContent=exists?'Перемещение устройства':'Размещение устройства';
   const dev=el('placement-editor-device'); if(dev) dev.textContent=d?displayName(d):entityId;
   const scope=el('placement-editor-scope'); if(scope) scope.textContent=kind==='overview'?'Общий план':(room(state.selectedRoom)?.label||state.selectedRoom);
+  const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
+  const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
+  const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(initial.x,initial.y);
@@ -1745,6 +1795,19 @@ function applyPlacementEditor(){
   if(!state.edit || !state.placementEditor) return;
   const pe=state.placementEditor;
   const kind=pe.kind, p={x:pe.x,y:pe.y};
+  if(pe.targetType==='zone'){
+    const rid=normalizedRoomId(pe.zoneRoomId);
+    if(!state.layout.zones) state.layout.zones={};
+    const base=state.layout.zones[rid] || {};
+    state.layout.zones[rid]={...base,x:clamp(Number(pe.x)||0,0,100),y:clamp(Number(pe.y)||0,0,100),w:clamp(Number(pe.wPct)||1,1,100),h:clamp(Number(pe.hPct)||1,1,100)};
+    closePlacementEditor();
+    setLayoutDirty(true);
+    renderOverviewZones();
+    selectEditObject({kind:'zone',id:rid,scope:'overview',label:room(rid)?.label||rid});
+    renderEditSheet();
+    showToast('Зона обновлена');
+    return;
+  }
   if(pe.targetType==='overviewMetric'){
     if(!state.layout.overviewMetrics) state.layout.overviewMetrics={};
     state.layout.overviewMetrics[pe.metricRoomId]=p;
@@ -1785,6 +1848,33 @@ function applyPlacementEditor(){
 
 function openDeviceLayoutEditor(entityId){ openPlacementEditor(entityId); }
 
+function openZoneLayoutEditor(roomId){
+  if(!state.edit) return;
+  const rid=normalizedRoomId(roomId);
+  const r=roomWithLayout(rid);
+  if(!r){ showToast('Комната не найдена'); return; }
+  closeDevicePicker();
+  const x=clamp(Number(r.x)||0,0,100);
+  const y=clamp(Number(r.y)||0,0,100);
+  const w=clamp(Number(r.w)||12,1,100-x);
+  const h=clamp(Number(r.h)||12,1,100-y);
+  state.placementEditor={targetType:'zone', zoneRoomId:rid, kind:'overview', x, y, wPct:w, hPct:h};
+  const src=placementImageSrc('overview');
+  const img=el('placement-editor-image'); if(img) img.setAttribute('href',src);
+  updatePlacementEditorAspect(src);
+  buildPlacementGrid();
+  renderPlacementEditorExisting();
+  const title=el('placement-editor-title'); if(title) title.textContent='Редактирование зоны комнаты';
+  const dev=el('placement-editor-device'); if(dev) dev.textContent=`Зона: ${room(rid)?.label||rid}`;
+  const scope=el('placement-editor-scope'); if(scope) scope.textContent='Общий план · прямоугольная зона';
+  const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.remove('hidden');
+  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  document.body.classList.add('placement-editor-open');
+  setPlacementEditorPoint(x,y);
+  setZoneEditorSize(w,h);
+  refitPlacementEditorSoon();
+}
+
 function openMetricLayoutEditor(metricKind, roomId){
   if(!state.edit) return;
   const rid=normalizedRoomId(roomId || state.selectedRoom);
@@ -1807,6 +1897,9 @@ function openMetricLayoutEditor(metricKind, roomId){
   const title=el('placement-editor-title'); if(title) title.textContent='Перемещение системного датчика';
   const dev=el('placement-editor-device'); if(dev) dev.textContent=`${room(rid)?.label||rid}: температура/влажность`;
   const scope=el('placement-editor-scope'); if(scope) scope.textContent=kind==='overview'?'Общий план':(room(rid)?.label||rid);
+  const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
+  const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
+  const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(initial.x,initial.y);
@@ -1847,11 +1940,17 @@ function renderEditSheet(){
   const title=el('edit-sheet-title'); if(title) title.textContent=selectedEditLabel();
   const hint=el('edit-sheet-hint');
   const isMetric=!!(state.selectedEdit && (state.selectedEdit.kind==='overviewMetric'||state.selectedEdit.kind==='roomMetric'));
-  if(hint) hint.textContent = state.selectedEdit ? (isMetric ? 'Это системный сдвоенный датчик. Короткий тап выбирает его, удержание открывает SVG Layout Editor для перемещения. Удалить окончательно нельзя.' : 'Маркер выбран. Для перемещения удерживайте его, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.') : 'Короткий тап выбирает маркер. Удержание открывает SVG Layout Editor для перемещения. Устройства добавляются через кнопку “Устройства”.';
+  const isZone=!!(state.selectedEdit && state.selectedEdit.kind==='zone');
+  if(hint){
+    if(!state.selectedEdit) hint.textContent='Короткий тап выбирает объект. Удержание открывает SVG Layout Editor. Устройства добавляются через кнопку “Устройства”.';
+    else if(isMetric) hint.textContent='Это системный сдвоенный датчик. Короткий тап выбирает его, удержание открывает SVG Layout Editor для перемещения. Удалить окончательно нельзя.';
+    else if(isZone) hint.textContent='Зона выбрана. Удержание открывает SVG Layout Editor: X/Y перемещают прямоугольник, W/H меняют ширину и высоту отдельно. Форма остаётся прямоугольной.';
+    else hint.textContent='Маркер выбран. Для перемещения удерживайте его, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.';
+  }
   const del=el('btn-delete-selected');
   const reset=el('btn-reset-selected');
   if(del){ del.disabled=!(state.selectedEdit && state.selectedEdit.kind==='marker'); del.textContent='Удалить маркер'; }
-  if(reset){ reset.disabled=!state.selectedEdit; reset.textContent=isMetric?'Сбросить позицию':'Сбросить/убрать'; }
+  if(reset){ reset.disabled=!state.selectedEdit; reset.textContent=isMetric?'Сбросить позицию':(isZone?'Сбросить зону':'Сбросить/убрать'); }
 }
 function deleteSelectedEditObject(){
   const s=state.selectedEdit;
@@ -1912,8 +2011,15 @@ function zoneDown(e){
   if(!state.edit) return;
   e.preventDefault(); e.stopPropagation();
   const z=e.currentTarget; const id=z.dataset.room; const r=roomWithLayout(id);
-  selectEditObject({kind:'zone',id,scope:'overview',label:r.label});
-  showToast('Зоны будут редактироваться в отдельном Zone Editor. Перетаскивание отключено.');
+  let timer=null, sx=e.clientX, sy=e.clientY, longFired=false;
+  const select=()=>selectEditObject({kind:'zone',id,scope:'overview',label:r.label});
+  const finish=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+  timer=setTimeout(()=>{ longFired=true; select(); openZoneLayoutEditor(id); },650);
+  const move=ev=>{ if(timer && Math.hypot(ev.clientX-sx,ev.clientY-sy)>8) finish(); };
+  const up=()=>{ finish(); window.removeEventListener('pointermove',move,true); window.removeEventListener('pointerup',up,true); window.removeEventListener('pointercancel',up,true); if(!longFired) select(); };
+  window.addEventListener('pointermove',move,true);
+  window.addEventListener('pointerup',up,true);
+  window.addEventListener('pointercancel',up,true);
 }
 function metricDown(e){
   if(!state.edit) return;
@@ -2357,6 +2463,12 @@ function bindGlobal(){
   const placementSvg=el('placement-editor-svg'); if(placementSvg) placementSvg.addEventListener('pointerdown',e=>{ const p=placementSvgPointFromEvent(e); if(p){ setPlacementEditorPoint(p.x,p.y); } });
   const px=el('placement-editor-x'); if(px) px.onchange=()=>setPlacementEditorPoint(px.value, state.placementEditor?.y ?? 50);
   const py=el('placement-editor-y'); if(py) py.onchange=()=>setPlacementEditorPoint(state.placementEditor?.x ?? 50, py.value);
+  const pw=el('placement-editor-w'); if(pw) pw.onchange=()=>setZoneEditorSize(pw.value, state.placementEditor?.hPct ?? 10);
+  const ph=el('placement-editor-h'); if(ph) ph.onchange=()=>setZoneEditorSize(state.placementEditor?.wPct ?? 10, ph.value);
+  const bzwm=el('btn-zone-w-dec'); if(bzwm) bzwm.onclick=()=>nudgeZoneEditorSize(-1,0);
+  const bzwp=el('btn-zone-w-inc'); if(bzwp) bzwp.onclick=()=>nudgeZoneEditorSize(1,0);
+  const bzhm=el('btn-zone-h-dec'); if(bzhm) bzhm.onclick=()=>nudgeZoneEditorSize(0,-1);
+  const bzhp=el('btn-zone-h-inc'); if(bzhp) bzhp.onclick=()=>nudgeZoneEditorSize(0,1);
   const bpu=el('btn-place-up'); if(bpu) bpu.onclick=()=>nudgePlacementEditor(0,-1);
   const bpd=el('btn-place-down'); if(bpd) bpd.onclick=()=>nudgePlacementEditor(0,1);
   const bpl=el('btn-place-left'); if(bpl) bpl.onclick=()=>nudgePlacementEditor(-1,0);
@@ -2371,7 +2483,8 @@ function bindGlobal(){
   const kioskAttention=el('btn-kiosk-attention'); if(kioskAttention) kioskAttention.onclick=openAttentionModal;
   const closeAttention=el('btn-close-attention'); if(closeAttention) closeAttention.onclick=closeAttentionModal;
   const attentionModal=el('attention-modal'); if(attentionModal) attentionModal.addEventListener('click',e=>{ if(e.target.id==='attention-modal') closeAttentionModal(); });
-  const changePin=el('btn-change-pin'); if(changePin) changePin.onclick=async()=>{ const p1=window.prompt('Введите новый PIN, 4 цифры. Цифры отображаются при вводе. Аварийный PIN 0000 всегда работает.',''); if(p1===null) return; const p2=window.prompt('Повторите новый PIN',''); if(p2===null) return; try{ const res=await apiJson('api/security/pin/change',{method:'POST',body:JSON.stringify({pin:p1,pin2:p2})}); state.config={...(state.config||{}), security:{...(state.config?.security||{}), ...(res.security||{})}}; applyConfigToInputs(); showToast('PIN обновлён'); }catch(e){ showToast('Ошибка PIN: '+e.message); } };
+  const changePin=el('btn-change-pin'); if(changePin) changePin.onclick=async()=>{ const p1=window.prompt('Введите новый PIN, 4 цифры. Цифры отображаются при вводе.',''); if(p1===null) return; const p2=window.prompt('Повторите новый PIN',''); if(p2===null) return; try{ const res=await apiJson('api/security/pin/change',{method:'POST',body:JSON.stringify({pin:p1,pin2:p2})}); state.config={...(state.config||{}), security:{...(state.config?.security||{}), ...(res.security||{})}}; applyConfigToInputs(); showToast('PIN обновлён'); }catch(e){ showToast('Ошибка PIN: '+e.message); } };
+  const resetPin=el('btn-reset-pin'); if(resetPin) resetPin.onclick=async()=>{ const p1=window.prompt('Введите PIN для сброса, 4 цифры.',''); if(p1===null) return; const p2=window.prompt('Повторите PIN для сброса',''); if(p2===null) return; try{ const res=await apiJson('api/security/pin/reset',{method:'POST',body:JSON.stringify({pin:p1,pin2:p2})}); state.config={...(state.config||{}), security:{...(state.config?.security||{}), ...(res.security||{})}}; applyConfigToInputs(); showToast('PIN сброшен'); }catch(e){ showToast('Ошибка сброса PIN: '+e.message); } };
   const clearAttention=el('btn-clear-attention'); if(clearAttention) bindHold(clearAttention, async()=>{ if(!canManageAttention()){ showToast('Очистка доступна только в admin mode и при разблокированном киоске'); return; } await apiJson('api/attention/clear',{method:'POST'}); await loadAttention(); renderAttentionModal(); showToast('Список Внимание очищен'); });
   const kioskLock=el('btn-kiosk-lock'); if(kioskLock) kioskLock.onclick=()=>setKioskLocked(!state.kioskLocked);
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
