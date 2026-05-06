@@ -835,7 +835,9 @@ function renderOverviewZones(){
     const r=roomWithLayout(r0.id);
     const z=document.createElement('button');
     z.className='room-zone'+(isSelectedEdit('zone', r.id, 'overview')?' edit-selected':''); z.dataset.room=r.id;
-    Object.assign(z.style,{left:r.x+'%',top:r.y+'%',width:r.w+'%',height:r.h+'%'});
+    const angle=Number(r.a ?? r.angle ?? r.rotate ?? 0) || 0;
+    Object.assign(z.style,{left:r.x+'%',top:r.y+'%',width:r.w+'%',height:r.h+'%',transform:`translate(-50%,-50%) rotate(${angle}deg)`});
+    z.style.setProperty('--zone-label-rotation', `${-angle}deg`);
     z.innerHTML=`<span class="zone-label">${esc(r.label)}</span>`;
     z.addEventListener('pointerdown', zoneDown);
     z.onclick=e=>{if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(state.edit||state.suppressClick){state.suppressClick=false;return} selectRoom(r.id)};
@@ -1566,8 +1568,8 @@ function setPlacementEditorPoint(x,y){
   const isZone=state.placementEditor.targetType==='zone';
   const w=isZone ? clamp(Number(state.placementEditor.wPct)||10,1,100) : 0;
   const h=isZone ? clamp(Number(state.placementEditor.hPct)||10,1,100) : 0;
-  state.placementEditor.x=clamp(Number(x)||0,0,isZone?100-w:100);
-  state.placementEditor.y=clamp(Number(y)||0,0,isZone?100-h:100);
+  state.placementEditor.x=clamp(Number(x)||0,isZone?w/2:0,isZone?100-w/2:100);
+  state.placementEditor.y=clamp(Number(y)||0,isZone?h/2:0,isZone?100-h/2:100);
   const d=placementEditorDims();
   const p=pctToPlacementSvgPoint(state.placementEditor.x,state.placementEditor.y);
   const m=el('placement-editor-marker'), hl=el('placement-editor-hline'), vl=el('placement-editor-vline');
@@ -1583,10 +1585,13 @@ function setPlacementEditorPoint(x,y){
 }
 function setZoneEditorSize(w,h){
   if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
-  const x=Number(state.placementEditor.x)||0;
-  const y=Number(state.placementEditor.y)||0;
-  state.placementEditor.wPct=clamp(Number(w)||1,1,100-x);
-  state.placementEditor.hPct=clamp(Number(h)||1,1,100-y);
+  const x=clamp(Number(state.placementEditor.x)||50,0,100);
+  const y=clamp(Number(state.placementEditor.y)||50,0,100);
+  const maxW=Math.max(1, 2*Math.min(x,100-x));
+  const maxH=Math.max(1, 2*Math.min(y,100-y));
+  state.placementEditor.wPct=clamp(Number(w)||1,1,maxW);
+  state.placementEditor.hPct=clamp(Number(h)||1,1,maxH);
+  setPlacementEditorPoint(x,y);
   renderPlacementEditorZoneRect();
   const wi=el('placement-editor-w'), hi=el('placement-editor-h');
   if(wi) wi.value=state.placementEditor.wPct.toFixed(1);
@@ -1604,20 +1609,38 @@ function renderPlacementEditorZoneRect(){
   if(vl) vl.classList.toggle('hidden', false);
   if(!isZone) return;
   const d=placementEditorDims();
-  const x=clamp(Number(state.placementEditor.x)||0,0,100);
-  const y=clamp(Number(state.placementEditor.y)||0,0,100);
-  const w=clamp(Number(state.placementEditor.wPct)||10,1,100-x);
-  const h=clamp(Number(state.placementEditor.hPct)||10,1,100-y);
+  const x=clamp(Number(state.placementEditor.x)||50,0,100);
+  const y=clamp(Number(state.placementEditor.y)||50,0,100);
+  const w=clamp(Number(state.placementEditor.wPct)||10,1,100);
+  const h=clamp(Number(state.placementEditor.hPct)||10,1,100);
+  const angle=Number(state.placementEditor.angleDeg ?? state.placementEditor.a ?? 0) || 0;
   const p=pctToPlacementSvgPoint(x,y);
-  z.setAttribute('x',p.x);
-  z.setAttribute('y',p.y);
-  z.setAttribute('width',String(w/100*d.w));
-  z.setAttribute('height',String(h/100*d.h));
+  const rw=w/100*d.w, rh=h/100*d.h;
+  z.setAttribute('x',String(p.x-rw/2));
+  z.setAttribute('y',String(p.y-rh/2));
+  z.setAttribute('width',String(rw));
+  z.setAttribute('height',String(rh));
+  z.setAttribute('transform',`rotate(${angle} ${p.x} ${p.y})`);
 }
 function nudgeZoneEditorSize(dw,dh){
   if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
   const step=Number(el('placement-editor-step')?.value||0.5);
   setZoneEditorSize((state.placementEditor.wPct||10)+dw*step,(state.placementEditor.hPct||10)+dh*step);
+}
+function setZoneEditorAngle(a){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  let v=Number(a)||0;
+  v=((v%360)+360)%360;
+  if(v>180) v-=360;
+  state.placementEditor.angleDeg=v;
+  const ai=el('placement-editor-angle'); if(ai) ai.value=v.toFixed(0);
+  renderPlacementEditorZoneRect();
+  updatePlacementDebug();
+}
+function nudgeZoneEditorAngle(dir){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  const step=Math.max(1, Number(el('placement-editor-angle-step')?.value||5));
+  setZoneEditorAngle((Number(state.placementEditor.angleDeg)||0)+dir*step);
 }
 function placementEditorImageMetrics(){
   const svg=el('placement-editor-svg');
@@ -1799,7 +1822,7 @@ function applyPlacementEditor(){
     const rid=normalizedRoomId(pe.zoneRoomId);
     if(!state.layout.zones) state.layout.zones={};
     const base=state.layout.zones[rid] || {};
-    state.layout.zones[rid]={...base,x:clamp(Number(pe.x)||0,0,100),y:clamp(Number(pe.y)||0,0,100),w:clamp(Number(pe.wPct)||1,1,100),h:clamp(Number(pe.hPct)||1,1,100)};
+    state.layout.zones[rid]={...base,x:clamp(Number(pe.x)||0,0,100),y:clamp(Number(pe.y)||0,0,100),w:clamp(Number(pe.wPct)||1,1,100),h:clamp(Number(pe.hPct)||1,1,100),a:Number(pe.angleDeg)||0};
     closePlacementEditor();
     setLayoutDirty(true);
     renderOverviewZones();
@@ -1856,9 +1879,10 @@ function openZoneLayoutEditor(roomId){
   closeDevicePicker();
   const x=clamp(Number(r.x)||0,0,100);
   const y=clamp(Number(r.y)||0,0,100);
-  const w=clamp(Number(r.w)||12,1,100-x);
-  const h=clamp(Number(r.h)||12,1,100-y);
-  state.placementEditor={targetType:'zone', zoneRoomId:rid, kind:'overview', x, y, wPct:w, hPct:h};
+  const w=clamp(Number(r.w)||12,1,100);
+  const h=clamp(Number(r.h)||12,1,100);
+  const angle=Number(r.a ?? r.angle ?? r.rotate ?? 0) || 0;
+  state.placementEditor={targetType:'zone', zoneRoomId:rid, kind:'overview', x, y, wPct:w, hPct:h, angleDeg:angle};
   const src=placementImageSrc('overview');
   const img=el('placement-editor-image'); if(img) img.setAttribute('href',src);
   updatePlacementEditorAspect(src);
@@ -1872,6 +1896,7 @@ function openZoneLayoutEditor(roomId){
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(x,y);
   setZoneEditorSize(w,h);
+  setZoneEditorAngle(angle);
   refitPlacementEditorSoon();
 }
 
@@ -2465,6 +2490,10 @@ function bindGlobal(){
   const py=el('placement-editor-y'); if(py) py.onchange=()=>setPlacementEditorPoint(state.placementEditor?.x ?? 50, py.value);
   const pw=el('placement-editor-w'); if(pw) pw.onchange=()=>setZoneEditorSize(pw.value, state.placementEditor?.hPct ?? 10);
   const ph=el('placement-editor-h'); if(ph) ph.onchange=()=>setZoneEditorSize(state.placementEditor?.wPct ?? 10, ph.value);
+  const pa=el('placement-editor-angle'); if(pa) pa.onchange=()=>setZoneEditorAngle(pa.value);
+  const pam=el('btn-zone-angle-dec'); if(pam) pam.onclick=()=>nudgeZoneEditorAngle(-1);
+  const pap=el('btn-zone-angle-inc'); if(pap) pap.onclick=()=>nudgeZoneEditorAngle(1);
+  const prz=el('btn-zone-angle-reset'); if(prz) prz.onclick=()=>setZoneEditorAngle(0);
   const bzwm=el('btn-zone-w-dec'); if(bzwm) bzwm.onclick=()=>nudgeZoneEditorSize(-1,0);
   const bzwp=el('btn-zone-w-inc'); if(bzwp) bzwp.onclick=()=>nudgeZoneEditorSize(1,0);
   const bzhm=el('btn-zone-h-dec'); if(bzhm) bzhm.onclick=()=>nudgeZoneEditorSize(0,-1);

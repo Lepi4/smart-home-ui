@@ -1383,3 +1383,10 @@ body:not(.can-edit) #btn-edit{display:none!important;}
 /* v3.4.50 — rectangular zones stay rectangles. X/Y/W/H are edited separately in SVG Layout Editor. */
 body.editing .room-zone{cursor:pointer!important;}
 body.editing .room-zone.edit-selected{outline:2px solid rgba(255,220,120,.95)!important;outline-offset:2px;}
+
+/* v3.4.51 — zones use center X/Y both in live map and SVG editor; label stays upright when zone rotates. */
+.room-zone .zone-label{transform:translate(-50%,-50%) rotate(var(--zone-label-rotation,0deg)) scale(var(--room-label-scale,1))!important;}
+.placement-editor-size-controls{grid-template-columns:1fr 1fr!important;}
+.placement-editor-size-controls select{width:100%;background:#0b1016;border:1px solid #344151;color:#edf3fb;border-radius:10px;padding:8px;}
+.placement-editor-size-buttons{grid-template-columns:repeat(7,1fr)!important;}
+@media(max-width:720px){.placement-editor-size-buttons{grid-template-columns:repeat(4,1fr)!important;}}
