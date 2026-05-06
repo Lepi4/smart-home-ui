@@ -1,6 +1,6 @@
 name: ALLHA-3D
 slug: smart_home_ui_local
-version: "3.4.55"
+version: "3.4.56"
 description: ALLHA-3D — local 3D floor-plan Smart Home UI for Home Assistant
 url: https://github.com/Lepi4/smart-home-ui
 image: ghcr.io/lepi4/smart-home-ui-{arch}

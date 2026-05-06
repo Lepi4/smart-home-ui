@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,12 +30,14 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            VERSION=$(grep -E '^version:' smart-home-ui-local/config.yaml | head -n1 | sed -E 's/version:[[:space:]]*"?([^"[:space:]]+)"?//')
+            VERSION=$(awk -F':' '/^version:/ {gsub(/[ "]/, "", $2); print $2; exit}' smart-home-ui-local/config.yaml)
           fi
+
           if [[ -z "$VERSION" ]]; then
             echo "Version not found" >&2
             exit 1
           fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $VERSION"
 
@@ -100,10 +103,18 @@ jobs:
         run: |
           VERSION="${{ needs.meta.outputs.version }}"
           PKG_DIR="ALLHA-3D-${VERSION}"
-          rm -rf "$PKG_DIR" "ALLHA-3D-v${VERSION}.zip"
+          ZIP_NAME="ALLHA-3D-v${VERSION}.zip"
+
+          rm -rf "$PKG_DIR" "$ZIP_NAME"
           mkdir -p "$PKG_DIR"
-          rsync -a             --exclude='.git'             --exclude='.github/workflows/*.log'             --exclude="$PKG_DIR"             ./ "$PKG_DIR/"
-          zip -r "ALLHA-3D-v${VERSION}.zip" "$PKG_DIR"
+
+          rsync -a \
+            --exclude='.git' \
+            --exclude="$PKG_DIR" \
+            --exclude="$ZIP_NAME" \
+            ./ "$PKG_DIR/"
+
+          zip -r "$ZIP_NAME" "$PKG_DIR"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
