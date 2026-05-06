@@ -2325,6 +2325,8 @@ async function saveConfig(){
     state.config=res.config||state.config;
     status.textContent='Настройки сохранены. Проверяю подключение к Home Assistant...';
     await testConnection({keepModal:true});
+    status.textContent='Настройки сохранены.';
+    closeModal('settings-modal');
   }catch(e){
     status.textContent='Ошибка сохранения настроек: '+e.message;
     setConnection(false,'Ошибка настроек');
@@ -2598,7 +2600,35 @@ function bindGlobal(){
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
 }
 
-(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); await loadAttention(); loadKioskLockLocal(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); await loadSecurityRules(); applyConfigToInputs(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
+async function initialHaSync(){
+  try{
+    await testConnection({keepModal:true});
+    startPolling();
+  }catch(e){
+    console.error('initial HA sync failed', e);
+    setConnection(false,'Ошибка подключения');
+  }
+}
+
+(async function init(){
+  await loadLayout();
+  await loadSourceConfig();
+  await loadPersistedUiState();
+  await loadAttention();
+  loadKioskLockLocal();
+  bindGlobal();
+  startClock();
+  renderSourceSettings();
+  render();
+  try{
+    await loadConfig();
+    await loadSecurityRules();
+    applyConfigToInputs();
+  }catch(e){
+    console.error('config load failed', e);
+  }
+  await initialHaSync();
+})();
 
 window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});
