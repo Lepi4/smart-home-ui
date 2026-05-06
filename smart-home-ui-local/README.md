@@ -6,7 +6,7 @@
 
 - **Developer:** Lepi4
 - **GitHub:** https://github.com/Lepi4/smart-home-ui
-- **Version:** v3.4.46
+- **Version:** v3.4.48
 - **Copyright:** © Lepi4
 
 Репозиторий остаётся прежним: `https://github.com/Lepi4/smart-home-ui`.
@@ -55,8 +55,8 @@ https://github.com/Lepi4/smart-home-ui
 GitHub Actions публикует образы:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.46
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.46
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.48
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.48
 ```
 
 ## Структура данных
@@ -134,3 +134,19 @@ views:
 Developer: **Lepi4**  
 GitHub: https://github.com/Lepi4/smart-home-ui  
 Copyright: © Lepi4
+
+
+## v3.4.48
+
+- Added “Невидимые зоны”: zones can remain clickable while visually hidden.
+- Edit button is hidden outside admin mode.
+- Kiosk Attention button is now compact: no button when there are no alerts, “!” when alert is active.
+
+
+## v3.4.48 — Roles, PIN and dangerous devices
+
+- Panel modes simplified to `viewer`, `control panel`, and `admin`.
+- `control panel` can run device actions; dangerous actions require confirmation or PIN if enabled.
+- `admin` can mark any entity as dangerous or explicitly make an inherently dangerous entity safe from the long-press device menu.
+- PIN is 4 digits; emergency PIN `0000` always works for elevation/reset/dangerous confirmation.
+- Attention rules can be changed only in admin mode.

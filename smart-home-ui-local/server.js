@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -17,11 +18,12 @@ const SOURCE_CONFIG_PATH = path.join(DATA_DIR, 'source_config.json');
 const UI_STATE_PATH = path.join(DATA_DIR, 'ui_state.json');
 const DATA_IMAGES_DIR = path.join(DATA_DIR, 'images');
 const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
+const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
 
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.1';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.48';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -129,6 +131,7 @@ function ensureDataStore(){
   safeCopyIfMissing(FALLBACK_DEVICES_PATH, DEVICES_PATH);
   safeCopyIfMissing(path.join(__dirname, 'public', 'lovelace-source.js'), LOVELACE_PATH);
   if(!fs.existsSync(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
+  if(!fs.existsSync(SECURITY_RULES_PATH)) saveSecurityRules(securityRulesDefault());
 }
 function atomicWriteJson(file, payload){
   fs.mkdirSync(path.dirname(file), {recursive:true});
@@ -321,7 +324,7 @@ async function buildDiagnostics(){
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     safeServices: SAFE_SERVICES,
@@ -399,7 +402,7 @@ function defaultAddonConfig(){
       darkTheme:true, kioskWidget:false, weatherEntity:'', showAllDevicesInRoom:false,
       haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00
     },
-    security: { panelMode:'admin', allowDangerousServices:false, confirmDangerousServices:true }
+    security: { panelMode:'admin', confirmDangerousServices:true, dangerousRequirePin:false, pinEnabled:false }
   };
 }
 function normalizeUiConfig(input){
@@ -420,8 +423,19 @@ function normalizeUiConfig(input){
   };
 }
 function normalizeSecurityConfig(input){
-  const src=input||{}; const mode=['viewer','control','admin'].includes(src.panelMode)?src.panelMode:'admin';
-  return { panelMode: mode, allowDangerousServices: !!src.allowDangerousServices, confirmDangerousServices: src.confirmDangerousServices !== false };
+  const src=input||{};
+  let mode=String(src.panelMode||'admin');
+  if(mode==='user') mode='viewer';
+  if(mode==='control') mode='control';
+  if(!['viewer','control','admin'].includes(mode)) mode='admin';
+  return {
+    panelMode: mode,
+    confirmDangerousServices: src.confirmDangerousServices !== false,
+    dangerousRequirePin: !!src.dangerousRequirePin,
+    pinEnabled: !!src.pinEnabled,
+    pinHash: typeof src.pinHash==='string' ? src.pinHash : '',
+    pinSalt: typeof src.pinSalt==='string' ? src.pinSalt : ''
+  };
 }
 function loadCommandLog(){ return readJsonSafe(COMMAND_LOG_PATH, []); }
 function appendCommandLog(entry){
@@ -435,6 +449,51 @@ function serviceCategory(domain, service){
   if((SAFE_SERVICES[String(domain)]||[]).includes(String(service))) return 'safe';
   if((DANGEROUS_SERVICES[String(domain)]||[]).includes(String(service))) return 'dangerous';
   return 'blocked';
+}
+
+function securityRulesDefault(){ return { version:1, forceDangerous:[], forceSafe:[] }; }
+function normalizeSecurityRules(payload){
+  const src = payload && typeof payload === 'object' ? payload : securityRulesDefault();
+  const normList = arr => [...new Set((Array.isArray(arr)?arr:[]).map(x=>String(x||'').trim()).filter(Boolean))];
+  return { version:Number(src.version)||1, forceDangerous:normList(src.forceDangerous), forceSafe:normList(src.forceSafe) };
+}
+function loadSecurityRules(){ return normalizeSecurityRules(readJsonSafe(SECURITY_RULES_PATH, securityRulesDefault())); }
+function saveSecurityRules(payload){ const normalized=normalizeSecurityRules(payload); atomicWriteJson(SECURITY_RULES_PATH, normalized); return normalized; }
+function entityOverrideCategory(entityId){
+  const rules=loadSecurityRules();
+  const id=String(entityId||'').trim();
+  if(id && rules.forceSafe.includes(id)) return 'safe';
+  if(id && rules.forceDangerous.includes(id)) return 'dangerous';
+  return null;
+}
+function commandCategory(domain, service, entityId){
+  const override=entityOverrideCategory(entityId);
+  if(override) return override;
+  return serviceCategory(domain, service);
+}
+function hashPin(pin, salt){ return crypto.pbkdf2Sync(String(pin), String(salt), 120000, 32, 'sha256').toString('hex'); }
+function isValidPin(pin){ return /^\d{4}$/.test(String(pin||'')); }
+function setSecurityPin(pin){
+  if(!isValidPin(pin)) throw new Error('PIN должен состоять из 4 цифр');
+  const cfg=loadAddonConfig();
+  const salt=crypto.randomBytes(16).toString('hex');
+  const pinHash=hashPin(pin, salt);
+  const next={...cfg, security: normalizeSecurityConfig({...cfg.security, pinEnabled:true, pinSalt:salt, pinHash})};
+  saveAddonConfig(next);
+  return publicConfig(loadAddonConfig()).security;
+}
+function verifySecurityPin(pin, securityInput){
+  const pinStr=String(pin||'');
+  if(pinStr==='0000') return true;
+  const sec=normalizeSecurityConfig(securityInput || loadAddonConfig().security || {});
+  if(!sec.pinEnabled || !sec.pinHash || !sec.pinSalt) return false;
+  if(!isValidPin(pinStr)) return false;
+  try{ return crypto.timingSafeEqual(Buffer.from(hashPin(pinStr, sec.pinSalt),'hex'), Buffer.from(sec.pinHash,'hex')); }
+  catch(e){ return false; }
+}
+function publicSecurityConfig(input){
+  const sec=normalizeSecurityConfig(input||{});
+  return { panelMode:sec.panelMode, confirmDangerousServices:sec.confirmDangerousServices, dangerousRequirePin:sec.dangerousRequirePin, pinEnabled:!!sec.pinEnabled };
 }
 function loadAddonConfig(){
   const defaults = defaultAddonConfig();
@@ -495,7 +554,7 @@ function publicConfig(cfg){
     dashboardPaths,
     dashboardPathText: dashboardPaths.join('\n'),
     ui: normalizeUiConfig(cfg?.ui||{}),
-    security: normalizeSecurityConfig(cfg?.security||{})
+    security: publicSecurityConfig(cfg?.security||{})
   };
 }
 async function haFetch(endpoint, init={}){
@@ -927,6 +986,39 @@ app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'
 app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', haApiBase:HA_API_BASE, haWsUrl:HA_WS_URL, hasSupervisorToken:!!HA_TOKEN, dataDir:DATA_DIR }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ui-state', (req,res)=> { try { res.json(loadUiState()); } catch(e){ res.status(500).json({error:e.message}); } });
 
+
+app.get('/api/security/rules', (req,res)=>{
+  try{ res.json({ok:true, rules:loadSecurityRules(), security:publicSecurityConfig(loadAddonConfig().security)}); }
+  catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/api/security/pin/change', (req,res)=>{
+  try{
+    const {pin,pin2}=req.body||{};
+    if(String(pin)!==String(pin2)) return res.status(400).json({error:'PIN-коды не совпадают'});
+    const security=setSecurityPin(pin);
+    res.json({ok:true, security});
+  }catch(e){ res.status(400).json({error:e.message}); }
+});
+app.post('/api/security/pin/verify', (req,res)=>{
+  try{ res.json({ok:verifySecurityPin(req.body?.pin)}); }
+  catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/api/security/dangerous', (req,res)=>{
+  try{
+    const cfg=loadAddonConfig();
+    const sec=normalizeSecurityConfig(cfg.security);
+    if(sec.panelMode!=='admin') return res.status(403).json({error:'Изменение dangerous доступно только в admin mode'});
+    const entity_id=String(req.body?.entity_id||'').trim();
+    if(!entity_id) return res.status(400).json({error:'entity_id required'});
+    const dangerous=!!req.body?.dangerous;
+    const rules=loadSecurityRules();
+    rules.forceDangerous=rules.forceDangerous.filter(x=>x!==entity_id);
+    rules.forceSafe=rules.forceSafe.filter(x=>x!==entity_id);
+    if(dangerous) rules.forceDangerous.push(entity_id); else rules.forceSafe.push(entity_id);
+    res.json({ok:true, rules:saveSecurityRules(rules)});
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 app.get('/api/attention', async (req,res)=> {
   try {
     const rules = loadAttentionRules();
@@ -1000,13 +1092,13 @@ app.post('/api/ha/lovelace/import-stored', async (req,res)=>{
 });
 app.get('/api/ha/states', async (req,res)=> { try { const states = await haFetch('/states'); res.json({ ok:true, states }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/ha/service', async (req,res)=> {
-  const {domain, service, data, confirmDangerous} = req.body || {};
+  const {domain, service, data, confirmDangerous, pin} = req.body || {};
   const entity_id = data?.entity_id || '';
   try {
     if(!domain || !service) return res.status(400).json({error:'domain and service are required'});
     const cfg = loadAddonConfig();
     const security = normalizeSecurityConfig(cfg.security);
-    const category = serviceCategory(domain, service);
+    const category = commandCategory(domain, service, entity_id);
     if(security.panelMode === 'viewer'){
       appendCommandLog({domain,service,entity_id,result:'blocked-viewer'});
       return res.status(403).json({error:'Панель в режиме viewer: управление запрещено'});
@@ -1017,9 +1109,9 @@ app.post('/api/ha/service', async (req,res)=> {
       return res.status(403).json({error:`Service ${domain}.${service} запрещён allowlist`});
     }
     if(category === 'dangerous'){
-      if(security.panelMode !== 'admin' || !security.allowDangerousServices){
-        appendCommandLog({domain,service,entity_id,result:'blocked-dangerous'});
-        return res.status(403).json({error:`Опасная команда ${domain}.${service} отключена в настройках безопасности`});
+      if(security.panelMode === 'control' && security.dangerousRequirePin && security.pinEnabled && !verifySecurityPin(pin, security)){
+        appendCommandLog({domain,service,entity_id,result:'pin-required',category});
+        return res.status(409).json({requiresPin:true, message:`Введите PIN для опасной команды ${domain}.${service}${entity_id ? ' для '+entity_id : ''}`});
       }
       if(security.confirmDangerousServices && !confirmDangerous){
         return res.status(409).json({requiresConfirmation:true, message:`Подтвердить опасную команду ${domain}.${service}${entity_id ? ' для '+entity_id : ''}?`});

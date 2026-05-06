@@ -12,7 +12,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, attention:{ok:true,hasAlerts:false,rules:[]}
 };
@@ -29,7 +29,7 @@ const DRAG_SUPPRESS_MS = 420;
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
 const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','debugMode']);
-const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','showZones','showMarkers','showSensors']);
+const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','showZones','invisibleZones','showMarkers','showSensors']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
   const src = (cfg && cfg.ui) ? cfg.ui : cfg || {};
@@ -37,7 +37,17 @@ function applyGlobalConfig(cfg){
   if(Object.keys(next).length){ state.ui = { ...state.ui, ...next }; applyUiPrefs(); renderKioskWidget(); }
 }
 function buildGlobalConfigPayload(){ return { ui: pickKeys(state.ui, GLOBAL_UI_KEYS) }; }
-function buildSecurityConfigPayload(){ return { security:{panelMode:el('pref-panel-mode')?.value||state.config?.security?.panelMode||'admin',allowDangerousServices:!!el('pref-allow-dangerous')?.checked,confirmDangerousServices:!!el('pref-confirm-dangerous')?.checked} }; }
+function buildSecurityConfigPayload(){ return { security:{panelMode:el('pref-panel-mode')?.value||state.config?.security?.panelMode||'admin',confirmDangerousServices:!!el('pref-confirm-dangerous')?.checked,dangerousRequirePin:!!el('pref-dangerous-pin')?.checked,pinEnabled:!!state.config?.security?.pinEnabled} }; }
+function panelMode(){ const m=state.config?.security?.panelMode || 'admin'; return m==='user'?'viewer':m; }
+function canEditLayout(){ return panelMode()==='admin'; }
+function panelModeRank(mode){ return ({viewer:0,control:1,admin:2})[mode==='user'?'viewer':mode] ?? 2; }
+async function verifyPinPrompt(message='Введите PIN для повышения режима'){
+  const pin=await requestPin(message);
+  if(!pin) return false;
+  try{ const res=await apiJson('api/security/pin/verify',{method:'POST',body:JSON.stringify({pin})}); return !!res.ok; }
+  catch(e){ showToast('Ошибка PIN: '+e.message); return false; }
+}
+
 async function saveGlobalPrefs(){
   const res=await apiJson('api/config',{method:'POST',body:JSON.stringify({...buildGlobalConfigPayload(),...buildSecurityConfigPayload()})});
   state.config=res.config||state.config;
@@ -316,8 +326,10 @@ function applyUiPrefs(){
   document.body.classList.toggle('auto-hide-menus', !!state.ui.autoHide);
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
   document.body.classList.toggle('dark-theme', !!state.ui.darkTheme);
-  document.body.classList.toggle('debug-mode', !!state.ui.debugMode);
   document.body.classList.toggle('kiosk-mode', !!state.ui.kioskMode);
+  document.body.classList.toggle('debug-mode', !!state.ui.debugMode);
+  document.body.classList.toggle('can-edit', canEditLayout());
+  document.body.classList.toggle('invisible-zones', !!state.ui.invisibleZones);
   applyKioskLockUi();
   resetKioskAutoLock();
   const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
@@ -347,6 +359,7 @@ function applyUiPrefs(){
   const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
   const tz=el('toggle-zones'); if(tz) tz.checked=state.ui.showZones!==false;
+  const iz=el('pref-invisible-zones'); if(iz){ iz.checked=!!state.ui.invisibleZones; }
   const tdv=el('toggle-devices'); if(tdv) tdv.checked=state.ui.showMarkers!==false;
   const ts=el('toggle-sensors'); if(ts) ts.checked=state.ui.showSensors!==false;
   const ph=el('pref-halo-scale'); if(ph){ ph.value=String(Math.round(Number(state.ui.haloScale ?? 0.50)*100)); const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=ph.value+'%'; }
@@ -357,8 +370,10 @@ function applyUiPrefs(){
   const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 0)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
   const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 0)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
   const pmode=el('pref-panel-mode'); if(pmode && state.config?.security?.panelMode) pmode.value=state.config.security.panelMode;
-  const ad=el('pref-allow-dangerous'); if(ad) ad.checked=!!state.config?.security?.allowDangerousServices;
   const cd=el('pref-confirm-dangerous'); if(cd) cd.checked=state.config?.security?.confirmDangerousServices!==false;
+  const dp=el('pref-dangerous-pin'); if(dp) dp.checked=!!state.config?.security?.dangerousRequirePin;
+  const pinBadge=el('pin-status'); if(pinBadge) pinBadge.textContent=state.config?.security?.pinEnabled?'PIN установлен':'PIN не установлен';
+  updateEditButtons();
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
 function normalizedRoomId(id){return id==='boiler'?'laundry':id}
@@ -714,13 +729,15 @@ function setLayoutDirty(value=true){
   updateEditButtons();
 }
 function updateEditButtons(){
+  const allowed = canEditLayout();
   const eb=el('edit-mode-badge'); if(eb){ eb.textContent=state.edit?(state.layoutDirty?'Редактирование · есть изменения':'Редактирование'):'Режим управления'; eb.className='edit-mode-badge '+(state.edit?'is-edit':'is-view'); }
   const editBtn=el('btn-edit'), saveBtn=el('btn-save-edit'), cancelBtn=el('btn-cancel-edit');
-  if(editBtn) editBtn.classList.toggle('hidden', state.edit);
-  if(saveBtn){ saveBtn.classList.toggle('hidden', !state.edit); saveBtn.disabled=false; saveBtn.textContent='Сохранить изменения'; }
-  if(cancelBtn) cancelBtn.classList.toggle('hidden', !state.edit);
+  if(editBtn) editBtn.classList.toggle('hidden', state.edit || !allowed);
+  if(saveBtn){ saveBtn.classList.toggle('hidden', !state.edit || !allowed); saveBtn.disabled=false; saveBtn.textContent='Сохранить изменения'; }
+  if(cancelBtn) cancelBtn.classList.toggle('hidden', !state.edit || !allowed);
 }
 function enterEditMode(){
+  if(!canEditLayout()){ showToast('Редактирование доступно только в admin mode'); updateEditButtons(); return; }
   state.stageGesture=null;
   pauseLiveDashboard();
   state.editSnapshot=cloneLayout(state.layout);
@@ -808,7 +825,7 @@ function renderOverview(){
 }
 function renderOverviewZones(){
   const layer=el('overview-zones'); layer.innerHTML='';
-  if(!el('toggle-zones').checked)return;
+  if(state.ui.showZones===false && !state.ui.invisibleZones)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id);
     const z=document.createElement('button');
@@ -1297,20 +1314,33 @@ function openDeviceModal(d){
     ${a.current_temperature!==undefined?modalRow('Текущая температура', String(a.current_temperature).replace('.',',')+'°'):''}
     ${a.hvac_action?modalRow('Действие климата', a.hvac_action):''}
     ${a.current_position!==undefined?modalRow('Позиция', a.current_position+'%'):''}
-    <div class="device-controls">${domainControls(d)}${attentionSectionHtml(d)}</div>`;
+    <div class="device-controls">${domainControls(d)}${dangerousSectionHtml(d)}${attentionSectionHtml(d)}</div>`;
   modal.classList.remove('hidden'); bindDeviceModalActions(d);
 }
 function closeDeviceModal(){el('device-modal').classList.add('hidden')}
+async function requestPin(message='Введите PIN-код'){
+  const pin=window.prompt(message+'\n4 цифры. Аварийный PIN: 0000','');
+  if(pin===null) return null;
+  return String(pin).trim();
+}
 async function callService(domain,service,data,opts={}){
+  const payload={domain,service,data,confirmDangerous:!!opts.confirmDangerous};
+  if(opts.pin) payload.pin=opts.pin;
   try{
-    await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data,confirmDangerous:!!opts.confirmDangerous})});
+    await apiJson('api/ha/service',{method:'POST',body:JSON.stringify(payload)});
     await loadStates();
   }catch(e){
+    if(e.status===409 && e.data?.requiresPin){
+      const pin=await requestPin(e.data.message || `Введите PIN для ${domain}.${service}`);
+      if(pin){
+        await callService(domain,service,data,{...opts,pin,confirmDangerous:!!opts.confirmDangerous});
+        return;
+      }
+    }
     if(e.status===409 && e.data?.requiresConfirmation){
       const msg=e.data.message || `Подтвердить опасную команду ${domain}.${service}?`;
       if(window.confirm(msg)){
-        await apiJson('api/ha/service',{method:'POST',body:JSON.stringify({domain,service,data,confirmDangerous:true})});
-        await loadStates();
+        await callService(domain,service,data,{...opts,confirmDangerous:true});
         return;
       }
     }
@@ -1334,6 +1364,7 @@ function bindDeviceModalActions(d){
       const runAction=async()=>{try{
         const action=ctrl.dataset.action;
         if(action==='attention-toggle'){ await toggleAttentionRule(d); return; }
+        if(action==='dangerous-toggle'){ await toggleDangerousRule(d); return; }
         if(action==='rename-save'){ const input=body.querySelector('[data-action=\"rename-local\"]'); const name=(input?.value||'').trim(); if(!state.layout.customNames) state.layout.customNames={}; if(name) state.layout.customNames[d.entity_id]=name; else delete state.layout.customNames[d.entity_id]; await saveLayout(false); showToast('Имя сохранено'); render(); openDeviceModal(d); return; }
         if(action==='rename-local') return;
         if(action==='toggle') await toggleDevice(d);
@@ -1988,7 +2019,6 @@ function hideKioskRooms(){
   if(state.kioskRoomTimer){ clearTimeout(state.kioskRoomTimer); state.kioskRoomTimer=null; }
 }
 
-function panelMode(){ return state.config?.security?.panelMode || 'admin'; }
 function canManageAttention(){ return panelMode()==='admin' && !isKioskInputLocked(); }
 function attentionRule(entityId){ return (state.attention?.rules||[]).find(r=>r.entity_id===entityId); }
 function updateAttentionFromStates(){
@@ -2007,8 +2037,11 @@ async function loadAttention(){
 function renderAttentionButton(){
   const btn=el('btn-kiosk-attention'); if(!btn) return;
   const count=(state.attention?.rules||[]).filter(r=>r.alert).length;
-  btn.classList.toggle('has-alert', !!state.attention?.hasAlerts);
-  btn.textContent = state.attention?.hasAlerts ? `ВНИМАНИЕ! ${count}` : 'Внимание!';
+  const hasAlert=!!state.attention?.hasAlerts;
+  btn.classList.toggle('has-alert', hasAlert);
+  btn.classList.toggle('hidden', !hasAlert);
+  btn.textContent = count>1 ? `! ${count}` : '!';
+  btn.title = hasAlert ? 'Открыть окно Внимание' : 'Нет активных alerts';
 }
 function attentionStatusText(rule){ return rule?.alert ? 'Внимание' : 'OK'; }
 function renderAttentionModal(){
@@ -2022,7 +2055,8 @@ function renderAttentionModal(){
     if(!canManageAttention()){ showToast('Изменение доступно только в admin mode и при разблокированном киоске'); return; }
     const eid=row.dataset.attentionEntity;
     await apiJson('api/attention/'+encodeURIComponent(eid),{method:'DELETE'});
-    await loadAttention(); renderAttentionModal(); showToast('Удалено из Внимание');
+    await loadAttention();
+  await loadSecurityRules(); renderAttentionModal(); showToast('Удалено из Внимание');
   }));
 }
 function openAttentionModal(){ renderAttentionModal(); el('attention-modal')?.classList.remove('hidden'); document.body.classList.add('modal-open'); }
@@ -2040,6 +2074,18 @@ async function toggleAttentionRule(d){
   else await apiJson('api/attention',{method:'POST',body:JSON.stringify({entity_id:d.entity_id,name:displayName(d)})});
   await loadAttention();
   openDeviceModal(d);
+}
+function securityRules(){ return state.securityRules || {forceDangerous:[],forceSafe:[]}; }
+function isEntityForceDangerous(entityId){ return (securityRules().forceDangerous||[]).includes(entityId); }
+function isEntityForceSafe(entityId){ return (securityRules().forceSafe||[]).includes(entityId); }
+function isDomainDangerous(d){ const dom=String(d?.domain||String(d?.entity_id||'').split('.')[0]||''); return ['lock','valve','button','script','automation'].includes(dom); }
+function isDangerousDevice(d){ if(isEntityForceSafe(d.entity_id)) return false; if(isEntityForceDangerous(d.entity_id)) return true; return isDomainDangerous(d); }
+function canManageDangerous(){ return panelMode()==='admin'; }
+async function loadSecurityRules(){ try{ const res=await apiJson('api/security/rules'); state.securityRules=res.rules||{forceDangerous:[],forceSafe:[]}; if(res.security){ state.config={...(state.config||{}), security:{...(state.config?.security||{}), ...res.security}}; } }catch(e){ console.warn('security rules load failed',e); state.securityRules={forceDangerous:[],forceSafe:[]}; } }
+async function toggleDangerousRule(d){ if(!canManageDangerous()){ showToast('Dangerous можно менять только в admin mode'); return; } const dangerous=!isDangerousDevice(d); const res=await apiJson('api/security/dangerous',{method:'POST',body:JSON.stringify({entity_id:d.entity_id,dangerous})}); state.securityRules=res.rules||securityRules(); openDeviceModal(d); showToast(dangerous?'Устройство помечено dangerous':'Устройство исключено из dangerous'); }
+function dangerousSectionHtml(d){
+  const admin=canManageDangerous(); const dang=isDangerousDevice(d); const src=isEntityForceSafe(d.entity_id)?'исключено вручную':isEntityForceDangerous(d.entity_id)?'помечено вручную':isDomainDangerous(d)?'опасное по типу устройства':'обычное';
+  return `<section class="device-security-section"><h3>Безопасность</h3><div class="attention-mini ${dang?'alert':'ok'}"><b>${dang?'Dangerous':'Safe'}</b><span>${esc(src)}</span></div><button type="button" data-action="dangerous-toggle" ${admin?'':'disabled'}>${dang?'Сделать не dangerous':'Сделать dangerous'}</button>${admin?'':'<p class="muted">Изменение dangerous доступно только в admin mode.</p>'}</section>`;
 }
 function attentionSectionHtml(d){
   const r=attentionRule(d.entity_id); const admin=canManageAttention();
@@ -2239,7 +2285,7 @@ function renderInfoModal(){
     qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущий layout будет сохранён в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Layout восстановлен'); });
     qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=async()=>{ await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name:btn.dataset.deleteBackup})}); await loadDiagnostics(); });
   } else if(state.infoTab==='allowlist'){
-    box.innerHTML=`<h3>Команды Home Assistant</h3><p class="muted">Safe-команды разрешены в control/admin. Dangerous-команды требуют отдельного разрешения и подтверждения.</p><div class="info-list"><b>Режим панели</b>: ${esc(d.security?.panelMode||'admin')}<br><b>Опасные команды</b>: ${d.security?.allowDangerousServices?'разрешены':'запрещены'}<br><b>Подтверждение</b>: ${d.security?.confirmDangerousServices!==false?'включено':'выключено'}</div><h4>Safe</h4><div class="info-list">${Object.entries(d.safeServices||d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div><h4>Dangerous</h4><div class="info-list">${Object.entries(d.dangerousServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>') || '—'}</div><h4>Последние команды</h4><div class="info-list">${(d.commandLog||[]).slice(0,30).map(x=>`${esc(x.time)} — <b>${esc(x.domain)}.${esc(x.service)}</b> ${esc(x.entity_id||'')} — ${esc(x.result||'')}`).join('<br>') || '—'}</div>`;
+    box.innerHTML=`<h3>Команды Home Assistant</h3><p class="muted">viewer — просмотр. control panel — управление, dangerous через подтверждение/PIN. admin — полный доступ.</p><div class="info-list"><b>Режим панели</b>: ${esc(d.security?.panelMode||'admin')}<br><b>PIN установлен</b>: ${d.security?.pinEnabled?'да':'нет'}<br><b>Dangerous через PIN</b>: ${d.security?.dangerousRequirePin?'да':'нет'}<br><b>Подтверждение</b>: ${d.security?.confirmDangerousServices!==false?'включено':'выключено'}</div><h4>Safe</h4><div class="info-list">${Object.entries(d.safeServices||d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div><h4>Dangerous</h4><div class="info-list">${Object.entries(d.dangerousServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>') || '—'}</div><h4>Последние команды</h4><div class="info-list">${(d.commandLog||[]).slice(0,30).map(x=>`${esc(x.time)} — <b>${esc(x.domain)}.${esc(x.service)}</b> ${esc(x.entity_id||'')} — ${esc(x.result||'')}`).join('<br>') || '—'}</div>`;
   } else if(state.infoTab==='about'){
     const brand=d.brand||{};
     box.innerHTML=`<div class="about-brand-card"><div class="about-brand-logo"><img src="brand-logo.svg" alt="ALLHA-3D"></div><div><h3>ALLHA-3D</h3><p class="muted">Local 3D floor-plan Smart Home UI for Home Assistant.</p></div></div>`+
@@ -2273,9 +2319,9 @@ function bindGlobal(){
   el('btn-refresh-info').onclick=loadDiagnostics;
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
-  el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
+  el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
   const editBtn=el('btn-edit');
-  const startEditHold=()=>{ if(state.edit) return; editBtn.classList.add('holding'); showToast('Удерживайте 2 секунды для входа в редактор'); state.editHoldTimer=setTimeout(()=>{ editBtn.classList.remove('holding'); state.editHoldTimer=null; enterEditMode(); },2000); };
+  const startEditHold=()=>{ if(state.edit) return; if(!canEditLayout()){ showToast('Редактирование доступно только в admin mode'); updateEditButtons(); return; } editBtn.classList.add('holding'); showToast('Удерживайте 2 секунды для входа в редактор'); state.editHoldTimer=setTimeout(()=>{ editBtn.classList.remove('holding'); state.editHoldTimer=null; enterEditMode(); },2000); };
   const cancelEditHold=()=>{ if(state.editHoldTimer){ clearTimeout(state.editHoldTimer); state.editHoldTimer=null; editBtn.classList.remove('holding'); } };
   editBtn.addEventListener('pointerdown',e=>{ if(e.button!==undefined && e.button!==0) return; startEditHold(); });
   editBtn.addEventListener('pointerup',cancelEditHold); editBtn.addEventListener('pointercancel',cancelEditHold); editBtn.addEventListener('pointerleave',cancelEditHold);
@@ -2325,6 +2371,7 @@ function bindGlobal(){
   const kioskAttention=el('btn-kiosk-attention'); if(kioskAttention) kioskAttention.onclick=openAttentionModal;
   const closeAttention=el('btn-close-attention'); if(closeAttention) closeAttention.onclick=closeAttentionModal;
   const attentionModal=el('attention-modal'); if(attentionModal) attentionModal.addEventListener('click',e=>{ if(e.target.id==='attention-modal') closeAttentionModal(); });
+  const changePin=el('btn-change-pin'); if(changePin) changePin.onclick=async()=>{ const p1=window.prompt('Введите новый PIN, 4 цифры. Цифры отображаются при вводе. Аварийный PIN 0000 всегда работает.',''); if(p1===null) return; const p2=window.prompt('Повторите новый PIN',''); if(p2===null) return; try{ const res=await apiJson('api/security/pin/change',{method:'POST',body:JSON.stringify({pin:p1,pin2:p2})}); state.config={...(state.config||{}), security:{...(state.config?.security||{}), ...(res.security||{})}}; applyConfigToInputs(); showToast('PIN обновлён'); }catch(e){ showToast('Ошибка PIN: '+e.message); } };
   const clearAttention=el('btn-clear-attention'); if(clearAttention) bindHold(clearAttention, async()=>{ if(!canManageAttention()){ showToast('Очистка доступна только в admin mode и при разблокированном киоске'); return; } await apiJson('api/attention/clear',{method:'POST'}); await loadAttention(); renderAttentionModal(); showToast('Список Внимание очищен'); });
   const kioskLock=el('btn-kiosk-lock'); if(kioskLock) kioskLock.onclick=()=>setKioskLocked(!state.kioskLocked);
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
@@ -2336,12 +2383,23 @@ function bindGlobal(){
   el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();};
   el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; applyUiPrefs(); renderKioskWidget();};
   const dbgPref=el('pref-debug-mode'); if(dbgPref) dbgPref.onchange=e=>{state.ui.debugMode=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
+  const invZones=el('pref-invisible-zones'); if(invZones) invZones.onchange=e=>{state.ui.invisibleZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();};
   el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render(); resetKioskAutoLock();};
   const pal=el('pref-kiosk-autolock'); if(pal) pal.onchange=e=>{state.ui.kioskAutoLock=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();};
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
-  ['pref-panel-mode','pref-allow-dangerous','pref-confirm-dangerous'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>saveGlobalPrefs().catch(()=>{}); });
+  const pmodeSelect=el('pref-panel-mode');
+  if(pmodeSelect) pmodeSelect.onchange=async()=>{
+    const oldMode=state.config?.security?.panelMode||'admin';
+    const newMode=pmodeSelect.value;
+    if(state.config?.security?.pinEnabled && panelModeRank(newMode)>panelModeRank(oldMode)){
+      const ok=await verifyPinPrompt('Введите PIN для перехода в более высокий режим');
+      if(!ok){ pmodeSelect.value=oldMode; showToast('Неверный PIN'); return; }
+    }
+    saveGlobalPrefs().then(()=>{ if(!canEditLayout() && state.edit) cancelEditChanges(); updateEditButtons(); applyUiPrefs(); render(); }).catch(()=>{});
+  };
+  ['pref-confirm-dangerous','pref-dangerous-pin'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>{ saveGlobalPrefs().then(()=>{ updateEditButtons(); applyUiPrefs(); render(); }).catch(()=>{}); }; });
   bindRangePreview('pref-halo-scale','haloScale','pref-halo-scale-value');
   bindRangePreview('pref-hardware-scale','hardwareScale','pref-hardware-scale-value');
   bindRangePreview('pref-marker-scale','markerScale','pref-marker-scale-value');
@@ -2358,7 +2416,7 @@ function bindGlobal(){
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
 }
 
-(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); await loadAttention(); loadKioskLockLocal(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
+(async function init(){await loadLayout(); await loadSourceConfig(); await loadPersistedUiState(); await loadAttention(); loadKioskLockLocal(); bindGlobal(); startClock(); renderSourceSettings(); render(); try{const cfg=await loadConfig(); await loadSecurityRules(); applyConfigToInputs(); if(cfg.configured)await testConnection(); else openModal('settings-modal')}catch(e){console.error(e);openModal('settings-modal')}})();
 
 window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});

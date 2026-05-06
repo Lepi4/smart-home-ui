@@ -33,7 +33,7 @@
 #btn-edit.edit-active{background:linear-gradient(135deg,#ffb23f,#ffd166);color:#16140e;border-color:#ffc45c;box-shadow:0 0 0 3px rgba(255,178,63,.22),0 0 28px rgba(255,178,63,.28);font-weight:950}
 body.editing .canvas-card{outline:3px solid rgba(255,178,63,.46);outline-offset:-3px;box-shadow:inset 0 0 0 1px rgba(255,178,63,.3),0 16px 50px rgba(255,178,63,.12)}
 body.editing .canvas-card::before{content:'РЕЖИМ РЕДАКТИРОВАНИЯ — управление устройствами отключено';position:absolute;z-index:30;left:18px;top:18px;background:rgba(30,22,10,.82);color:#ffe0a3;border:1px solid rgba(255,178,63,.55);border-radius:999px;padding:9px 14px;font-weight:900;backdrop-filter:blur(8px);box-shadow:0 8px 24px rgba(0,0,0,.22)}
-body.editing .device-marker,body.editing .badge,body.editing .room-zone{cursor:move!important}
+body.editing .device-marker,body.editing .badge,body.editing .room-zone{cursor:pointer!important}
 body.editing 
 body.editing .quick-action,body.editing .device-card .state{pointer-events:none;opacity:.72}
 body.viewing .device-card{cursor:pointer!important}
@@ -1361,3 +1361,20 @@ body.kiosk-mode .kiosk-attention-btn{display:block!important}
 .about-brand-logo{width:84px;height:84px;border-radius:20px;background:#07101a;display:grid;place-items:center;box-shadow:inset 0 0 22px rgba(78,210,255,.16)}
 .about-brand-logo img{width:76px;height:76px;object-fit:contain}
 .about-brand-card h3{margin:0 0 4px;font-size:24px;letter-spacing:.06em;color:#eaf8ff}
+
+
+/* v3.4.48 Invisible zones, admin edit visibility and compact attention button */
+body.invisible-zones:not(.editing) .room-zone{
+  background:transparent!important;
+  border-color:transparent!important;
+  box-shadow:none!important;
+}
+body.invisible-zones:not(.editing) .room-zone:hover{background:transparent!important;border-color:transparent!important;}
+body.invisible-zones:not(.editing) .room-zone .zone-label{display:none!important;}
+body.invisible-zones.editing .room-zone{background:rgba(232,207,154,.10)!important;border-color:rgba(255,196,92,.62)!important;}
+body.kiosk-mode .kiosk-attention-btn.hidden{display:none!important;}
+body.kiosk-mode .kiosk-attention-btn{display:none!important;}
+body.kiosk-mode .kiosk-attention-btn.has-alert:not(.hidden){display:block!important;}
+.kiosk-attention-btn{min-width:42px;width:42px;height:42px;padding:0!important;border-radius:999px;font-size:24px;line-height:42px;text-align:center;left:auto!important;right:92px!important;bottom:12px!important;transform:none!important;}
+@media(max-width:760px){.kiosk-attention-btn{right:84px!important;bottom:56px!important;width:38px;height:38px;line-height:38px;font-size:22px;}}
+body:not(.can-edit) #btn-edit{display:none!important;}
