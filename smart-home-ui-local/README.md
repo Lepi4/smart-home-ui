@@ -1,207 +1,305 @@
-# ALLHA-3D — Home Assistant Add-on
+# ALLHA-3D
 
-![ALLHA-3D](smart-home-ui-local/public/brand-label.svg)
+**ALLHA-3D** — локальная 3D/floor-plan панель для Home Assistant в виде add-on.
 
-**ALLHA-3D** — локальный 3D/floor-plan интерфейс управления Home Assistant с картой квартиры, комнатами, устройствами, датчиками, kiosk mode, SVG Layout Editor и безопасным хранением данных вне контейнера.
+Проект показывает квартиру или дом как интерактивный план: комнаты, зоны, устройства, датчики, состояния, kiosk mode, режим управления и отдельный редактор координат. Интерфейс рассчитан на настенную панель, планшет, мобильный экран и ПК.
 
-- **Developer:** Lepi4
-- **GitHub:** https://github.com/Lepi4/smart-home-ui
-- **Version:** v3.4.56
-- **Copyright:** © Lepi4
+> Репозиторий проекта: https://github.com/Lepi4/smart-home-ui  
+> Разработчик: **Lepi4**  
+> Приложение: **ALLHA-3D**  
+> Версия: **3.5.0**
 
-Репозиторий остаётся прежним: `https://github.com/Lepi4/smart-home-ui`.
+---
 
-## Идея названия
+## Что умеет ALLHA-3D
 
-`ALLHA-3D` шифрует личные инициалы/ФИО автора, **HA** как Home Assistant и **3D** как визуальный 3D/floor-plan подход к управлению домом.
+### Интерактивный общий план
 
-## Возможности
+- общий 3D-план квартиры/дома;
+- переход в комнаты по зонам;
+- видимые или невидимые кликабельные зоны;
+- подписи комнат;
+- устройства и датчики поверх зон;
+- отдельные изображения комнат;
+- масштабирование карты;
+- крупные часы и температура/погода на плане.
 
-- Home Assistant add-on через Ingress.
-- Работа без ручного ввода HA URL и long-lived token.
-- Supervisor API / `SUPERVISOR_TOKEN`.
-- Overview-план квартиры и отдельные картинки комнат.
-- Управление устройствами через HA services.
-- Touch-first управление: тап, long press, kiosk-friendly UI.
-- SVG Layout Editor вместо drag-and-drop.
-- Координаты layout только в процентах `0–100`.
-- Настройки и данные в `/data`, а не внутри Docker image.
-- Backup layout.
-- Entity diagnostics.
-- Safe/dangerous service calls.
-- Kiosk lock/autolock.
-- Kiosk Attention Monitor.
-- Debug mode для координат.
+![Общий план](docs/screenshots/overview-map.png)
 
-## Установка в Home Assistant
+---
 
-1. Открой Home Assistant:
+### Устройства и состояния
 
-```text
-Settings → Add-ons → Add-on Store → ⋮ → Repositories
-```
+На карте можно размещать устройства Home Assistant:
 
-2. Добавь репозиторий:
+- свет;
+- выключатели;
+- шторы;
+- климат;
+- медиа;
+- кнопки;
+- датчики;
+- binary sensors;
+- другие entity из Home Assistant.
 
-```text
-https://github.com/Lepi4/smart-home-ui
-```
-
-3. Установи add-on **ALLHA-3D**.
-4. Запусти add-on и открой Web UI.
-
-## GHCR images
-
-GitHub Actions публикует образы:
+Состояния отображаются человекочитаемо:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.56
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.56
+on/off → включено/выключено
+open/closed → открыто/закрыто
+detected/clear → обнаружено/не обнаружено
+unavailable → недоступно
+unknown → неизвестно
 ```
 
-## Структура данных
+![Комната](docs/screenshots/room-view.png)
 
-Пользовательские данные должны храниться в `/data`:
+---
+
+### Панель устройств
+
+Панель устройств помогает быстро найти entity:
+
+- поиск по имени;
+- список всех устройств;
+- состояние справа;
+- группировка и фильтрация;
+- отображение только размещённых или всех устройств в режиме редактирования.
+
+![Панель устройств](docs/screenshots/devices-panel.png)
+
+---
+
+### Панель комнат
+
+Панель комнат открывает найденные комнаты и общий план.
+
+Комнаты не создаются вручную внутри ALLHA-3D. Они берутся из:
+
+1. Lovelace card / section title;
+2. имени устройства или `entity_id`;
+3. Home Assistant Area;
+4. “Неразмещённые”, если комнату определить нельзя.
+
+![Панель комнат](docs/screenshots/rooms-panel.png)
+
+---
+
+## SVG Layout Editor
+
+ALLHA-3D не использует drag-and-drop для размещения.  
+Редактирование координат сделано через отдельный **SVG Layout Editor**.
+
+Сценарий размещения:
+
+```text
+Редактировать
+→ выбрать устройство
+→ SVG Layout Editor
+→ клик/тап по сетке
+→ X/Y или стрелки для точной подстройки
+→ Применить
+```
+
+Сценарий перемещения:
+
+```text
+Редактировать
+→ короткий тап по объекту = выбрать
+→ долгое удержание = открыть SVG Layout Editor
+→ клик/тап по новой точке
+→ Применить
+```
+
+Почему так:
+
+- координаты стабильны на ПК и мобильном;
+- zoom/pan не влияют на layout;
+- layout хранит проценты 0–100;
+- нет проблем с drag/drop на touch-экранах;
+- проще точно размещать устройства.
+
+---
+
+## Зоны
+
+Зоны используются для перехода из общего плана в комнаты.
+
+Возможности:
+
+- прямоугольные зоны;
+- отдельное изменение X/Y/W/H;
+- поворот прямоугольника;
+- видимые зоны;
+- невидимые зоны;
+- зоны остаются кликабельными, даже если визуально скрыты;
+- в edit mode зоны всегда видны как контуры.
+
+Логика настройки:
+
+```text
+Зоны выключены
+→ зоны не видны и не кликабельны
+
+Зоны включены + Невидимые зоны выключены
+→ зоны видны и кликабельны
+
+Зоны включены + Невидимые зоны включены
+→ зоны не видны, но кликабельны
+```
+
+---
+
+## Kiosk mode
+
+Kiosk mode предназначен для настенных панелей и планшетов.
+
+Возможности:
+
+- скрытие лишних панелей;
+- полноэкранный режим;
+- список комнат поверх карты;
+- lock/unlock;
+- autolock;
+- компактный тревожный индикатор “!” при active alert;
+- режим управления с подтверждениями опасных действий.
+
+---
+
+## “Внимание” / Attention Monitor
+
+Можно добавить устройство в мониторинг состояния.
+
+Как работает:
+
+1. В admin mode удержать устройство.
+2. В существующем меню включить “Следить за изменением состояния”.
+3. Текущее состояние сохраняется как нормальное.
+4. Если entity ушло из этого состояния — в kiosk появляется кнопка “!”.
+5. Если entity вернулось в норму — alert исчезает автоматически.
+
+Важно:
+
+- alert глобальный;
+- не зависит от текущей комнаты;
+- visible marker на текущем экране не обязателен;
+- viewer/control panel могут смотреть окно;
+- добавление/удаление правил доступно только admin.
+
+---
+
+## Режимы доступа
+
+ALLHA-3D использует 3 режима:
+
+| Режим | Возможности |
+|---|---|
+| **viewer** | только просмотр |
+| **control panel** | просмотр и управление устройствами |
+| **admin** | полный функционал, настройки, редактор, security |
+
+Кнопка **“Редактировать”** показывается только в `admin`.
+
+---
+
+## PIN и dangerous-команды
+
+Опасные действия можно защищать подтверждением или PIN.
+
+Dangerous-действия:
+
+- замки;
+- клапаны;
+- кнопки действия;
+- скрипты;
+- automation trigger;
+- любые устройства, вручную помеченные как dangerous.
+
+В `control panel` dangerous-действия требуют подтверждение, а при включённой настройке — PIN.
+
+В `admin` PIN для dangerous-действий не требуется.
+
+PIN:
+
+- 4 цифры;
+- хранится не plain text;
+- можно установить, сменить или сбросить;
+- сохранённый PIN не отображается.
+
+Для владельца предусмотрен резервный механизм восстановления PIN. Не публикуйте значение резервного кода в публичных материалах, если репозиторий открыт.
+
+---
+
+## Настройки
+
+![Настройки](docs/screenshots/settings.png)
+
+В настройках доступны:
+
+- режим панели;
+- mobile mode;
+- compact panels;
+- theme;
+- debug mode;
+- kiosk mode;
+- autolock;
+- зоны / невидимые зоны;
+- маркеры;
+- датчики;
+- масштаб карты;
+- масштаб маркеров;
+- масштаб датчиков;
+- масштаб подписей комнат;
+- прозрачности;
+- PIN;
+- dangerous confirmation;
+- weather/temperature entity;
+- диагностика.
+
+---
+
+## Хранение данных
+
+Пользовательские данные должны жить в `/data`:
 
 ```text
 /data/layout.json
 /data/addon_config.json
 /data/source_config.json
 /data/ui_state.json
-/data/devices.js
 /data/devices.json
-/data/lovelace-source.js
-/data/lovelace_raw.json
 /data/attention_rules.json
+/data/security_rules.json
+/data/rooms.json
 /data/images/
-/data/backups/
 ```
 
-Если при удалении add-on в Home Assistant выбрать **не удалять данные**, после повторной установки система должна восстановиться.
+Это нужно, чтобы после переустановки add-on можно было сохранить рабочую систему, если в Home Assistant не удалять данные add-on.
 
-## SVG Layout Editor
+---
 
-Drag-and-drop удалён из режима редактирования.
+## v3.5.0: Setup from Scratch
 
-Установка нового устройства:
+Начиная с v3.5.0 начинается этап разворачивания с нуля.
+
+План этого этапа:
+
+- перенос пользовательских картинок в `/data/images`;
+- загрузка общего плана через UI;
+- загрузка картинок найденных комнат;
+- `rooms.json` как кэш/настройки найденных комнат;
+- без ручного создания/переименования/удаления комнат;
+- прямоугольные зоны для найденных комнат;
+- ручное добавление entity из Home Assistant;
+- список неразмещённых устройств.
+
+---
+
+## Автор
 
 ```text
-Редактировать → Устройства → выбрать устройство → SVG Layout Editor → клик/тап по сетке → X/Y или стрелки → Применить
-```
-
-Перемещение существующего устройства:
-
-```text
-Редактировать → выбрать маркер → долгое удержание → SVG Layout Editor → новая точка → Применить
-```
-
-## Kiosk Attention Monitor
-
-В long press меню устройства есть блок **Внимание**. При включении правила текущее состояние сохраняется как нормальное. Если устройство уйдёт из этого состояния, в kiosk mode появляется компактная тревожная кнопка `!`.
-
-Alert глобальный и не зависит от текущей комнаты.
-
-## Lovelace source panel
-
-Рекомендуется отдельная Lovelace-панель с карточками комнат:
-
-```yaml
-title: Smart Home UI Source
-views:
-  - title: Комнаты
-    cards:
-      - type: entities
-        title: Кухня
-        entities:
-          - entity: light.kitchen_ceiling
-            name: Люстра
-          - entity: sensor.kitchen_temperature
-            name: Температура
-```
-
-Приоритет комнаты:
-
-```text
-1. Lovelace card / section title
-2. имя устройства / entity_id
-3. Home Assistant Area
-4. Неразмещённые
-```
-
-## About
-
-**ALLHA-3D**  
-Developer: **Lepi4**  
-GitHub: https://github.com/Lepi4/smart-home-ui  
+ALLHA-3D
+Developer: Lepi4
+GitHub: https://github.com/Lepi4/smart-home-ui
 Copyright: © Lepi4
-
-
-## v3.4.56
-
-- Added “Невидимые зоны”: zones can remain clickable while visually hidden.
-- Edit button is hidden outside admin mode.
-- Kiosk Attention button is now compact: no button when there are no alerts, “!” when alert is active.
-
-
-## v3.4.56 — Roles, PIN and dangerous devices
-
-- Panel modes simplified to `viewer`, `control panel`, and `admin`.
-- `control panel` can run device actions; dangerous actions require confirmation or PIN if enabled.
-- `admin` can mark any entity as dangerous or explicitly make an inherently dangerous entity safe from the long-press device menu.
-- PIN is 4 digits and can be changed or reset from Settings.
-- Attention rules can be changed only in admin mode.
-
-
-## v3.4.56 — Zones / UI polish
-
-- Rectangular zones are now edited through the SVG Layout Editor.
-- Zones remain rectangles: X/Y move the zone, W changes width, H changes height. Width and height can be changed independently.
-- Short tap/click on a zone in edit mode selects it; long press opens the zone editor.
-- “Invisible zones” now depends on the main “Zones” checkbox: if Zones are off, zones are not visible and not clickable; if Zones are on and Invisible zones are on, zones stay clickable but are visually hidden outside edit mode.
-
-
-## v3.4.56 — Zone center positioning and rotation
-
-- Zone coordinates in SVG Layout Editor and live map now use the same center-based X/Y model.
-- Rectangular zones can be resized separately by width and height.
-- Rectangular zones can be rotated around their center point.
-- Zone labels stay upright while the zone rectangle rotates.
-- Zones remain rectangles; polygon zones are intentionally not introduced in this step.
-
-## v3.4.56 — Overlay layer order
-
-Zones are now explicitly rendered below system sensor badges and device markers. Devices and sensors always stay visible and clickable above room zones; the selected object in edit mode is raised above all regular overlays.
-
-## v3.4.56 — локализация состояний и упаковка архива
-
-- Архив теперь содержит корневую папку с номером версии, например `3.4.56/`, чтобы удобнее распаковывать и переносить файлы.
-- Сырые состояния `on/off/open/closed` в интерфейсе заменены на человекочитаемые русские подписи: `включено/выключено`, `открыто/закрыто`, `обнаружено/не обнаружено` и т.д.
-- Это касается карточек устройств, контекстного меню, быстрых действий и окна “Внимание”.
-
-
-## GitHub Releases и автоматическая публикация GHCR
-
-Начиная с v3.4.56, workflow `.github/workflows/docker.yml` умеет автоматически создавать GitHub Release при публикации tag вида `vX.Y.Z`.
-
-Рекомендуемый порядок выпуска версии:
-
-```bash
-git add .
-git commit -m "Release v3.4.56"
-git tag v3.4.56
-git push origin main --tags
 ```
-
-После push tag GitHub Actions выполнит:
-
-```text
-1. Прочитает версию из tag `vX.Y.Z`.
-2. Соберёт Docker images для amd64 и aarch64.
-3. Опубликует образы:
-   ghcr.io/lepi4/smart-home-ui-amd64:X.Y.Z
-   ghcr.io/lepi4/smart-home-ui-aarch64:X.Y.Z
-4. Создаст GitHub Release `ALLHA-3D vX.Y.Z`.
-5. Прикрепит zip-архив `ALLHA-3D-vX.Y.Z.zip` к релизу.
-```
-
-Важно: Home Assistant add-on всё равно читает актуальный `smart-home-ui-local/config.yaml` из ветки репозитория. Поэтому перед tag нужно обновить `version:` в `config.yaml` и закоммитить изменения в `main`.
