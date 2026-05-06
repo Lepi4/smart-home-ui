@@ -671,7 +671,47 @@ function visualStyle(d){
   if(isLeakSensor(d)) return leakStateKind(d)==='leak'?haloCss(0.96,2.20):'--halo-alpha:0;--halo-scale:1;';
   return '';
 }
-function stateText(d){const s=getState(d.entity_id); if(!s)return 'нет данных'; if(s.state==='unavailable')return 'недоступно'; return s.state}
+
+function localizedRawState(raw){
+  const st=String(raw??'').toLowerCase();
+  return ({
+    on:'включено', off:'выключено', open:'открыто', closed:'закрыто', opening:'открывается', closing:'закрывается',
+    unlocked:'открыто', locked:'закрыто', locking:'закрывается', unlocking:'открывается',
+    detected:'обнаружено', clear:'не обнаружено', dry:'не обнаружено', wet:'обнаружено', leak:'обнаружено',
+    playing:'воспроизведение', paused:'пауза', idle:'ожидание', standby:'ожидание', stopped:'остановлено',
+    unavailable:'недоступно', unknown:'неизвестно', home:'дома', not_home:'не дома', heat:'обогрев', cool:'охлаждение',
+    auto:'авто', heat_cool:'авто', fan_only:'вентиляция', dry:'осушение'
+  })[st] || String(raw??'');
+}
+function stateText(d){
+  const s=getState(d.entity_id); if(!s)return 'нет данных';
+  const st=String(s.state??'').toLowerCase();
+  if(st==='unavailable')return 'недоступно';
+  if(st==='unknown')return 'неизвестно';
+  if(isLeakSensor(d)) return leakStateKind(d)==='leak'?'обнаружено':'не обнаружено';
+  if(isWindowSensor(d)) return windowStateKind(d)==='open'?'открыто':'закрыто';
+  if(d.domain==='cover'){
+    const k=coverStateKind(d);
+    return k==='open'?'открыто':k==='closed'?'закрыто':k==='partial'?'частично открыто':'недоступно';
+  }
+  if(d.domain==='valve') return isOn(d,s)?'открыто':'закрыто';
+  if(d.domain==='lock') return isOn(d,s)?'открыто':'закрыто';
+  if(['light','switch','input_boolean','fan','humidifier'].includes(d.domain)) return isOn(d,s)?'включено':'выключено';
+  if(d.domain==='automation') return st==='on'?'включено':'выключено';
+  if(d.domain==='media_player') return mediaStateKind(d)==='playing'?'воспроизведение':'остановлено';
+  if(d.domain==='climate') return localizedRawState(st);
+  if(d.domain==='binary_sensor') return st==='on'?'обнаружено':'не обнаружено';
+  return localizedRawState(s.state);
+}
+function attentionStateText(rule, value){
+  const d=allDevices().find(x=>x.entity_id===rule?.entity_id)||devices().find(x=>x.entity_id===rule?.entity_id)||{entity_id:rule?.entity_id,domain:String(rule?.entity_id||'').split('.')[0]};
+  const fake={...d};
+  const old=state.states[fake.entity_id];
+  state.states[fake.entity_id]={...(old||{}), entity_id:fake.entity_id, state:String(value??'unknown')};
+  const label=stateText(fake);
+  if(old) state.states[fake.entity_id]=old; else delete state.states[fake.entity_id];
+  return label;
+}
 function fmtNum(v, digits){const n=Number(v); return Number.isFinite(n)?n.toFixed(digits).replace('.',','):''}
 function tempValue(entity){const s=getState(entity); return s?fmtNum(s.state,1):''}
 function humValue(entity){const s=getState(entity); return s?String(Math.round(Number(s.state)||0)):''}
@@ -2180,7 +2220,7 @@ function renderAttentionModal(){
   const body=el('attention-body'); if(!body) return;
   const rules=state.attention?.rules||[];
   const active=rules.filter(r=>r.alert), ok=rules.filter(r=>!r.alert);
-  const section=(title,list)=>`<h3>${esc(title)}</h3>`+(list.length?`<div class="attention-list">${list.map(r=>`<div class="attention-row ${r.alert?'alert':'ok'}" data-attention-entity="${esc(r.entity_id)}"><div><b>${esc(r.name||r.entity_id)}</b><span>${esc(r.entity_id)}</span></div><div><span>Сейчас: <b>${esc(r.current_state)}</b></span><span>Норма: <b>${esc(r.normal_state)}</b></span><span>${esc(attentionStatusText(r))}</span></div></div>`).join('')}</div>`:'<p class="muted">—</p>');
+  const section=(title,list)=>`<h3>${esc(title)}</h3>`+(list.length?`<div class="attention-list">${list.map(r=>`<div class="attention-row ${r.alert?'alert':'ok'}" data-attention-entity="${esc(r.entity_id)}"><div><b>${esc(r.name||r.entity_id)}</b><span>${esc(r.entity_id)}</span></div><div><span>Сейчас: <b>${esc(attentionStateText(r,r.current_state))}</b></span><span>Норма: <b>${esc(attentionStateText(r,r.normal_state))}</b></span><span>${esc(attentionStatusText(r))}</span></div></div>`).join('')}</div>`:'<p class="muted">—</p>');
   body.innerHTML=`<p class="muted">Список глобальный: alert показывается в киоске независимо от текущей комнаты.</p>${section('Активные',active)}${section('Наблюдаются',ok)}`;
   qsa('[data-attention-entity]', body).forEach(row=>bindHold(row, async()=>{
     if(!canManageAttention()){ showToast('Изменение доступно только в admin mode и при разблокированном киоске'); return; }
