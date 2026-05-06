@@ -2214,7 +2214,7 @@ function renderInfoModal(){
   if(state.infoTab==='summary'){
     const ld=d.layoutDiagnostics||{};
     box.innerHTML=`<table class="info-table">${[
-      ['Версия add-on',d.version],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['Layout координаты',ld.ok?'OK':'есть проблемы'],['Pixel-like координаты',ld.problems?.pixelLike?.length||0],['Координаты вне 0–100',ld.problems?.outOfRange?.length||0],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
+      ['Название',d.brand?.name||'ALLHA-3D'],['Версия add-on',d.version],['Разработчик',d.brand?.developer||'Lepi4'],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['Layout координаты',ld.ok?'OK':'есть проблемы'],['Pixel-like координаты',ld.problems?.pixelLike?.length||0],['Координаты вне 0–100',ld.problems?.outOfRange?.length||0],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
     ].map(x=>infoRow(x[0],x[1])).join('')}</table>`;
   } else if(state.infoTab==='entities'){
     box.innerHTML=`<h3>Проблемы entity_id</h3><p class="muted">Показаны первые 200 записей каждого типа.</p>`+
@@ -2240,6 +2240,18 @@ function renderInfoModal(){
     qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=async()=>{ await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name:btn.dataset.deleteBackup})}); await loadDiagnostics(); });
   } else if(state.infoTab==='allowlist'){
     box.innerHTML=`<h3>Команды Home Assistant</h3><p class="muted">Safe-команды разрешены в control/admin. Dangerous-команды требуют отдельного разрешения и подтверждения.</p><div class="info-list"><b>Режим панели</b>: ${esc(d.security?.panelMode||'admin')}<br><b>Опасные команды</b>: ${d.security?.allowDangerousServices?'разрешены':'запрещены'}<br><b>Подтверждение</b>: ${d.security?.confirmDangerousServices!==false?'включено':'выключено'}</div><h4>Safe</h4><div class="info-list">${Object.entries(d.safeServices||d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div><h4>Dangerous</h4><div class="info-list">${Object.entries(d.dangerousServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>') || '—'}</div><h4>Последние команды</h4><div class="info-list">${(d.commandLog||[]).slice(0,30).map(x=>`${esc(x.time)} — <b>${esc(x.domain)}.${esc(x.service)}</b> ${esc(x.entity_id||'')} — ${esc(x.result||'')}`).join('<br>') || '—'}</div>`;
+  } else if(state.infoTab==='about'){
+    const brand=d.brand||{};
+    box.innerHTML=`<div class="about-brand-card"><div class="about-brand-logo"><img src="brand-logo.svg" alt="ALLHA-3D"></div><div><h3>ALLHA-3D</h3><p class="muted">Local 3D floor-plan Smart Home UI for Home Assistant.</p></div></div>`+
+      `<table class="info-table">${[
+        ['Название', brand.name || 'ALLHA-3D'],
+        ['Версия', d.version || '—'],
+        ['Разработчик', brand.developer || 'Lepi4'],
+        ['GitHub', brand.github || 'https://github.com/Lepi4/smart-home-ui'],
+        ['Copyright', brand.copyright || '© Lepi4'],
+        ['Режим', d.mode || 'home-assistant-addon']
+      ].map(x=>infoRow(x[0],x[1])).join('')}</table>`+
+      `<p class="muted">ALLHA-3D шифрует инициалы автора, Home Assistant и 3D/floor-plan подход. Репозиторий остаётся прежним: <code>https://github.com/Lepi4/smart-home-ui</code>.</p>`;
   }
 }
 

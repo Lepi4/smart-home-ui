@@ -22,6 +22,10 @@ const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
 const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.4.1';
+const APP_BRAND = 'ALLHA-3D';
+const APP_DEVELOPER = 'Lepi4';
+const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
+const APP_COPYRIGHT = '© Lepi4';
 const SAFE_SERVICES = {
   light: ['turn_on','turn_off','toggle','set_brightness','set_temperature','set_color_temp','set_hs_color','set_rgb_color'],
   switch: ['turn_on','turn_off','toggle'],
@@ -307,6 +311,7 @@ async function buildDiagnostics(){
   return {
     ok: !haError,
     version: ADDON_VERSION,
+    brand: { name: APP_BRAND, developer: APP_DEVELOPER, github: APP_GITHUB, copyright: APP_COPYRIGHT },
     mode: 'home-assistant-addon',
     dataDir: DATA_DIR,
     haApiBase: HA_API_BASE,
