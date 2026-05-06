@@ -6,7 +6,7 @@
 
 - **Developer:** Lepi4
 - **GitHub:** https://github.com/Lepi4/smart-home-ui
-- **Version:** v3.4.51
+- **Version:** v3.4.52
 - **Copyright:** © Lepi4
 
 Репозиторий остаётся прежним: `https://github.com/Lepi4/smart-home-ui`.
@@ -55,8 +55,8 @@ https://github.com/Lepi4/smart-home-ui
 GitHub Actions публикует образы:
 
 ```text
-ghcr.io/lepi4/smart-home-ui-amd64:3.4.51
-ghcr.io/lepi4/smart-home-ui-aarch64:3.4.51
+ghcr.io/lepi4/smart-home-ui-amd64:3.4.52
+ghcr.io/lepi4/smart-home-ui-aarch64:3.4.52
 ```
 
 ## Структура данных
@@ -136,14 +136,14 @@ GitHub: https://github.com/Lepi4/smart-home-ui
 Copyright: © Lepi4
 
 
-## v3.4.51
+## v3.4.52
 
 - Added “Невидимые зоны”: zones can remain clickable while visually hidden.
 - Edit button is hidden outside admin mode.
 - Kiosk Attention button is now compact: no button when there are no alerts, “!” when alert is active.
 
 
-## v3.4.51 — Roles, PIN and dangerous devices
+## v3.4.52 — Roles, PIN and dangerous devices
 
 - Panel modes simplified to `viewer`, `control panel`, and `admin`.
 - `control panel` can run device actions; dangerous actions require confirmation or PIN if enabled.
@@ -152,9 +152,13 @@ Copyright: © Lepi4
 - Attention rules can be changed only in admin mode.
 
 
-## v3.4.51 — Zones / UI polish
+## v3.4.52 — Zones / UI polish
 
 - Rectangular zones are now edited through the SVG Layout Editor.
 - Zones remain rectangles: X/Y move the zone, W changes width, H changes height. Width and height can be changed independently.
 - Short tap/click on a zone in edit mode selects it; long press opens the zone editor.
 - “Invisible zones” now depends on the main “Zones” checkbox: if Zones are off, zones are not visible and not clickable; if Zones are on and Invisible zones are on, zones stay clickable but are visually hidden outside edit mode.
+
+## v3.4.52 — Overlay layer order
+
+Zones are now explicitly rendered below system sensor badges and device markers. Devices and sensors always stay visible and clickable above room zones; the selected object in edit mode is raised above all regular overlays.
