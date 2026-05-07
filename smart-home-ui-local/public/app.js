@@ -926,7 +926,7 @@ function renderRoom(){
     renderQuickActions();
   };
   img.onload=afterRoomImageReady;
-  if(img.src!==location.origin+r.image) img.src=r.image;
+  if(img.src !== new URL(r.image, location.href).href) img.src = r.image;
   else if(img.complete) afterRoomImageReady();
   el('room-title').textContent=r.label;
   el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных датчиков температуры/влажности</span>';
@@ -2433,7 +2433,7 @@ function renderInfoModal(){
   if(state.infoTab==='summary'){
     const ld=d.layoutDiagnostics||{};
     box.innerHTML=`<table class="info-table">${[
-      ['Название',d.brand?.name||'ALLHA-3D'],['Версия add-on',d.version],['Разработчик',d.brand?.developer||'Lepi4'],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['Layout координаты',ld.ok?'OK':'есть проблемы'],['Pixel-like координаты',ld.problems?.pixelLike?.length||0],['Координаты вне 0–100',ld.problems?.outOfRange?.length||0],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
+      ['Название',d.brand?.name||'ALLHA-3D'],['Версия add-on',d.version],['Разработчик',d.brand?.developer||'Lepi4'],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['/data/images',d.images?.exists?'есть':'нет'],['overview image',d.images?.overview?.mode||'—'],['room custom images',d.images?.customRoomImages??0],['images_meta.json',d.images?.metaOk?'OK':'error/missing'],['Layout координаты',ld.ok?'OK':'есть проблемы'],['Pixel-like координаты',ld.problems?.pixelLike?.length||0],['Координаты вне 0–100',ld.problems?.outOfRange?.length||0],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
     ].map(x=>infoRow(x[0],x[1])).join('')}</table>`;
   } else if(state.infoTab==='entities'){
     box.innerHTML=`<h3>Проблемы entity_id</h3><p class="muted">Показаны первые 200 записей каждого типа.</p>`+
@@ -2489,6 +2489,9 @@ function bindGlobal(){
   el('device-modal').addEventListener('click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
   el('btn-close-info').onclick=()=>el('info-modal').classList.add('hidden');
   el('info-modal').addEventListener('click',e=>{if(e.target.id==='info-modal')el('info-modal').classList.add('hidden')});
+  el('btn-faq-settings').onclick=()=>openModal('faq-modal');
+  el('btn-close-faq').onclick=()=>closeModal('faq-modal');
+  el('faq-modal').addEventListener('click',e=>{if(e.target.id==='faq-modal')closeModal('faq-modal')});
   el('btn-refresh-info').onclick=loadDiagnostics;
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');

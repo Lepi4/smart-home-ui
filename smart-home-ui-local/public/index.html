@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-3D HA Add-on v3.5.0</title>
+  <title>ALLHA-3D HA Add-on v3.5.1</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -73,7 +73,7 @@
         <div id="overview-view" class="view active">
           <div id="overview-stage" class="plan-stage">
             <div id="overview-content" class="plan-content">
-              <img id="overview-image" src="assets/overview-plan.png" alt="Общий план">
+              <img id="overview-image" src="media/images/overview.webp" alt="Общий план">
               <div id="overview-zones" class="overlay"></div>
               <div id="overview-metrics" class="overlay"></div>
               <div id="overview-markers" class="overlay"></div>
@@ -206,10 +206,22 @@
       <div id="settings-status" class="status"></div>
       </div>
       <div class="modal-actions">
+        <button type="button" id="btn-faq-settings">FAQ / Помощь</button>
         <button type="button" id="btn-info-settings">Информация / диагностика</button>
         <button type="button" id="btn-save-config">Сохранить настройки</button>
         <button type="button" id="btn-clear-config">Сбросить настройки</button>
       </div>
+    </div>
+  </div>
+
+
+  <div id="faq-modal" class="modal hidden">
+    <div class="modal-card faq-modal-card">
+      <div class="modal-head">
+        <h2>FAQ / Помощь</h2>
+        <button type="button" id="btn-close-faq" class="close-word">× Закрыть</button>
+      </div>
+      <iframe class="faq-frame" src="FAQ.html" title="FAQ / Помощь"></iframe>
     </div>
   </div>
 

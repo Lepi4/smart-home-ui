@@ -1406,3 +1406,8 @@ body.editing .room-zone.edit-selected{outline:2px solid rgba(255,220,120,.95)!im
 .overlay > .badge.edit-selected,
 .room-zone.edit-selected{z-index:90!important;}
 body.invisible-zones:not(.editing) .room-zone{background:transparent!important;border-color:transparent!important;box-shadow:none!important;}
+
+
+/* v3.5.1 FAQ modal restored in settings */
+.faq-modal-card{width:min(1100px,96vw);height:min(820px,92vh);display:flex;flex-direction:column;}
+.faq-frame{width:100%;flex:1;min-height:420px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:#fff;}

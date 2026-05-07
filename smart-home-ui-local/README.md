@@ -7,9 +7,26 @@
 > Репозиторий проекта: https://github.com/Lepi4/smart-home-ui  
 > Разработчик: **Lepi4**  
 > Приложение: **ALLHA-3D**  
-> Версия: **3.5.0**
+> Версия: **3.5.1**
 
 ---
+
+### v3.5.1: FAQ и фундамент пользовательских картинок
+
+В настройках восстановлена кнопка **FAQ / Помощь** рядом с диагностикой. Справка доступна из режимов viewer, control panel и admin, потому что не меняет настройки и не выполняет команды.
+
+Сервер теперь подготавливает runtime-хранилище картинок в `/data/images`:
+
+```text
+/data/images/
+/data/images/overview/
+/data/images/rooms/
+/data/images/originals/
+/data/images/images_meta.json
+/data/backups/
+```
+
+Добавлены маршруты `/media/images/overview.webp`, `/media/images/rooms/<room_id>.webp` и API `/api/images`. Если пользовательская картинка отсутствует, ALLHA-3D использует встроенный fallback из Docker image. Диагностика показывает состояние хранилища картинок, `images_meta.json`, overview image и количество custom room images.
 
 ## Что умеет ALLHA-3D
 

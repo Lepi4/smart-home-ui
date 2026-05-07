@@ -17,13 +17,19 @@ const LAYOUT_BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const SOURCE_CONFIG_PATH = path.join(DATA_DIR, 'source_config.json');
 const UI_STATE_PATH = path.join(DATA_DIR, 'ui_state.json');
 const DATA_IMAGES_DIR = path.join(DATA_DIR, 'images');
+const DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview');
+const DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
+const DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
+const IMAGES_META_PATH = path.join(DATA_IMAGES_DIR, 'images_meta.json');
+const DEFAULT_OVERVIEW_IMAGE = path.join(__dirname, 'public', 'assets', 'overview-plan.png');
+const DEFAULT_ROOM_IMAGE = path.join(__dirname, 'public', 'assets', 'wardrobe.webp');
 const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
 const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
 
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.0';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.1';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -128,6 +134,10 @@ function ensureDataStore(){
   fs.mkdirSync(DATA_DIR, {recursive:true});
   fs.mkdirSync(LAYOUT_BACKUP_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_DIR, {recursive:true});
+  fs.mkdirSync(DATA_IMAGES_OVERVIEW_DIR, {recursive:true});
+  fs.mkdirSync(DATA_IMAGES_ROOMS_DIR, {recursive:true});
+  fs.mkdirSync(DATA_IMAGES_ORIGINALS_DIR, {recursive:true});
+  if(!fs.existsSync(IMAGES_META_PATH)) atomicWriteJson(IMAGES_META_PATH, defaultImagesMeta());
   safeCopyIfMissing(FALLBACK_DEVICES_PATH, DEVICES_PATH);
   safeCopyIfMissing(path.join(__dirname, 'public', 'lovelace-source.js'), LOVELACE_PATH);
   if(!fs.existsSync(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
@@ -296,6 +306,110 @@ function normalizeStoredLayout(){
   return { ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(layout), problems };
 }
 
+
+function defaultImagesMeta(){
+  return { version: 1, overview: null, rooms: {} };
+}
+function loadImagesMeta(){
+  const meta = readJsonSafe(IMAGES_META_PATH, defaultImagesMeta());
+  return {
+    version: Number(meta.version) || 1,
+    overview: meta.overview || null,
+    rooms: isPlainObject(meta.rooms) ? meta.rooms : {}
+  };
+}
+function getImageSize(file){
+  try{
+    if(!fs.existsSync(file)) return { width:null, height:null };
+    const b = fs.readFileSync(file);
+    if(b.length >= 24 && b.toString('ascii',1,4) === 'PNG'){
+      return { width:b.readUInt32BE(16), height:b.readUInt32BE(20) };
+    }
+    if(b.length >= 10 && b[0] === 0xff && b[1] === 0xd8){
+      let i = 2;
+      while(i < b.length){
+        if(b[i] !== 0xff){ i++; continue; }
+        const marker = b[i+1];
+        const len = b.readUInt16BE(i+2);
+        if(marker >= 0xc0 && marker <= 0xc3){
+          return { width:b.readUInt16BE(i+7), height:b.readUInt16BE(i+5) };
+        }
+        i += 2 + len;
+      }
+    }
+    if(b.length >= 30 && b.toString('ascii',0,4) === 'RIFF' && b.toString('ascii',8,12) === 'WEBP'){
+      const chunk = b.toString('ascii',12,16);
+      if(chunk === 'VP8X' && b.length >= 30){
+        return { width:1 + b.readUIntLE(24,3), height:1 + b.readUIntLE(27,3) };
+      }
+      if(chunk === 'VP8 ' && b.length >= 30){
+        return { width:b.readUInt16LE(26) & 0x3fff, height:b.readUInt16LE(28) & 0x3fff };
+      }
+      if(chunk === 'VP8L' && b.length >= 25){
+        const bits = b.readUInt32LE(21);
+        return { width:(bits & 0x3fff) + 1, height:((bits >> 14) & 0x3fff) + 1 };
+      }
+    }
+  }catch(e){}
+  return { width:null, height:null };
+}
+function mediaUrlForOverview(){ return 'media/images/overview.webp'; }
+function mediaUrlForRoom(roomId){ return `media/images/rooms/${encodeURIComponent(String(roomId||'default'))}.webp`; }
+function customOverviewImagePath(){ return path.join(DATA_IMAGES_OVERVIEW_DIR, 'overview.webp'); }
+function customRoomImagePath(roomId){ return path.join(DATA_IMAGES_ROOMS_DIR, `${String(roomId||'default').replace(/[^a-zA-Z0-9_-]/g,'_')}.webp`); }
+function fallbackRoomImagePath(roomId){
+  const safe = String(roomId||'').replace(/[^a-zA-Z0-9_-]/g,'_');
+  const roomFile = safe ? path.join(__dirname, 'public', 'assets', 'rooms', `${safe}.webp`) : '';
+  return roomFile && fs.existsSync(roomFile) ? roomFile : DEFAULT_ROOM_IMAGE;
+}
+function imageInfo(kind, roomId){
+  const custom = kind === 'overview' ? customOverviewImagePath() : customRoomImagePath(roomId);
+  const fallback = kind === 'overview' ? DEFAULT_OVERVIEW_IMAGE : fallbackRoomImagePath(roomId);
+  const file = fs.existsSync(custom) ? custom : fallback;
+  const size = getImageSize(file);
+  const st = fs.existsSync(file) ? fs.statSync(file) : null;
+  const width = size.width || null, height = size.height || null;
+  return {
+    src: kind === 'overview' ? mediaUrlForOverview() : mediaUrlForRoom(roomId),
+    mode: fs.existsSync(custom) ? 'custom' : 'fallback',
+    room_id: kind === 'room' ? String(roomId||'') : undefined,
+    originalWidth: width,
+    originalHeight: height,
+    processedWidth: width,
+    processedHeight: height,
+    format: path.extname(file).replace('.','') || null,
+    sizeBytes: st ? st.size : 0,
+    aspectRatio: width && height ? Math.round((width / height) * 1000) / 1000 : null
+  };
+}
+function listKnownRoomIds(){
+  try{
+    const txt = fs.readFileSync(path.join(__dirname, 'public', 'config.js'), 'utf8');
+    return [...txt.matchAll(/id:\s*['"]([^'"]+)['"]/g)].map(m=>m[1]).filter(id=>id && id !== 'overview');
+  }catch(e){ return []; }
+}
+function imagesDiagnostics(){
+  const metaOk = (()=>{ try{ loadImagesMeta(); return true; }catch(e){ return false; } })();
+  const rooms = listKnownRoomIds();
+  const customRooms = fs.existsSync(DATA_IMAGES_ROOMS_DIR) ? fs.readdirSync(DATA_IMAGES_ROOMS_DIR).filter(f=>/\.(webp|png|jpe?g)$/i.test(f)).length : 0;
+  return {
+    dataImagesDir: DATA_IMAGES_DIR,
+    overviewDir: DATA_IMAGES_OVERVIEW_DIR,
+    roomsDir: DATA_IMAGES_ROOMS_DIR,
+    originalsDir: DATA_IMAGES_ORIGINALS_DIR,
+    exists: fs.existsSync(DATA_IMAGES_DIR),
+    overviewDirExists: fs.existsSync(DATA_IMAGES_OVERVIEW_DIR),
+    roomsDirExists: fs.existsSync(DATA_IMAGES_ROOMS_DIR),
+    originalsDirExists: fs.existsSync(DATA_IMAGES_ORIGINALS_DIR),
+    metaPath: IMAGES_META_PATH,
+    metaExists: fs.existsSync(IMAGES_META_PATH),
+    metaOk,
+    overview: imageInfo('overview'),
+    roomCount: rooms.length,
+    customRoomImages: customRooms
+  };
+}
+
 async function buildDiagnostics(){
   const devices=loadAllDevicesForDiagnostics();
   let haStates=[]; let haError=null;
@@ -322,9 +436,10 @@ async function buildDiagnostics(){
     hasSupervisorToken: !!HA_TOKEN,
     haError,
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
+    images: imagesDiagnostics(),
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     safeServices: SAFE_SERVICES,
@@ -971,7 +1086,29 @@ async function importStoredLovelaceRaw(){
   return { ok:true, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
 
+function sendImageFile(res, file){
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(file);
+}
+app.get(['/media/overview','/media/overview/:filename','/media/images/overview.webp'], (req,res)=>{
+  const custom = customOverviewImagePath();
+  sendImageFile(res, fs.existsSync(custom) ? custom : DEFAULT_OVERVIEW_IMAGE);
+});
+app.get(['/media/rooms/:room_id','/media/rooms/:room_id/:filename','/media/images/rooms/:room_id.webp'], (req,res)=>{
+  const roomId = req.params.room_id;
+  const custom = customRoomImagePath(roomId);
+  sendImageFile(res, fs.existsSync(custom) ? custom : fallbackRoomImagePath(roomId));
+});
 app.use('/media', express.static(DATA_IMAGES_DIR, {fallthrough:true}));
+
+app.get('/api/images', (req,res)=>{
+  try{
+    const roomIds = listKnownRoomIds();
+    const rooms = {};
+    for(const roomId of roomIds) rooms[roomId] = imageInfo('room', roomId);
+    res.json({ ok:true, meta: loadImagesMeta(), overview: imageInfo('overview'), rooms });
+  }catch(e){ res.status(500).json({ok:false, error:e.message}); }
+});
 
 app.get('/api/health', (req,res)=> res.json({ ok:true }));
 app.get('/api/layout', (req,res)=>{ try{res.json(loadLayout());}catch(e){res.status(500).json({error:e.message});} });
