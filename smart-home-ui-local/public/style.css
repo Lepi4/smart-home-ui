@@ -1444,3 +1444,56 @@ body.invisible-zones:not(.editing) .room-zone{background:transparent!important;b
 @media(max-width:760px){
   #settings-modal .room-image-card{grid-template-columns:1fr;}
 }
+
+/* v3.5.5 layout maintenance: clear markers / clear zones */
+#settings-modal .layout-tools{
+  padding:0 16px 12px!important;
+  background:#11161d!important;
+}
+#settings-modal .layout-tools h3{font-size:18px;margin:10px 0 8px!important}
+#settings-modal .layout-service-card{
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  padding:12px;
+  background:rgba(255,255,255,.035);
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:10px;
+  align-items:center;
+  margin-top:8px;
+}
+#settings-modal .layout-service-card .muted{margin:6px 0 0;}
+#settings-modal .danger-button{background:#5d1f25;border-color:#9d3a42;color:#fff;}
+#settings-modal .layout-tools-disabled{opacity:.68;}
+#settings-modal .layout-tools-disabled button{cursor:not-allowed;}
+@media(max-width:760px){
+  #settings-modal .layout-tools{padding:0 10px 8px!important}
+  #settings-modal .layout-service-card{grid-template-columns:1fr;}
+  #settings-modal .layout-service-card button{width:100%;}
+}
+/* v3.5.5.1 layout maintenance: create zones / open marker placement */
+#settings-modal .layout-create-controls{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;}
+#settings-modal .layout-create-controls select{min-width:220px;max-width:100%;}
+@media(max-width:760px){
+  #settings-modal .layout-create-controls{justify-content:stretch;}
+  #settings-modal .layout-create-controls select,
+  #settings-modal .layout-create-controls button{width:100%;}
+}
+
+/* v3.5.5.2: Rooms / zones / standard sensors manager */
+.rooms-zones-tools{border-top:1px solid rgba(255,255,255,.10);padding-top:14px;margin-top:14px}
+.rooms-zones-manager{display:grid;gap:10px}
+.room-manager-card{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);border-radius:14px;padding:12px;display:grid;gap:10px}
+.room-manager-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.room-manager-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.standard-sensors-details{border-top:1px solid rgba(255,255,255,.10);padding-top:8px}
+.standard-sensors-details summary{cursor:pointer;font-weight:700}
+.standard-sensors-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;margin:10px 0}
+.standard-sensor-field{display:grid;grid-template-columns:112px 1fr auto;align-items:center;gap:8px;background:rgba(0,0,0,.12);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px}
+.standard-sensor-field input{min-width:0}
+.small-danger{padding:7px 10px;font-size:12px}
+.secondary-layout-tool{opacity:.86}
+.metric-item{display:inline-flex;align-items:center;gap:4px;margin-right:8px;white-space:nowrap}
+.metric-label{opacity:.78;font-size:.86em}
+.metric-value{font-weight:800}
+@media (max-width:720px){.standard-sensor-field{grid-template-columns:1fr}.room-manager-head{display:grid}.room-manager-actions{justify-content:flex-start}}

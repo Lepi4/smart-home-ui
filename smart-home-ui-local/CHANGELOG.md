@@ -1,0 +1,88 @@
+# Changelog
+
+## v3.5.5.2 — rooms / zones / standard sensors manager
+
+- Добавлен раздел `Настройки → Комнаты / зоны / стандартные датчики`.
+- Комнаты не создаются вручную: список берётся из найденных комнат Lovelace / HA Areas / entity names.
+- Для каждой найденной комнаты можно создать, редактировать или удалить overview-зону.
+- Для каждой комнаты можно редактировать entity стандартных датчиков: температура, влажность, движение, шум, CO2, освещённость.
+- Пустые entity не отображаются на карте; если очищены все entity комнаты, строка стандартных датчиков этой комнаты не показывается.
+- Настройки стандартных датчиков сохраняются в `/data/rooms.json`.
+
+## v3.5.5.1 — layout creation tools after cleanup
+
+- После `Очистить зоны` добавлена возможность сразу создать/восстановить зону через `Настройки → Layout / Обслуживание → Создать / восстановить зону`.
+- Добавлен выбор найденной комнаты и открытие существующего SVG Zone Editor для новой зоны.
+- После `Очистить маркеры` добавлена кнопка `Открыть размещение устройств`, которая включает edit mode и открывает лёгкий список устройств для SVG Layout Editor.
+- Создание зон/размещение маркеров доступно только в admin mode.
+- README/FAQ обновлены под v3.5.5.1.
+
+## v3.5.5 — clear markers / clear zones
+
+- Добавлен раздел `Настройки → Layout / Обслуживание`.
+- Добавлена операция `Очистить маркеры` для удаления размещения устройств/датчиков без удаления devices, rooms, zones, images, security/PIN, dangerous и Attention.
+- Добавлена операция `Очистить зоны` для удаления только прямоугольных зон комнат на overview.
+- Добавлены API `POST /api/layout/clear-markers` и `POST /api/layout/clear-zones`.
+- Перед очисткой создаётся backup `layout.json` в `/data/backups/` с понятным префиксом.
+- README/FAQ обновлены под v3.5.5.
+
+## v3.5.4.1 — room image hotfix + neutral fallback
+
+- Исправлена повторная загрузка той же картинки комнаты.
+- Исправлен сброс картинки комнаты к fallback.
+- Исправлено обновление открытой комнаты после upload/reset.
+- Fallback теперь нейтральная SVG-заглушка, а не встроенная demo-картинка квартиры.
+- Demo-картинки комнат/плана убраны из `public/assets`.
+- Добавлен cache-busting и no-cache/no-store для media routes.
+
+## v3.5.4 — room images + reset room image
+
+- Добавлен блок `Картинки найденных комнат` в настройках.
+- Для каждой найденной комнаты добавлены `Загрузить / заменить` и `Сбросить к fallback`.
+- Добавлены API `POST /api/images/rooms/:room_id` и `DELETE /api/images/rooms/:room_id`.
+- Картинки комнат сохраняются в `/data/images/rooms/`.
+- Оригиналы картинок комнат сохраняются в `/data/images/originals/rooms/`.
+- `images_meta.json` обновляется по комнатам.
+- Перед заменой/сбросом создаётся backup.
+
+## v3.5.3 — image converter pipeline
+
+- Добавлена проверка MIME type, расширения и реальной сигнатуры файла.
+- Добавлен лимит upload 25 MB на один файл.
+- Добавлен лимит изображения примерно 55 MP.
+- Оригиналы сохраняются в `/data/images/originals/`.
+- Рабочие версии конвертируются через `sharp` в WebP при наличии конвертера.
+- Aspect ratio сохраняется без растягивания.
+- EXIF orientation обрабатывается через `sharp`.
+- В диагностику добавлены converter, max long side и max upload.
+
+## v3.5.2 — upload overview + reset image
+
+- Добавлен раздел `Настройки → Картинки / План`.
+- Добавлены кнопки загрузки/замены общего плана и сброса к fallback.
+- Добавлены API `POST /api/images/overview` и `DELETE /api/images/overview`.
+- Общий план сохраняется в `/data/images/overview/`.
+- Оригинал сохраняется в `/data/images/originals/`.
+- Обновляется `/data/images/images_meta.json`.
+- Перед заменой/сбросом создаётся backup картинки, metadata и layout.
+
+## v3.5.1.1 — FAQ scroll + diagnostics hotfix
+
+- Исправлен скролл FAQ в настройках.
+- В диагностике добавлен явный раздел `Images storage`.
+- Добавлены строки для `/data/images`, overview, rooms, originals, backups и `images_meta.json`.
+
+## v3.5.1 — FAQ restore + /data/images foundation
+
+- Кнопка `FAQ / Помощь` возвращена в настройки.
+- Добавлено FAQ modal-окно.
+- Сервер создаёт `/data/images`, `/data/images/overview`, `/data/images/rooms`, `/data/images/originals`, `/data/backups`.
+- Создаётся `/data/images/images_meta.json`.
+- Добавлены media routes и `GET /api/images`.
+- Overview/room images переведены на media routes с fallback.
+
+## v3.5.0 — Setup from Scratch documentation start
+
+- Зафиксирован этап Setup from Scratch.
+- README и FAQ переписаны под add-on и runtime `/data`.
+- Подготовлен дальнейший план загрузки картинок, комнат, зон, профилей и backup/restore.

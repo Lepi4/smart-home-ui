@@ -28,11 +28,12 @@ const DEFAULT_OVERVIEW_IMAGE = null;
 const DEFAULT_ROOM_IMAGE = null;
 const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
 const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
+const ROOMS_SETTINGS_PATH = path.join(DATA_DIR, 'rooms.json');
 
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.4.1';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.5.2';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -146,7 +147,9 @@ function ensureDataStore(){
   safeCopyIfMissing(path.join(__dirname, 'public', 'lovelace-source.js'), LOVELACE_PATH);
   if(!fs.existsSync(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
   if(!fs.existsSync(SECURITY_RULES_PATH)) saveSecurityRules(securityRulesDefault());
+  if(!fs.existsSync(ROOMS_SETTINGS_PATH)) saveRoomsSettings(defaultRoomsSettings());
 }
+
 function atomicWriteJson(file, payload){
   fs.mkdirSync(path.dirname(file), {recursive:true});
   const tmp = file + '.tmp';
@@ -308,6 +311,42 @@ function normalizeStoredLayout(){
   const {layout, problems}=normalizeLayoutPayload(current, {strict:false});
   const backup=saveLayout(layout);
   return { ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(layout), problems };
+}
+
+function backupLayoutWithPrefix(prefix){
+  if(!fs.existsSync(LAYOUT_PATH)) return null;
+  fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
+  const safePrefix = String(prefix||'layout').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+  const backupPath = path.join(LAYOUT_BACKUP_DIR, `${safePrefix}-${timestampForFile()}.json`);
+  fs.copyFileSync(LAYOUT_PATH, backupPath);
+  return backupPath;
+}
+function writeLayoutWithoutBackup(layout){
+  fs.mkdirSync(DATA_DIR,{recursive:true});
+  const normalized = normalizeLayoutPayload(layout || {version:8}, {strict:false});
+  const tmpPath = LAYOUT_PATH + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(normalized.layout, null, 2), 'utf8');
+  fs.renameSync(tmpPath, LAYOUT_PATH);
+  return normalized.layout;
+}
+function clearLayoutMarkers(){
+  const current=loadLayout();
+  const {layout}=normalizeLayoutPayload(current, {strict:false});
+  const backup=backupLayoutWithPrefix('layout-before-clear-markers');
+  layout.overviewMarkers = {};
+  layout.roomMarkers = {};
+  layout.overviewMetrics = {};
+  layout.roomMetrics = {};
+  const saved=writeLayoutWithoutBackup(layout);
+  return { ok:true, backup: backup ? path.basename(backup) : null, layout: saved, diagnostics: analyzeLayout(saved) };
+}
+function clearLayoutZones(){
+  const current=loadLayout();
+  const {layout}=normalizeLayoutPayload(current, {strict:false});
+  const backup=backupLayoutWithPrefix('layout-before-clear-zones');
+  layout.zones = {};
+  const saved=writeLayoutWithoutBackup(layout);
+  return { ok:true, backup: backup ? path.basename(backup) : null, layout: saved, diagnostics: analyzeLayout(saved) };
 }
 
 
@@ -548,6 +587,55 @@ function listKnownRoomIds(){
     return [...txt.matchAll(/id:\s*['"]([^'"]+)['"]/g)].map(m=>m[1]).filter(id=>id && id !== 'overview');
   }catch(e){ return []; }
 }
+
+const STANDARD_SENSOR_KEYS = ['temperature','humidity','motion','noise','co2','illuminance'];
+function defaultRoomsSettings(){ return { version: 1, rooms: {}, updatedAt: null }; }
+function normalizeEntityId(value){
+  const v = String(value || '').trim();
+  if(!v) return '';
+  if(!/^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$/.test(v)) throw new Error(`Некорректный entity_id: ${v}`);
+  return v;
+}
+function normalizeStandardSensors(value){
+  const src = isPlainObject(value) ? value : {};
+  const out = {};
+  for(const key of STANDARD_SENSOR_KEYS){
+    const v = normalizeEntityId(src[key]);
+    if(v) out[key] = v;
+  }
+  return out;
+}
+function normalizeRoomSettingsRoom(roomId, value){
+  const current = isPlainObject(value) ? value : {};
+  const out = { ...current };
+  if(Object.prototype.hasOwnProperty.call(current, 'standardSensors')) out.standardSensors = normalizeStandardSensors(current.standardSensors);
+  return out;
+}
+function normalizeRoomsSettings(payload){
+  const src = isPlainObject(payload) ? payload : defaultRoomsSettings();
+  const known = new Set(listKnownRoomIds());
+  const rooms = {};
+  for(const [roomId, value] of Object.entries(isPlainObject(src.rooms) ? src.rooms : {})){
+    if(!known.has(roomId)) continue;
+    rooms[roomId] = normalizeRoomSettingsRoom(roomId, value);
+  }
+  return { version: Number(src.version) || 1, rooms, updatedAt: src.updatedAt || null };
+}
+function loadRoomsSettings(){ return normalizeRoomsSettings(readJsonSafe(ROOMS_SETTINGS_PATH, defaultRoomsSettings())); }
+function saveRoomsSettings(payload){
+  const next = normalizeRoomsSettings({ ...(payload||{}), updatedAt: new Date().toISOString() });
+  atomicWriteJson(ROOMS_SETTINGS_PATH, next);
+  return next;
+}
+function saveRoomStandardSensors(roomId, sensors){
+  const id = assertKnownRoomId(roomId);
+  const current = loadRoomsSettings();
+  current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: normalizeStandardSensors(sensors || {}) };
+  return saveRoomsSettings(current);
+}
+function roomSourcesForApi(){
+  return listKnownRoomIds().map(id => ({ id, settings: loadRoomsSettings().rooms[id] || {} }));
+}
 function imagesDiagnostics(){
   const metaOk = (()=>{ try{ loadImagesMeta(); return true; }catch(e){ return false; } })();
   const rooms = listKnownRoomIds();
@@ -603,7 +691,7 @@ async function buildDiagnostics(){
     images: imagesDiagnostics(),
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), roomsSettingsExists: fs.existsSync(ROOMS_SETTINGS_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     safeServices: SAFE_SERVICES,
@@ -1391,8 +1479,12 @@ app.delete('/api/images/rooms/:room_id', (req,res)=>{
 
 app.get('/api/health', (req,res)=> res.json({ ok:true }));
 app.get('/api/layout', (req,res)=>{ try{res.json(loadLayout());}catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/rooms', (req,res)=>{ try{ res.json({ ok:true, ...loadRoomsSettings(), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
+app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });
 app.get('/api/layout/diagnostics', (req,res)=>{ try{res.json(analyzeLayout(loadLayout()));}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
+app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){res.status(500).json({error:e.message});} });
+app.post('/api/layout/clear-zones', (req,res)=>{ try{res.json(clearLayoutZones());}catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/source-config', (req,res)=>{ try{res.json(loadSourceConfig());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/source-config', (req,res)=>{ try{saveSourceConfig(req.body);res.json({ok:true, config: loadSourceConfig()});}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout', (req,res)=>{ try{const backup=saveLayout(req.body);res.json({ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(loadLayout())});}catch(e){res.status(400).json({error:e.message});} });

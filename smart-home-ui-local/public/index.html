@@ -215,6 +215,46 @@
           <div id="room-images-list" class="room-images-list"><p class="muted">Загрузка списка комнат...</p></div>
         </div>
       </div>
+      <div class="layout-tools" id="layout-maintenance-tools">
+        <h3>Layout / Обслуживание</h3>
+        <div class="layout-service-card">
+          <div>
+            <strong>Очистить маркеры</strong>
+            <p class="muted">Удаляет размещение устройств и датчиков на общем плане и в комнатах. Список устройств, комнаты, зоны, картинки, PIN, dangerous и Attention не затрагиваются.</p>
+          </div>
+          <button type="button" id="btn-clear-markers" class="danger-button">Очистить маркеры</button>
+        </div>
+        <div class="layout-service-card">
+          <div>
+            <strong>Очистить зоны</strong>
+            <p class="muted">Удаляет прямоугольные зоны комнат на overview. Маркеры, устройства, комнаты, картинки, PIN, dangerous и Attention не затрагиваются.</p>
+          </div>
+          <button type="button" id="btn-clear-zones" class="danger-button">Очистить зоны</button>
+        </div>
+        <div class="layout-service-card layout-create-card">
+          <div>
+            <strong>Создать / восстановить зону</strong>
+            <p class="muted">После очистки зон выберите найденную комнату и откройте SVG Zone Editor. Зона сохранится только после “Применить” в редакторе и “Сохранить изменения” в edit mode.</p>
+          </div>
+          <div class="layout-create-controls">
+            <select id="zone-create-room"></select>
+            <button type="button" id="btn-create-zone">Создать зону</button>
+          </div>
+        </div>
+        <div class="layout-service-card layout-create-card secondary-layout-tool">
+          <div>
+            <strong>Разместить маркеры</strong>
+            <p class="muted">Вторичный инструмент после очистки маркеров. Основной workflow: сначала восстановить зоны найденных комнат и стандартные датчики, затем размещать устройства.</p>
+          </div>
+          <button type="button" id="btn-open-device-placement">Открыть размещение устройств</button>
+        </div>
+        <p id="layout-maintenance-status" class="muted">Доступно только в admin mode. Перед очисткой создаётся backup layout.json.</p>
+      </div>
+      <div class="rooms-zones-tools" id="rooms-zones-tools">
+        <h3>Комнаты / зоны / стандартные датчики</h3>
+        <p class="muted">Комнаты не создаются вручную: список берётся из найденных комнат Lovelace / HA Areas / entity names. Для каждой найденной комнаты можно создать или редактировать зону и задать стандартные датчики. Если все entity датчиков очищены, строка стандартных датчиков комнаты не отображается.</p>
+        <div id="rooms-zones-manager" class="rooms-zones-manager"><p class="muted">Загрузка комнат...</p></div>
+      </div>
       <div class="source-tools">
         <h3>Источники устройств из панели</h3>
         <p class="muted">Структура и названия берутся из RAW Lovelace / device.txt, состояние — из Home Assistant API. Адрес панели можно указывать как dashboard-unknown или dashboard-unknown/0.</p>

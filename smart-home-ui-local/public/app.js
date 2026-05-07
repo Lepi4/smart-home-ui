@@ -14,7 +14,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, attention:{ok:true,hasAlerts:false,rules:[]}
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -420,6 +420,7 @@ function sensorKind(d){
   if(t.includes('движ') || t.includes('motion')) return 'motion';
   if(t.includes('шум') || t.includes('sound') || t.includes('noise')) return 'noise';
   if(t.includes('освещ') || t.includes('illuminance') || t.includes('lux')) return 'illuminance';
+  if(t.includes('co2') || t.includes('carbon_dioxide') || t.includes('углекисл')) return 'co2';
   if(t.includes('темпера') || t.includes('temperature') || t.includes('external_sensor')) return 'temperature';
   if(t.includes('влаж') || t.includes('humidity')) return 'humidity';
   return 'sensor';
@@ -525,8 +526,9 @@ function sensorReadingLabel(d){
   if(kind==='temperature' && !suffix) suffix='°';
   if(kind==='illuminance' && !suffix) suffix=' lx';
   if(kind==='noise' && !suffix) suffix=' dB';
+  if(kind==='co2' && !suffix) suffix=' ppm';
   const digits = kind==='temperature' ? 1 : 0;
-  if(kind==='temperature' || kind==='humidity' || kind==='illuminance' || kind==='noise'){
+  if(kind==='temperature' || kind==='humidity' || kind==='illuminance' || kind==='noise' || kind==='co2'){
     const formatted = formatSensorReading(s.state, digits, suffix);
     if(formatted) return formatted;
   }
@@ -715,13 +717,68 @@ function attentionStateText(rule, value){
 function fmtNum(v, digits){const n=Number(v); return Number.isFinite(n)?n.toFixed(digits).replace('.',','):''}
 function tempValue(entity){const s=getState(entity); return s?fmtNum(s.state,1):''}
 function humValue(entity){const s=getState(entity); return s?String(Math.round(Number(s.state)||0)):''}
+const STANDARD_SENSOR_DEFS = [
+  { key:'temperature', label:'Температура', placeholder:'sensor.room_temperature', unitFallback:'°', domains:['sensor'] },
+  { key:'humidity', label:'Влажность', placeholder:'sensor.room_humidity', unitFallback:'%', domains:['sensor'] },
+  { key:'motion', label:'Движение', placeholder:'binary_sensor.room_motion', unitFallback:'', domains:['binary_sensor','sensor'] },
+  { key:'noise', label:'Шум', placeholder:'sensor.room_noise', unitFallback:' dB', domains:['sensor'] },
+  { key:'co2', label:'CO2', placeholder:'sensor.room_co2', unitFallback:' ppm', domains:['sensor'] },
+  { key:'illuminance', label:'Освещённость', placeholder:'sensor.room_illuminance', unitFallback:' lx', domains:['sensor'] }
+];
+function standardSensorsForRoom(roomId){
+  const entry = state.roomsSettings?.rooms?.[normalizedRoomId(roomId)];
+  if(entry && entry.standardSensors && typeof entry.standardSensors === 'object') return entry.standardSensors;
+  return null;
+}
 function findClimateEntity(r, kind){
+  const configured = standardSensorsForRoom(r.id);
+  if(configured) return String(configured[kind] || '').trim();
   const explicit = kind==='temperature' ? r.temp : r.humidity;
   if(explicit && getState(explicit)) return explicit;
   const names = kind==='temperature' ? ['температура','temperature','external_sensor'] : ['влажность','humidity'];
   const list = allDevices().filter(d=>normalizedRoomId(d.room)===normalizedRoomId(r.id) && d.domain==='sensor');
   const exact = list.find(d=>names.some(n=>(`${d.label} ${d.name} ${d.entity_id}`).toLowerCase().includes(n)) && getState(d.entity_id));
   return exact?.entity_id || explicit || '';
+}
+function standardSensorDisplayValue(key, entityId){
+  const id=String(entityId||'').trim();
+  if(!id) return '';
+  const s=getState(id);
+  if(!s || ['unknown','unavailable'].includes(String(s.state||'').toLowerCase())) return '';
+  const unit=String(s.attributes?.unit_of_measurement || '').trim();
+  const raw=String(s.state ?? '').trim();
+  if(key==='motion'){
+    if(String(s.state).toLowerCase()==='on') return 'есть';
+    if(String(s.state).toLowerCase()==='off') return 'нет';
+    return raw;
+  }
+  const n=Number(raw.replace(',', '.'));
+  if(Number.isFinite(n)){
+    const digits = key==='temperature' ? 1 : 0;
+    let suffix = unit;
+    if(key==='temperature' && (suffix==='°C' || suffix==='C')) suffix='°';
+    if(key==='temperature' && !suffix) suffix='°';
+    if(key==='humidity' && !suffix) suffix='%';
+    if(key==='noise' && !suffix) suffix=' dB';
+    if(key==='co2' && !suffix) suffix=' ppm';
+    if(key==='illuminance' && !suffix) suffix=' lx';
+    return formatSensorReading(n, digits, suffix);
+  }
+  return unit ? `${raw}${unit}` : raw;
+}
+function standardMetricItems(r){
+  const configured = standardSensorsForRoom(r.id);
+  if(configured){
+    return STANDARD_SENSOR_DEFS.map(def=>({def, entityId:String(configured[def.key]||'').trim()}))
+      .filter(x=>x.entityId)
+      .map(x=>({...x, value:standardSensorDisplayValue(x.def.key, x.entityId)}))
+      .filter(x=>x.value);
+  }
+  return ['temperature','humidity'].map(key=>{
+    const def=STANDARD_SENSOR_DEFS.find(d=>d.key===key);
+    const entityId=findClimateEntity(r,key);
+    return {def, entityId, value:standardSensorDisplayValue(key, entityId)};
+  }).filter(x=>x.entityId && x.value);
 }
 function showToast(msg){
   let t=el('toast');
@@ -780,6 +837,7 @@ function updateEditButtons(){
   if(editBtn) editBtn.classList.toggle('hidden', state.edit || !allowed);
   if(saveBtn){ saveBtn.classList.toggle('hidden', !state.edit || !allowed); saveBtn.disabled=false; saveBtn.textContent='Сохранить изменения'; }
   if(cancelBtn) cancelBtn.classList.toggle('hidden', !state.edit || !allowed);
+  renderLayoutMaintenanceTools();
 }
 function enterEditMode(){
   if(!canEditLayout()){ showToast('Редактирование доступно только в admin mode'); updateEditButtons(); return; }
@@ -885,12 +943,9 @@ function renderOverviewZones(){
   });
 }
 function metricContent(r){
-  const tempEntity = findClimateEntity(r,'temperature');
-  const humEntity = findClimateEntity(r,'humidity');
-  const t = tempEntity ? tempValue(tempEntity) : '';
-  const h = humEntity ? humValue(humEntity) : '';
-  if(!t && !h) return '';
-  return `<span class="temp">${t||'—'}°</span>${h?`<span class="drop">💧</span> ${h}%`:''}`;
+  const items = standardMetricItems(r);
+  if(!items.length) return '';
+  return items.map(({def,value})=>`<span class="metric-item metric-${esc(def.key)}"><span class="metric-label">${esc(def.label)}:</span> <span class="metric-value">${esc(value)}</span></span>`).join(' ');
 }
 function defaultMetricPos(r){return {x:clamp(r.x-r.w/4,2,98),y:clamp(r.y-r.h/4,2,98)}}
 function safeMetricPoint(stored, fallback){
@@ -930,7 +985,7 @@ function renderRoom(){
   if(img.src !== new URL(src, location.href).href) img.src = src;
   else if(img.complete) afterRoomImageReady();
   el('room-title').textContent=r.label;
-  el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных датчиков температуры/влажности</span>';
+  el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>';
 }
 function renderRoomMetrics(){
   const layer=el('room-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
@@ -2330,6 +2385,77 @@ async function loadImagesInfo(){
     return null;
   }
 }
+
+async function loadRoomsSettings(){
+  try{
+    state.roomsSettings = await apiJson('api/rooms');
+    renderRoomsZonesManager();
+    renderLayoutMaintenanceTools();
+    return state.roomsSettings;
+  }catch(e){
+    state.roomsSettings = {version:1, rooms:{}};
+    const box=el('rooms-zones-manager');
+    if(box) box.innerHTML='<p class="muted">Ошибка чтения rooms.json: '+esc(e.message)+'</p>';
+    return state.roomsSettings;
+  }
+}
+function standardSensorsForSettings(roomId){ return state.roomsSettings?.rooms?.[normalizedRoomId(roomId)]?.standardSensors || {}; }
+function renderRoomsZonesManager(){
+  const box=el('rooms-zones-manager');
+  if(!box) return;
+  const admin = canEditLayout();
+  const rooms=layoutEditableRooms();
+  if(!rooms.length){ box.innerHTML='<p class="muted">Комнаты пока не найдены. Список комнат появится из Lovelace / HA Areas / entity names.</p>'; return; }
+  box.innerHTML=rooms.map(r=>{
+    const rid=normalizedRoomId(r.id);
+    const hasZone=!!state.layout?.zones?.[rid];
+    const sensors=standardSensorsForSettings(rid);
+    const active=STANDARD_SENSOR_DEFS.filter(def=>String(sensors[def.key]||'').trim()).map(def=>def.label).join(', ') || 'не заданы';
+    const fields=STANDARD_SENSOR_DEFS.map(def=>`<label class="standard-sensor-field"><span>${esc(def.label)}</span><input type="text" value="${esc(sensors[def.key]||'')}" placeholder="${esc(def.placeholder)}" data-standard-sensor-input="${esc(def.key)}"><button type="button" data-clear-standard-sensor="${esc(def.key)}">Очистить</button></label>`).join('');
+    return `<div class="room-manager-card${admin?'':' room-manager-disabled'}" data-room-manager="${esc(rid)}">`+
+      `<div class="room-manager-head"><div><strong>${esc(r.label||rid)}</strong><br><span class="muted">room_id: ${esc(rid)} · зона: ${hasZone?'есть':'нет'} · датчики: ${esc(active)}</span></div>`+
+      `<div class="room-manager-actions"><button type="button" data-room-zone-create="${esc(rid)}">${hasZone?'Редактировать зону':'Создать зону'}</button>${hasZone?`<button type="button" data-room-zone-delete="${esc(rid)}" class="danger-button small-danger">Удалить зону</button>`:''}</div></div>`+
+      `<details class="standard-sensors-details"><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную.</p><button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button></details>`+
+      `</div>`;
+  }).join('');
+  qsa('button,input', box).forEach(ctrl=>ctrl.disabled=!admin);
+}
+function readStandardSensorInputs(roomId){
+  const card=document.querySelector(`[data-room-manager="${CSS.escape(roomId)}"]`);
+  const standardSensors={};
+  if(!card) return standardSensors;
+  STANDARD_SENSOR_DEFS.forEach(def=>{
+    const v=card.querySelector(`[data-standard-sensor-input="${CSS.escape(def.key)}"]`)?.value?.trim() || '';
+    if(v) standardSensors[def.key]=v;
+  });
+  return standardSensors;
+}
+async function saveRoomStandardSensors(roomId){
+  if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
+  const standardSensors=readStandardSensorInputs(roomId);
+  try{
+    state.roomsSettings = await apiJson(`api/rooms/${encodeURIComponent(roomId)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
+    renderRoomsZonesManager();
+    render();
+    showToast(Object.keys(standardSensors).length ? 'Стандартные датчики сохранены' : 'Все стандартные датчики комнаты очищены');
+  }catch(e){ showToast('Ошибка сохранения датчиков: '+e.message); }
+}
+function clearStandardSensorInput(roomId, key){
+  const card=document.querySelector(`[data-room-manager="${CSS.escape(roomId)}"]`);
+  const input=card?.querySelector(`[data-standard-sensor-input="${CSS.escape(key)}"]`);
+  if(input) input.value='';
+}
+function deleteRoomZoneFromSettings(roomId){
+  if(!canEditLayout()){ showToast('Удаление зоны доступно только в admin mode'); return; }
+  const r=room(roomId);
+  if(!confirm(`Удалить зону комнаты "${r?.label||roomId}"? Маркеры и датчики не удаляются.`)) return;
+  if(state.layout.zones) delete state.layout.zones[roomId];
+  state.layoutDirty=true;
+  render();
+  renderRoomsZonesManager();
+  renderLayoutMaintenanceTools();
+  showToast('Зона удалена. Нажмите “Сохранить изменения” в edit mode, чтобы записать layout.');
+}
 function renderImagesSettings(){
   const box = el('overview-image-status');
   if(!box) return;
@@ -2469,6 +2595,76 @@ async function resetRoomImage(roomId){
   }
 }
 
+async function clearLayoutMarkers(){
+  if(!canEditLayout()){ showToast('Очистка маркеров доступна только в admin mode'); return; }
+  if(!confirm('Очистить все маркеры устройств и датчиков? Перед очисткой будет создан backup layout.json. Зоны, комнаты, картинки, PIN, dangerous и Attention не будут затронуты.')) return;
+  try{
+    const r=await apiJson('api/layout/clear-markers', { method:'POST' });
+    state.layout = { ...state.layout, ...(r.layout||{}) };
+    render();
+    renderLayoutMaintenanceTools();
+    showToast('Маркеры очищены. Backup: '+(r.backup||'—'));
+  }catch(e){ showToast('Ошибка очистки маркеров: '+e.message); }
+}
+async function clearLayoutZones(){
+  if(!canEditLayout()){ showToast('Очистка зон доступна только в admin mode'); return; }
+  if(!confirm('Очистить все зоны комнат на общем плане? Перед очисткой будет создан backup layout.json. Маркеры, комнаты, картинки, PIN, dangerous и Attention не будут затронуты.')) return;
+  try{
+    const r=await apiJson('api/layout/clear-zones', { method:'POST' });
+    state.layout = { ...state.layout, ...(r.layout||{}) };
+    render();
+    renderLayoutMaintenanceTools();
+    showToast('Зоны очищены. Backup: '+(r.backup||'—'));
+  }catch(e){ showToast('Ошибка очистки зон: '+e.message); }
+}
+function layoutEditableRooms(){
+  return ROOMS.filter(r=>r && r.id && normalizedRoomId(r.id)!=='overview');
+}
+function renderZoneCreateSelect(){
+  const sel=el('zone-create-room');
+  if(!sel) return;
+  const current=sel.value;
+  const rooms=layoutEditableRooms();
+  sel.innerHTML=rooms.map(r=>{
+    const rid=normalizedRoomId(r.id);
+    const has=!!state.layout?.zones?.[rid];
+    return `<option value="${esc(rid)}">${esc(r.label||rid)}${has?' · зона есть':' · зоны нет'}</option>`;
+  }).join('');
+  if(current && rooms.some(r=>normalizedRoomId(r.id)===current)) sel.value=current;
+}
+function closeSettingsModal(){ const m=el('settings-modal'); if(m) m.classList.add('hidden'); }
+function startEditModeForLayoutTool(){
+  if(!canEditLayout()){ showToast('Доступно только в admin mode'); return false; }
+  if(!state.edit) enterEditMode();
+  return !!state.edit;
+}
+function createZoneFromSettings(){
+  if(!startEditModeForLayoutTool()) return;
+  const rid=el('zone-create-room')?.value || layoutEditableRooms()[0]?.id;
+  if(!rid){ showToast('Нет найденных комнат для создания зоны'); return; }
+  state.selectedRoom='overview';
+  closeSettingsModal();
+  render();
+  openZoneLayoutEditor(rid);
+}
+function openMarkerPlacementFromSettings(){
+  if(!startEditModeForLayoutTool()) return;
+  closeSettingsModal();
+  render();
+  openDevicePicker();
+}
+function renderLayoutMaintenanceTools(){
+  const box=el('layout-maintenance-tools');
+  if(!box) return;
+  const admin=canEditLayout();
+  box.classList.toggle('layout-tools-disabled', !admin);
+  renderZoneCreateSelect();
+  renderRoomsZonesManager();
+  qsa('button,select', box).forEach(ctrl=>ctrl.disabled=!admin);
+  const status=el('layout-maintenance-status');
+  if(status) status.textContent = admin ? 'Admin mode. Перед очисткой создаётся backup layout.json. Создание зон и маркеров открывает SVG Layout Editor.' : 'Доступно только в admin mode.';
+}
+
 async function saveConfig(){
   const status=el('settings-status');
   try{
@@ -2601,6 +2797,7 @@ function renderInfoModal(){
       infoSection('Runtime storage'),
       infoRow('layout.json в /data',d.storage?.layoutExists?'есть':'нет'),
       infoRow('ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'),
+      infoRow('rooms.json в /data',d.storage?.roomsSettingsExists?'есть':'нет'),
       infoRow('devices.js в /data',d.storage?.devicesInData?'есть':'fallback'),
       infoRow('lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'),
       infoSection('Images storage'),
@@ -2703,6 +2900,23 @@ function bindGlobal(){
     if(reset){ resetRoomImage(reset.dataset.resetRoomImage); }
   });
   if(roomFile) roomFile.onchange=e=>{ const file=e.target.files?.[0]; const roomId=pendingRoomImageId; e.target.value=''; pendingRoomImageId=''; if(roomId) uploadRoomImage(roomId, file); };
+  const clearMarkersBtn=el('btn-clear-markers'); if(clearMarkersBtn) clearMarkersBtn.onclick=clearLayoutMarkers;
+  const clearZonesBtn=el('btn-clear-zones'); if(clearZonesBtn) clearZonesBtn.onclick=clearLayoutZones;
+  const createZoneBtn=el('btn-create-zone'); if(createZoneBtn) createZoneBtn.onclick=createZoneFromSettings;
+  const openPlacementBtn=el('btn-open-device-placement'); if(openPlacementBtn) openPlacementBtn.onclick=openMarkerPlacementFromSettings;
+  const roomsManager=el('rooms-zones-manager');
+  if(roomsManager) roomsManager.addEventListener('click', e=>{
+    const zoneBtn=e.target.closest('[data-room-zone-create]');
+    const delZone=e.target.closest('[data-room-zone-delete]');
+    const saveSensors=e.target.closest('[data-save-standard-sensors]');
+    const clearSensor=e.target.closest('[data-clear-standard-sensor]');
+    const card=e.target.closest('[data-room-manager]');
+    const roomId=card?.dataset.roomManager;
+    if(zoneBtn){ if(startEditModeForLayoutTool()){ state.selectedRoom='overview'; closeSettingsModal(); render(); openZoneLayoutEditor(zoneBtn.dataset.roomZoneCreate); } }
+    if(delZone){ deleteRoomZoneFromSettings(delZone.dataset.roomZoneDelete); }
+    if(saveSensors){ saveRoomStandardSensors(saveSensors.dataset.saveStandardSensors); }
+    if(clearSensor && roomId){ clearStandardSensorInput(roomId, clearSensor.dataset.clearStandardSensor); }
+  });
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
   el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
@@ -2829,6 +3043,7 @@ async function initialHaSync(){
   await loadPersistedUiState();
   await loadAttention();
   await loadImagesInfo();
+  await loadRoomsSettings();
   loadKioskLockLocal();
   bindGlobal();
   startClock();
