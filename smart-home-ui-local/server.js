@@ -32,7 +32,7 @@ const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.3';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.4';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -465,6 +465,19 @@ function backupOverviewImage(){
   const active = activeCustomOverviewImagePath();
   return active && fs.existsSync(active) ? backupDataFile(active, 'overview-image', path.extname(active) || '.img') : null;
 }
+function backupRoomImage(roomId){
+  const safe = String(roomId||'default').replace(/[^a-zA-Z0-9_-]/g,'_');
+  const active = customRoomImagePath(roomId);
+  return active && fs.existsSync(active) ? backupDataFile(active, `room-${safe}-image`, path.extname(active) || '.img') : null;
+}
+function assertKnownRoomId(roomId){
+  const id = String(roomId||'').trim();
+  if(!id) throw new Error('room_id не указан');
+  if(id === 'overview') throw new Error('overview не является комнатой');
+  const known = new Set(listKnownRoomIds());
+  if(!known.has(id)) throw new Error(`Комната ${id} не найдена в конфигурации`);
+  return id;
+}
 function activeCustomOverviewImagePath(){
   const meta = loadImagesMeta();
   const src = meta.overview?.file;
@@ -528,6 +541,7 @@ function imagesDiagnostics(){
     overviewDirExists: fs.existsSync(DATA_IMAGES_OVERVIEW_DIR),
     roomsDirExists: fs.existsSync(DATA_IMAGES_ROOMS_DIR),
     originalsDirExists: fs.existsSync(DATA_IMAGES_ORIGINALS_DIR),
+    originalsRoomsDirExists: fs.existsSync(DATA_IMAGES_ORIGINALS_ROOMS_DIR),
     backupsDirExists: fs.existsSync(LAYOUT_BACKUP_DIR),
     metaPath: IMAGES_META_PATH,
     metaExists: fs.existsSync(IMAGES_META_PATH),
@@ -1290,6 +1304,65 @@ app.delete('/api/images/overview', (req,res)=>{
     meta.overview = null;
     saveImagesMeta(meta);
     res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:true});
+  }catch(e){ res.status(500).json({ok:false, error:e.message}); }
+});
+
+app.post('/api/images/rooms/:room_id', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), async (req,res)=>{
+  try{
+    ensureDataStore();
+    const roomId = assertKnownRoomId(req.params.room_id);
+    const info = validateUploadedImage(req, req.body, 'room');
+    const currentInfo = imageInfo('room', roomId);
+    backupRoomImage(roomId);
+    backupImagesMeta();
+    backupLayout();
+    const safe = String(roomId).replace(/[^a-zA-Z0-9_-]/g,'_');
+    const originalPath = path.join(DATA_IMAGES_ORIGINALS_ROOMS_DIR, `${safe}-original.${info.ext}`);
+    fs.writeFileSync(originalPath, req.body);
+    const processed = await processUploadedImage('room', req.body, info, customRoomImagePath(roomId));
+    const processedAspectRatio = processed.processedWidth && processed.processedHeight ? Math.round((processed.processedWidth/processed.processedHeight)*1000)/1000 : info.aspectRatio;
+    const meta = loadImagesMeta();
+    meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
+    meta.rooms[roomId] = {
+      src: mediaUrlForRoom(roomId),
+      file: processed.workingPath,
+      originalPath,
+      originalFilename: info.filename,
+      originalWidth: info.width,
+      originalHeight: info.height,
+      processedWidth: processed.processedWidth,
+      processedHeight: processed.processedHeight,
+      format: processed.format,
+      sizeBytes: info.sizeBytes,
+      processedSizeBytes: processed.processedSizeBytes,
+      aspectRatio: processedAspectRatio,
+      converter: processed.converter,
+      maxLongSide: processed.maxLongSide,
+      updatedAt: new Date().toISOString()
+    };
+    saveImagesMeta(meta);
+    const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
+    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:true, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
+  }catch(e){ res.status(400).json({ok:false, error:e.message}); }
+});
+
+app.delete('/api/images/rooms/:room_id', (req,res)=>{
+  try{
+    ensureDataStore();
+    const roomId = assertKnownRoomId(req.params.room_id);
+    backupRoomImage(roomId);
+    backupImagesMeta();
+    backupLayout();
+    const safe = String(roomId).replace(/[^a-zA-Z0-9_-]/g,'_');
+    for(const ext of ['webp','png','jpg','jpeg']){
+      const f = path.join(DATA_IMAGES_ROOMS_DIR, `${safe}.${ext}`);
+      if(fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    const meta = loadImagesMeta();
+    meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
+    delete meta.rooms[roomId];
+    saveImagesMeta(meta);
+    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:true});
   }catch(e){ res.status(500).json({ok:false, error:e.message}); }
 });
 

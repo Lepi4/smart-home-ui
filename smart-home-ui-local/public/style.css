@@ -1435,3 +1435,12 @@ body.invisible-zones:not(.editing) .room-zone{background:transparent!important;b
   #settings-modal .image-tools{padding:0 10px 8px!important}
   #settings-modal .image-buttons button{flex:1 1 100%;font-size:12px}
 }
+
+/* v3.5.4 room image upload/reset */
+#settings-modal .image-card-wide{margin-top:10px;}
+#settings-modal .room-images-list{display:grid;gap:8px;margin-top:8px;}
+#settings-modal .room-image-card{grid-template-columns:minmax(0,1fr) auto;align-items:center;}
+#settings-modal .room-image-card .muted{word-break:break-word;}
+@media(max-width:760px){
+  #settings-modal .room-image-card{grid-template-columns:1fr;}
+}

@@ -2320,6 +2320,7 @@ async function loadImagesInfo(){
   try{
     state.images = await apiJson('api/images');
     renderImagesSettings();
+    renderRoomImagesSettings();
     return state.images;
   }catch(e){
     state.images = null;
@@ -2340,6 +2341,30 @@ function renderImagesSettings(){
   const ratio = overview.aspectRatio ? ` · aspect ${overview.aspectRatio}` : '';
   const converter = overview.converter ? ` · ${overview.converter}` : '';
   box.textContent = `Текущая картинка: ${mode} · ${size}${original}${fmt}${ratio}${converter}`;
+}
+
+function imageStatusText(info){
+  if(!info) return 'нет данных';
+  const mode = info.mode === 'custom' ? 'custom' : 'fallback';
+  const size = info.processedWidth && info.processedHeight ? `${info.processedWidth}×${info.processedHeight}` : 'размер неизвестен';
+  const original = info.originalWidth && info.originalHeight && info.mode === 'custom' ? ` · original ${info.originalWidth}×${info.originalHeight}` : '';
+  const fmt = info.format ? ` · ${info.format}` : '';
+  const ratio = info.aspectRatio ? ` · aspect ${info.aspectRatio}` : '';
+  const converter = info.converter ? ` · ${info.converter}` : '';
+  return `${mode} · ${size}${original}${fmt}${ratio}${converter}`;
+}
+function renderRoomImagesSettings(){
+  const box = el('room-images-list');
+  if(!box) return;
+  const rooms = ROOMS.filter(r=>r.id !== 'overview');
+  if(!rooms.length){ box.innerHTML = '<p class="muted">Комнаты пока не найдены.</p>'; return; }
+  box.innerHTML = rooms.map(r=>{
+    const info = state.images?.rooms?.[r.id];
+    return `<div class="image-card room-image-card" data-room-image-card="${esc(r.id)}">`+
+      `<div><strong>${esc(r.label||r.id)}</strong><br><span class="muted">room_id: ${esc(r.id)} · ${esc(imageStatusText(info))}</span></div>`+
+      `<div class="image-buttons"><button type="button" data-upload-room-image="${esc(r.id)}">Загрузить / заменить</button><button type="button" data-reset-room-image="${esc(r.id)}">Сбросить к fallback</button></div>`+
+      `</div>`;
+  }).join('');
 }
 async function uploadOverviewImage(file){
   if(!file) return;
@@ -2381,6 +2406,51 @@ async function resetOverviewImage(){
   }catch(e){
     if(status) status.textContent = 'Ошибка сброса: ' + e.message;
     showToast('Ошибка сброса картинки: ' + e.message);
+  }
+}
+
+function validateImageFileForUpload(file){
+  if(!file) return 'Файл не выбран';
+  const typeOk = /^image\/(png|jpeg|webp)$/i.test(file.type || '');
+  const nameOk = /\.(png|jpe?g|webp)$/i.test(file.name || '');
+  if(!typeOk && !nameOk) return 'Поддерживаются PNG, JPG и WEBP';
+  if(file.size > 25 * 1024 * 1024) return 'Файл слишком большой. Максимум 25 MB.';
+  return '';
+}
+function refreshRoomImageIfOpen(roomId){
+  if(state.selectedRoom !== roomId) return;
+  const img = el('room-image');
+  if(img) img.src = `media/images/rooms/${encodeURIComponent(roomId)}.webp?t=${Date.now()}`;
+  fitStage('room');
+  renderRoom();
+}
+async function uploadRoomImage(roomId, file){
+  const validationError = validateImageFileForUpload(file);
+  if(validationError){ showToast(validationError); return; }
+  const card = document.querySelector(`[data-room-image-card="${CSS.escape(roomId)}"] .muted`);
+  if(card) card.textContent = `room_id: ${roomId} · загрузка...`;
+  try{
+    const res = await fetch(`api/images/rooms/${encodeURIComponent(roomId)}`, { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || roomId) }, body:file });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || res.status);
+    await loadImagesInfo();
+    refreshRoomImageIfOpen(roomId);
+    showToast(data.aspectChanged ? 'Картинка комнаты заменена. Aspect ratio изменился, backup создан.' : 'Картинка комнаты заменена. Backup создан.');
+  }catch(e){
+    await loadImagesInfo();
+    showToast('Ошибка загрузки картинки комнаты: ' + e.message);
+  }
+}
+async function resetRoomImage(roomId){
+  const r = room(roomId);
+  if(!confirm(`Сбросить пользовательскую картинку комнаты "${r?.label||roomId}" к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-картинкой. Перед сбросом будет создан backup.`)) return;
+  try{
+    await apiJson(`api/images/rooms/${encodeURIComponent(roomId)}`, { method:'DELETE' });
+    await loadImagesInfo();
+    refreshRoomImageIfOpen(roomId);
+    showToast('Картинка комнаты сброшена к fallback. Backup создан.');
+  }catch(e){
+    showToast('Ошибка сброса картинки комнаты: ' + e.message);
   }
 }
 
@@ -2523,6 +2593,7 @@ function renderInfoModal(){
       infoRow('/data/images/overview',d.images?.overviewDirExists?'есть':'нет'),
       infoRow('/data/images/rooms',d.images?.roomsDirExists?'есть':'нет'),
       infoRow('/data/images/originals',d.images?.originalsDirExists?'есть':'нет'),
+      infoRow('/data/images/originals/rooms',d.images?.originalsRoomsDirExists?'есть':'нет'),
       infoRow('/data/backups',d.images?.backupsDirExists?'есть':'нет'),
       infoRow('overview image',d.images?.overview?.mode||'—'),
       infoRow('rooms images count',d.images?.customRoomImages??0),
@@ -2607,6 +2678,16 @@ function bindGlobal(){
   el('btn-upload-overview-image').onclick=()=>overviewFile?.click();
   if(overviewFile) overviewFile.onchange=e=>{ const file=e.target.files?.[0]; uploadOverviewImage(file); e.target.value=''; };
   el('btn-reset-overview-image').onclick=resetOverviewImage;
+  const roomFile=el('room-image-file');
+  let pendingRoomImageId='';
+  const roomImagesList=el('room-images-list');
+  if(roomImagesList) roomImagesList.addEventListener('click', e=>{
+    const upload=e.target.closest('[data-upload-room-image]');
+    const reset=e.target.closest('[data-reset-room-image]');
+    if(upload){ pendingRoomImageId=upload.dataset.uploadRoomImage; roomFile?.click(); }
+    if(reset){ resetRoomImage(reset.dataset.resetRoomImage); }
+  });
+  if(roomFile) roomFile.onchange=e=>{ const file=e.target.files?.[0]; if(pendingRoomImageId) uploadRoomImage(pendingRoomImageId, file); e.target.value=''; pendingRoomImageId=''; };
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
   el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
