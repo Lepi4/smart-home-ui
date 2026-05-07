@@ -926,7 +926,8 @@ function renderRoom(){
     renderQuickActions();
   };
   img.onload=afterRoomImageReady;
-  if(img.src !== new URL(r.image, location.href).href) img.src = r.image;
+  const src = roomImageSrc(r.id);
+  if(img.src !== new URL(src, location.href).href) img.src = src;
   else if(img.complete) afterRoomImageReady();
   el('room-title').textContent=r.label;
   el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных датчиков температуры/влажности</span>';
@@ -1501,9 +1502,9 @@ function setMarkerPosition(entityId,scope,p){
 
 
 function placementImageSrc(kind){
-  if(kind==='overview') return el('overview-image')?.getAttribute('src') || 'assets/overview-plan.png';
+  if(kind==='overview') return el('overview-image')?.getAttribute('src') || overviewImageSrc();
   const r=room(state.selectedRoom);
-  return r?.image || el('room-image')?.getAttribute('src') || '';
+  return el('room-image')?.getAttribute('src') || roomImageSrc(state.selectedRoom) || r?.image || '';
 }
 function existingMarkerEntriesForPlacement(kind){
   if(kind==='overview') return Object.entries(state.layout.overviewMarkers||{}).map(([id,p])=>({id,p}));
@@ -2381,7 +2382,7 @@ async function uploadOverviewImage(file){
     state.images = { ...(state.images||{}), ...data };
     await loadImagesInfo();
     const img = el('overview-image');
-    if(img) img.src = 'media/images/overview.webp?t=' + Date.now();
+    if(img) img.src = overviewImageSrc();
     fitStage('overview');
     render();
     showToast(data.aspectChanged ? 'Общий план заменён. Aspect ratio изменился, backup создан.' : 'Общий план заменён. Backup создан.');
@@ -2399,7 +2400,7 @@ async function resetOverviewImage(){
     state.images = { ...(state.images||{}), ...data };
     await loadImagesInfo();
     const img = el('overview-image');
-    if(img) img.src = 'media/images/overview.webp?t=' + Date.now();
+    if(img) img.src = overviewImageSrc();
     fitStage('overview');
     render();
     showToast('Общий план сброшен к fallback. Backup создан.');
@@ -2417,10 +2418,24 @@ function validateImageFileForUpload(file){
   if(file.size > 25 * 1024 * 1024) return 'Файл слишком большой. Максимум 25 MB.';
   return '';
 }
+function cacheBustedImageUrl(src, token){
+  const base = String(src || '');
+  const sep = base.includes('?') ? '&' : '?';
+  return base + sep + 't=' + encodeURIComponent(token || Date.now());
+}
+function roomImageSrc(roomId){
+  const info = state.images?.rooms?.[roomId];
+  const src = info?.src || room(roomId)?.image || `media/images/rooms/${encodeURIComponent(roomId)}.webp`;
+  return cacheBustedImageUrl(src, info?.cacheToken || 'pending');
+}
+function overviewImageSrc(){
+  const info = state.images?.overview;
+  return cacheBustedImageUrl(info?.src || 'media/images/overview.webp', info?.cacheToken || 'pending');
+}
 function refreshRoomImageIfOpen(roomId){
   if(state.selectedRoom !== roomId) return;
   const img = el('room-image');
-  if(img) img.src = `media/images/rooms/${encodeURIComponent(roomId)}.webp?t=${Date.now()}`;
+  if(img) img.src = roomImageSrc(roomId);
   fitStage('room');
   renderRoom();
 }
@@ -2687,7 +2702,7 @@ function bindGlobal(){
     if(upload){ pendingRoomImageId=upload.dataset.uploadRoomImage; roomFile?.click(); }
     if(reset){ resetRoomImage(reset.dataset.resetRoomImage); }
   });
-  if(roomFile) roomFile.onchange=e=>{ const file=e.target.files?.[0]; if(pendingRoomImageId) uploadRoomImage(pendingRoomImageId, file); e.target.value=''; pendingRoomImageId=''; };
+  if(roomFile) roomFile.onchange=e=>{ const file=e.target.files?.[0]; const roomId=pendingRoomImageId; e.target.value=''; pendingRoomImageId=''; if(roomId) uploadRoomImage(roomId, file); };
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
   el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};

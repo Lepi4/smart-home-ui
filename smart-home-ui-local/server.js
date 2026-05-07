@@ -24,15 +24,15 @@ const DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
 const DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
 const IMAGES_META_PATH = path.join(DATA_IMAGES_DIR, 'images_meta.json');
 const DATA_IMAGES_ORIGINALS_ROOMS_DIR = path.join(DATA_IMAGES_ORIGINALS_DIR, 'rooms');
-const DEFAULT_OVERVIEW_IMAGE = path.join(__dirname, 'public', 'assets', 'overview-plan.png');
-const DEFAULT_ROOM_IMAGE = path.join(__dirname, 'public', 'assets', 'wardrobe.webp');
+const DEFAULT_OVERVIEW_IMAGE = null;
+const DEFAULT_ROOM_IMAGE = null;
 const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
 const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
 
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.4';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.4.1';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -360,11 +360,29 @@ function getImageSize(file){
 function mediaUrlForOverview(){ return 'media/images/overview.webp'; }
 function mediaUrlForRoom(roomId){ return `media/images/rooms/${encodeURIComponent(String(roomId||'default'))}.webp`; }
 function customOverviewImagePath(){ return path.join(DATA_IMAGES_OVERVIEW_DIR, 'overview.webp'); }
-function customRoomImagePath(roomId){ return path.join(DATA_IMAGES_ROOMS_DIR, `${String(roomId||'default').replace(/[^a-zA-Z0-9_-]/g,'_')}.webp`); }
-function fallbackRoomImagePath(roomId){
-  const safe = String(roomId||'').replace(/[^a-zA-Z0-9_-]/g,'_');
-  const roomFile = safe ? path.join(__dirname, 'public', 'assets', 'rooms', `${safe}.webp`) : '';
-  return roomFile && fs.existsSync(roomFile) ? roomFile : DEFAULT_ROOM_IMAGE;
+function safeRoomImageFileBase(roomId){ return String(roomId||'default').replace(/[^a-zA-Z0-9_-]/g,'_'); }
+function customRoomImagePath(roomId){ return path.join(DATA_IMAGES_ROOMS_DIR, `${safeRoomImageFileBase(roomId)}.webp`); }
+function activeCustomRoomImagePath(roomId){
+  const meta = loadImagesMeta();
+  const src = meta.rooms?.[String(roomId||'')]?.file;
+  if(src && path.resolve(src).startsWith(path.resolve(DATA_IMAGES_ROOMS_DIR)) && fs.existsSync(src)) return src;
+  const base = path.join(DATA_IMAGES_ROOMS_DIR, safeRoomImageFileBase(roomId));
+  for(const ext of ['webp','png','jpg','jpeg']){
+    const f = `${base}.${ext}`;
+    if(fs.existsSync(f)) return f;
+  }
+  return customRoomImagePath(roomId);
+}
+function placeholderSvg(kind='overview', roomId=''){
+  const title = kind === 'overview' ? 'ALLHA-3D overview' : `ALLHA-3D room ${String(roomId||'')}`;
+  const subtitle = kind === 'overview' ? 'Загрузите общий план в настройках' : 'Загрузите картинку комнаты в настройках';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#101824"/><stop offset="1" stop-color="#1f2f44"/></linearGradient></defs>
+    <rect width="1600" height="900" fill="url(#g)"/>
+    <rect x="80" y="80" width="1440" height="740" rx="36" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="6" stroke-dasharray="26 22"/>
+    <text x="800" y="410" text-anchor="middle" fill="#eef4ff" font-family="Arial, sans-serif" font-size="54" font-weight="700">${title.replace(/[<>&]/g,'')}</text>
+    <text x="800" y="485" text-anchor="middle" fill="#b8c7dc" font-family="Arial, sans-serif" font-size="34">${subtitle}</text>
+  </svg>`;
 }
 
 const IMAGE_UPLOAD_LIMITS = {
@@ -466,8 +484,8 @@ function backupOverviewImage(){
   return active && fs.existsSync(active) ? backupDataFile(active, 'overview-image', path.extname(active) || '.img') : null;
 }
 function backupRoomImage(roomId){
-  const safe = String(roomId||'default').replace(/[^a-zA-Z0-9_-]/g,'_');
-  const active = customRoomImagePath(roomId);
+  const safe = safeRoomImageFileBase(roomId);
+  const active = activeCustomRoomImagePath(roomId);
   return active && fs.existsSync(active) ? backupDataFile(active, `room-${safe}-image`, path.extname(active) || '.img') : null;
 }
 function assertKnownRoomId(roomId){
@@ -498,27 +516,29 @@ function saveImagesMeta(meta){
   return next;
 }
 function imageInfo(kind, roomId){
-  const custom = kind === 'overview' ? activeCustomOverviewImagePath() : customRoomImagePath(roomId);
-  const fallback = kind === 'overview' ? DEFAULT_OVERVIEW_IMAGE : fallbackRoomImagePath(roomId);
-  const file = fs.existsSync(custom) ? custom : fallback;
-  const size = getImageSize(file);
-  const st = fs.existsSync(file) ? fs.statSync(file) : null;
-  const width = size.width || null, height = size.height || null;
+  const custom = kind === 'overview' ? activeCustomOverviewImagePath() : activeCustomRoomImagePath(roomId);
+  const hasCustom = !!custom && fs.existsSync(custom);
+  const file = hasCustom ? custom : null;
+  const size = file ? getImageSize(file) : { width:1600, height:900 };
+  const st = file ? fs.statSync(file) : null;
+  const width = size.width || 1600, height = size.height || 900;
   const meta = loadImagesMeta();
   const metaInfo = kind === 'overview' ? meta.overview : meta.rooms?.[String(roomId||'')];
   return {
     src: kind === 'overview' ? mediaUrlForOverview() : mediaUrlForRoom(roomId),
-    mode: fs.existsSync(custom) ? 'custom' : 'fallback',
+    cacheToken: metaInfo?.updatedAt || (hasCustom ? String(st.mtimeMs) : 'fallback'),
+    mode: hasCustom ? 'custom' : 'fallback',
+    fallbackKind: hasCustom ? null : 'empty-placeholder',
     room_id: kind === 'room' ? String(roomId||'') : undefined,
-    originalWidth: metaInfo?.originalWidth || width,
-    originalHeight: metaInfo?.originalHeight || height,
+    originalWidth: hasCustom ? (metaInfo?.originalWidth || width) : null,
+    originalHeight: hasCustom ? (metaInfo?.originalHeight || height) : null,
     processedWidth: metaInfo?.processedWidth || width,
     processedHeight: metaInfo?.processedHeight || height,
-    format: metaInfo?.format || path.extname(file).replace('.','') || null,
+    format: hasCustom ? (metaInfo?.format || path.extname(file).replace('.','') || null) : 'svg',
     sizeBytes: metaInfo?.processedSizeBytes || (st ? st.size : 0),
     originalSizeBytes: metaInfo?.sizeBytes || null,
     aspectRatio: (metaInfo?.aspectRatio || (width && height ? Math.round((width / height) * 1000) / 1000 : null)),
-    converter: metaInfo?.converter || (fs.existsSync(custom) ? 'legacy-copy' : 'fallback'),
+    converter: metaInfo?.converter || (hasCustom ? 'legacy-copy' : 'empty-placeholder'),
     maxLongSide: metaInfo?.maxLongSide || null
   };
 }
@@ -1230,18 +1250,21 @@ async function importStoredLovelaceRaw(){
   return { ok:true, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
 
-function sendImageFile(res, file){
-  res.setHeader('Cache-Control', 'no-store');
-  res.sendFile(file);
+function sendImageFile(res, file, kind='overview', roomId=''){
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  if(file && fs.existsSync(file)) return res.sendFile(file);
+  res.type('image/svg+xml').send(placeholderSvg(kind, roomId));
 }
 app.get(['/media/overview','/media/overview/:filename','/media/images/overview.webp'], (req,res)=>{
   const custom = activeCustomOverviewImagePath();
-  sendImageFile(res, custom && fs.existsSync(custom) ? custom : DEFAULT_OVERVIEW_IMAGE);
+  sendImageFile(res, custom && fs.existsSync(custom) ? custom : null, 'overview');
 });
 app.get(['/media/rooms/:room_id','/media/rooms/:room_id/:filename','/media/images/rooms/:room_id.webp'], (req,res)=>{
   const roomId = req.params.room_id;
-  const custom = customRoomImagePath(roomId);
-  sendImageFile(res, fs.existsSync(custom) ? custom : fallbackRoomImagePath(roomId));
+  const custom = activeCustomRoomImagePath(roomId);
+  sendImageFile(res, custom && fs.existsSync(custom) ? custom : null, 'room', roomId);
 });
 app.use('/media', express.static(DATA_IMAGES_DIR, {fallthrough:true}));
 
