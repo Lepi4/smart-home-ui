@@ -7,7 +7,22 @@
 > Репозиторий проекта: https://github.com/Lepi4/smart-home-ui  
 > Разработчик: **Lepi4**  
 > Приложение: **ALLHA-3D**  
-> Версия: **3.5.2**
+> Версия: **3.5.3**
+
+---
+
+### v3.5.3: image converter pipeline
+
+Загрузка общего плана стала безопаснее: сервер проверяет MIME type, расширение, сигнатуру файла, размер файла и размер изображения в пикселях. Оригинал сохраняется в `/data/images/originals/`, а рабочая версия оптимизируется в WebP через `sharp` с сохранением aspect ratio и ограничением длинной стороны.
+
+```text
+overview: максимум 3000 px по длинной стороне
+room: максимум 2500 px по длинной стороне
+upload: максимум 25 MB
+pixels: максимум около 55 MP
+```
+
+Если WebP-конвертер недоступен, сервер не падает и сохраняет рабочую копию в исходном формате как `copy fallback`. Состояние converter pipeline отображается в **Информация / диагностика → Система → Images storage**.
 
 ---
 
@@ -24,7 +39,7 @@
 /data/backups/
 ```
 
-Поддерживаются PNG, JPG/JPEG и WEBP до 25 MB. Рабочая версия общего плана отдаётся через `/media/images/overview.webp`; если custom-картинки нет, используется встроенный fallback. API: `GET /api/images`, `POST /api/images/overview`, `DELETE /api/images/overview`.
+Поддерживаются PNG, JPG/JPEG и WEBP до 25 MB. Начиная с v3.5.3 рабочая версия оптимизируется в WebP, сохраняет aspect ratio и ограничивается по длинной стороне. Общий план отдаётся через `/media/images/overview.webp`; если custom-картинки нет, используется встроенный fallback. API: `GET /api/images`, `POST /api/images/overview`, `DELETE /api/images/overview`.
 
 ## Что умеет ALLHA-3D
 
@@ -324,4 +339,4 @@ Copyright: © Lepi4
 
 - Исправлен скролл FAQ-окна, открываемого из настроек.
 - Во вкладке `Информация / диагностика → Система` добавлен явный раздел `Images storage` с состоянием `/data/images`, подпапок, fallback/custom overview, количества room images и `images_meta.json`.
-- Следующий плановый шаг остаётся прежним: v3.5.2 — upload overview + reset image.
+- Следующий плановый шаг: v3.5.4 — картинки найденных комнат + reset room image.

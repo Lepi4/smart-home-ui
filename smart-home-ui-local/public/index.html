@@ -204,7 +204,7 @@
             <button type="button" id="btn-upload-overview-image">Загрузить / заменить общий план</button>
             <button type="button" id="btn-reset-overview-image">Сбросить к fallback</button>
           </div>
-          <p class="muted">Перед заменой или сбросом создаётся backup картинки, images_meta.json и layout.json. Если у новой картинки другое соотношение сторон, маркеры и зоны могут визуально сместиться.</p>
+          <p class="muted">Перед заменой или сбросом создаётся backup картинки, images_meta.json и layout.json. Начиная с v3.5.3 загружаемые картинки проверяются по MIME/расширению/содержимому, ограничиваются по размеру и оптимизируются до рабочей версии WebP с сохранением aspect ratio. Если у новой картинки другое соотношение сторон, маркеры и зоны могут визуально сместиться.</p>
         </div>
       </div>
       <div class="source-tools">

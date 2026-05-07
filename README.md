@@ -7,26 +7,39 @@
 > Репозиторий проекта: https://github.com/Lepi4/smart-home-ui  
 > Разработчик: **Lepi4**  
 > Приложение: **ALLHA-3D**  
-> Версия: **3.5.1**
+> Версия: **3.5.3**
 
 ---
 
-### v3.5.1.1: FAQ и фундамент пользовательских картинок
+### v3.5.3: image converter pipeline
 
-В настройках восстановлена кнопка **FAQ / Помощь** рядом с диагностикой. Справка доступна из режимов viewer, control panel и admin, потому что не меняет настройки и не выполняет команды.
-
-Сервер теперь подготавливает runtime-хранилище картинок в `/data/images`:
+Загрузка общего плана стала безопаснее: сервер проверяет MIME type, расширение, сигнатуру файла, размер файла и размер изображения в пикселях. Оригинал сохраняется в `/data/images/originals/`, а рабочая версия оптимизируется в WebP через `sharp` с сохранением aspect ratio и ограничением длинной стороны.
 
 ```text
-/data/images/
+overview: максимум 3000 px по длинной стороне
+room: максимум 2500 px по длинной стороне
+upload: максимум 25 MB
+pixels: максимум около 55 MP
+```
+
+Если WebP-конвертер недоступен, сервер не падает и сохраняет рабочую копию в исходном формате как `copy fallback`. Состояние converter pipeline отображается в **Информация / диагностика → Система → Images storage**.
+
+---
+
+### v3.5.2: загрузка и сброс общего плана
+
+В настройках появился раздел **Картинки / План → Общий план**. Через него можно загрузить или заменить картинку общего плана без ручной замены файлов внутри Docker. Также добавлена кнопка **Сбросить к fallback**, которая возвращает встроенный план.
+
+Перед заменой или сбросом создаётся backup текущей картинки, `images_meta.json` и `layout.json`. Пользовательские картинки хранятся только в `/data/images`, а Docker image остаётся только источником fallback/demo assets.
+
+```text
 /data/images/overview/
-/data/images/rooms/
 /data/images/originals/
 /data/images/images_meta.json
 /data/backups/
 ```
 
-Добавлены маршруты `/media/images/overview.webp`, `/media/images/rooms/<room_id>.webp` и API `/api/images`. Если пользовательская картинка отсутствует, ALLHA-3D использует встроенный fallback из Docker image. Диагностика показывает состояние хранилища картинок, `images_meta.json`, overview image и количество custom room images.
+Поддерживаются PNG, JPG/JPEG и WEBP до 25 MB. Начиная с v3.5.3 рабочая версия оптимизируется в WebP, сохраняет aspect ratio и ограничивается по длинной стороне. Общий план отдаётся через `/media/images/overview.webp`; если custom-картинки нет, используется встроенный fallback. API: `GET /api/images`, `POST /api/images/overview`, `DELETE /api/images/overview`.
 
 ## Что умеет ALLHA-3D
 
@@ -322,8 +335,8 @@ Copyright: © Lepi4
 ```
 
 
-## v3.5.1.1 hotfix
+## v3.5.2 hotfix
 
 - Исправлен скролл FAQ-окна, открываемого из настроек.
 - Во вкладке `Информация / диагностика → Система` добавлен явный раздел `Images storage` с состоянием `/data/images`, подпапок, fallback/custom overview, количества room images и `images_meta.json`.
-- Следующий плановый шаг остаётся прежним: v3.5.2 — upload overview + reset image.
+- Следующий плановый шаг: v3.5.4 — картинки найденных комнат + reset room image.

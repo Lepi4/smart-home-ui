@@ -2335,13 +2335,17 @@ function renderImagesSettings(){
   if(!overview){ box.textContent = 'Нет данных о картинке общего плана'; return; }
   const mode = overview.mode === 'custom' ? 'custom' : 'fallback';
   const size = overview.processedWidth && overview.processedHeight ? `${overview.processedWidth}×${overview.processedHeight}` : 'размер неизвестен';
+  const original = overview.originalWidth && overview.originalHeight && overview.mode === 'custom' ? ` · original ${overview.originalWidth}×${overview.originalHeight}` : '';
   const fmt = overview.format ? ` · ${overview.format}` : '';
   const ratio = overview.aspectRatio ? ` · aspect ${overview.aspectRatio}` : '';
-  box.textContent = `Текущая картинка: ${mode} · ${size}${fmt}${ratio}`;
+  const converter = overview.converter ? ` · ${overview.converter}` : '';
+  box.textContent = `Текущая картинка: ${mode} · ${size}${original}${fmt}${ratio}${converter}`;
 }
 async function uploadOverviewImage(file){
   if(!file) return;
-  if(!/^image\/(png|jpeg|webp)$/i.test(file.type || '')){ showToast('Поддерживаются PNG, JPG и WEBP'); return; }
+  const typeOk = /^image\/(png|jpeg|webp)$/i.test(file.type || '');
+  const nameOk = /\.(png|jpe?g|webp)$/i.test(file.name || '');
+  if(!typeOk && !nameOk){ showToast('Поддерживаются PNG, JPG и WEBP'); return; }
   if(file.size > 25 * 1024 * 1024){ showToast('Файл слишком большой. Максимум 25 MB.'); return; }
   const status = el('overview-image-status');
   if(status) status.textContent = 'Загрузка общего плана...';
@@ -2523,6 +2527,10 @@ function renderInfoModal(){
       infoRow('overview image',d.images?.overview?.mode||'—'),
       infoRow('rooms images count',d.images?.customRoomImages??0),
       infoRow('images_meta.json',d.images?.metaOk?'OK':'error/missing'),
+      infoRow('converter',d.images?.converterAvailable?'sharp/webp':'copy fallback'),
+      infoRow('overview max long side',d.images?.uploadLimits?.overviewMaxLongSide||'—'),
+      infoRow('room max long side',d.images?.uploadLimits?.roomMaxLongSide||'—'),
+      infoRow('max upload',d.images?.uploadLimits?.maxBytes?Math.round(d.images.uploadLimits.maxBytes/1024/1024)+' MB':'—'),
       infoSection('Layout'),
       infoRow('Layout координаты',ld.ok?'OK':'есть проблемы'),
       infoRow('Pixel-like координаты',ld.problems?.pixelLike?.length||0),

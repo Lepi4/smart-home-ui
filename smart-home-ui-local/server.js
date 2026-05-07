@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 const crypto = require('crypto');
+let sharp = null;
+try { sharp = require('sharp'); } catch (e) { sharp = null; }
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -30,7 +32,7 @@ const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.2';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.3';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -365,6 +367,13 @@ function fallbackRoomImagePath(roomId){
   return roomFile && fs.existsSync(roomFile) ? roomFile : DEFAULT_ROOM_IMAGE;
 }
 
+const IMAGE_UPLOAD_LIMITS = {
+  maxBytes: 25 * 1024 * 1024,
+  maxPixels: 55 * 1000 * 1000,
+  overviewMaxLongSide: 3000,
+  roomMaxLongSide: 2500,
+  webpQuality: 86
+};
 function imageExtFromFilename(name){
   const ext = path.extname(String(name||'')).toLowerCase().replace('.','');
   return ['jpg','jpeg','png','webp'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : '';
@@ -376,19 +385,72 @@ function imageExtFromMime(mime){
   if(m === 'image/webp') return 'webp';
   return '';
 }
-function validateUploadedImage(req, buffer){
+function imageExtFromMagic(buffer){
+  const b = Buffer.from(buffer || []);
+  if(b.length >= 12 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if(b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a) return 'png';
+  if(b.length >= 12 && b.toString('ascii',0,4) === 'RIFF' && b.toString('ascii',8,12) === 'WEBP') return 'webp';
+  return '';
+}
+function safeOriginalFilename(req, fallback='image'){
+  let filename = String(req.get('x-filename') || req.query.filename || fallback);
+  try{ filename = decodeURIComponent(filename); }catch(e){}
+  filename = path.basename(filename).replace(/[\\/\x00]/g,'').trim();
+  return filename || fallback;
+}
+function validateUploadedImage(req, buffer, kind='overview'){
   if(!buffer || !buffer.length) throw new Error('Файл изображения пустой');
-  const maxBytes = 25 * 1024 * 1024;
-  if(buffer.length > maxBytes) throw new Error('Файл слишком большой. Максимум 25 MB.');
-  const filename = decodeURIComponent(String(req.get('x-filename') || req.query.filename || 'overview'));
-  const ext = imageExtFromMime(req.get('content-type')) || imageExtFromFilename(filename);
+  if(buffer.length > IMAGE_UPLOAD_LIMITS.maxBytes) throw new Error('Файл слишком большой. Максимум 25 MB.');
+  const filename = safeOriginalFilename(req, kind);
+  const mimeExt = imageExtFromMime(req.get('content-type'));
+  const filenameExt = imageExtFromFilename(filename);
+  const magicExt = imageExtFromMagic(buffer);
+  const ext = magicExt || mimeExt || filenameExt;
   if(!['jpg','png','webp'].includes(ext)) throw new Error('Поддерживаются только JPG, PNG и WEBP');
-  const tmp = path.join(DATA_IMAGES_DIR, `.upload-check-${Date.now()}.${ext}`);
+  if(mimeExt && magicExt && mimeExt !== magicExt) throw new Error('MIME type не совпадает с содержимым файла');
+  if(filenameExt && magicExt && filenameExt !== magicExt) throw new Error('Расширение файла не совпадает с содержимым изображения');
+  const tmp = path.join(DATA_IMAGES_DIR, `.upload-check-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`);
   fs.writeFileSync(tmp, buffer);
   const size = getImageSize(tmp);
   try{ fs.unlinkSync(tmp); }catch(e){}
   if(!size.width || !size.height) throw new Error('Не удалось прочитать размеры изображения');
-  return { ext, filename, width:size.width, height:size.height, aspectRatio: Math.round((size.width/size.height)*1000)/1000, sizeBytes: buffer.length };
+  if(size.width * size.height > IMAGE_UPLOAD_LIMITS.maxPixels) throw new Error('Изображение слишком большое по пикселям. Максимум около 55 MP.');
+  return { ext, filename, width:size.width, height:size.height, aspectRatio: Math.round((size.width/size.height)*1000)/1000, sizeBytes: buffer.length, kind };
+}
+async function processUploadedImage(kind, buffer, info, targetBasePath){
+  const maxLongSide = kind === 'room' ? IMAGE_UPLOAD_LIMITS.roomMaxLongSide : IMAGE_UPLOAD_LIMITS.overviewMaxLongSide;
+  const baseNoExt = targetBasePath.replace(/\.[^.]+$/, '');
+  for(const ext of ['webp','png','jpg','jpeg']){
+    const old = `${baseNoExt}.${ext}`;
+    if(fs.existsSync(old)) fs.unlinkSync(old);
+  }
+  if(sharp){
+    const outputPath = `${baseNoExt}.webp`;
+    const pipeline = sharp(buffer, { limitInputPixels: IMAGE_UPLOAD_LIMITS.maxPixels }).rotate().resize({ width:maxLongSide, height:maxLongSide, fit:'inside', withoutEnlargement:true }).webp({ quality: IMAGE_UPLOAD_LIMITS.webpQuality });
+    const outInfo = await pipeline.toFile(outputPath);
+    const st = fs.statSync(outputPath);
+    return {
+      workingPath: outputPath,
+      processedWidth: outInfo.width || info.width,
+      processedHeight: outInfo.height || info.height,
+      format: 'webp',
+      processedSizeBytes: st.size,
+      converter: 'sharp-webp',
+      maxLongSide
+    };
+  }
+  const outputPath = `${baseNoExt}.${info.ext}`;
+  fs.writeFileSync(outputPath, buffer);
+  const st = fs.statSync(outputPath);
+  return {
+    workingPath: outputPath,
+    processedWidth: info.width,
+    processedHeight: info.height,
+    format: info.ext,
+    processedSizeBytes: st.size,
+    converter: 'copy-fallback',
+    maxLongSide
+  };
 }
 function backupDataFile(src, prefix, ext){
   if(!src || !fs.existsSync(src)) return null;
@@ -429,17 +491,22 @@ function imageInfo(kind, roomId){
   const size = getImageSize(file);
   const st = fs.existsSync(file) ? fs.statSync(file) : null;
   const width = size.width || null, height = size.height || null;
+  const meta = loadImagesMeta();
+  const metaInfo = kind === 'overview' ? meta.overview : meta.rooms?.[String(roomId||'')];
   return {
     src: kind === 'overview' ? mediaUrlForOverview() : mediaUrlForRoom(roomId),
     mode: fs.existsSync(custom) ? 'custom' : 'fallback',
     room_id: kind === 'room' ? String(roomId||'') : undefined,
-    originalWidth: width,
-    originalHeight: height,
-    processedWidth: width,
-    processedHeight: height,
-    format: path.extname(file).replace('.','') || null,
-    sizeBytes: st ? st.size : 0,
-    aspectRatio: width && height ? Math.round((width / height) * 1000) / 1000 : null
+    originalWidth: metaInfo?.originalWidth || width,
+    originalHeight: metaInfo?.originalHeight || height,
+    processedWidth: metaInfo?.processedWidth || width,
+    processedHeight: metaInfo?.processedHeight || height,
+    format: metaInfo?.format || path.extname(file).replace('.','') || null,
+    sizeBytes: metaInfo?.processedSizeBytes || (st ? st.size : 0),
+    originalSizeBytes: metaInfo?.sizeBytes || null,
+    aspectRatio: (metaInfo?.aspectRatio || (width && height ? Math.round((width / height) * 1000) / 1000 : null)),
+    converter: metaInfo?.converter || (fs.existsSync(custom) ? 'legacy-copy' : 'fallback'),
+    maxLongSide: metaInfo?.maxLongSide || null
   };
 }
 function listKnownRoomIds(){
@@ -467,7 +534,9 @@ function imagesDiagnostics(){
     metaOk,
     overview: imageInfo('overview'),
     roomCount: rooms.length,
-    customRoomImages: customRooms
+    customRoomImages: customRooms,
+    converterAvailable: !!sharp,
+    uploadLimits: IMAGE_UPLOAD_LIMITS
   };
 }
 
@@ -1171,40 +1240,39 @@ app.get('/api/images', (req,res)=>{
   }catch(e){ res.status(500).json({ok:false, error:e.message}); }
 });
 
-app.post('/api/images/overview', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), (req,res)=>{
+app.post('/api/images/overview', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), async (req,res)=>{
   try{
     ensureDataStore();
-    const info = validateUploadedImage(req, req.body);
+    const info = validateUploadedImage(req, req.body, 'overview');
     const currentInfo = imageInfo('overview');
     backupOverviewImage();
     backupImagesMeta();
     backupLayout();
-    for(const ext of ['webp','png','jpg','jpeg']){
-      const old = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${ext}`);
-      if(fs.existsSync(old)) fs.unlinkSync(old);
-    }
     const originalPath = path.join(DATA_IMAGES_ORIGINALS_DIR, `overview-original.${info.ext}`);
-    const workingPath = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${info.ext}`);
     fs.writeFileSync(originalPath, req.body);
-    fs.writeFileSync(workingPath, req.body);
+    const processed = await processUploadedImage('overview', req.body, info, path.join(DATA_IMAGES_OVERVIEW_DIR, 'overview.webp'));
+    const processedAspectRatio = processed.processedWidth && processed.processedHeight ? Math.round((processed.processedWidth/processed.processedHeight)*1000)/1000 : info.aspectRatio;
     const meta = loadImagesMeta();
     meta.overview = {
       src: mediaUrlForOverview(),
-      file: workingPath,
+      file: processed.workingPath,
       originalPath,
       originalFilename: info.filename,
       originalWidth: info.width,
       originalHeight: info.height,
-      processedWidth: info.width,
-      processedHeight: info.height,
-      format: info.ext,
+      processedWidth: processed.processedWidth,
+      processedHeight: processed.processedHeight,
+      format: processed.format,
       sizeBytes: info.sizeBytes,
-      aspectRatio: info.aspectRatio,
+      processedSizeBytes: processed.processedSizeBytes,
+      aspectRatio: processedAspectRatio,
+      converter: processed.converter,
+      maxLongSide: processed.maxLongSide,
       updatedAt: new Date().toISOString()
     };
     saveImagesMeta(meta);
-    const aspectChanged = currentInfo.aspectRatio && info.aspectRatio && Math.abs(currentInfo.aspectRatio - info.aspectRatio) > 0.01;
-    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:true, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:info.aspectRatio});
+    const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
+    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:true, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
   }catch(e){ res.status(400).json({ok:false, error:e.message}); }
 });
 

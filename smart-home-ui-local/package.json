@@ -1,6 +1,6 @@
 {
   "name": "allha-3d-ha-addon",
-  "version": "3.5.2",
+  "version": "3.5.3",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "express": "^4.21.2",
-    "ws": "^8.17.1"
+    "ws": "^8.17.1",
+    "sharp": "^0.33.5"
   }
 }
