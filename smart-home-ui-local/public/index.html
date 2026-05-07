@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-3D HA Add-on v3.5.1</title>
+  <title>ALLHA-3D HA Add-on v3.5.2</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -191,6 +191,21 @@
         <label>Масштаб названий помещений <input id="pref-room-label-scale" type="range" min="10" max="200" value="100"><span id="pref-room-label-scale-value">100%</span></label>
         <label>Прозрачность фона датчиков <input id="pref-sensor-opacity" type="range" min="0" max="100" value="0"><span id="pref-sensor-opacity-value">0%</span></label>
         <p class="muted">Масштаб карты меняется двумя пальцами или кнопками +/−. Аппаратный масштаб задаёт базовый размер плана для конкретной панели/экрана. Вид, масштаб, скрытые панели и kiosk mode сохраняются в /data/ui_state.json и восстанавливаются после переустановки add-on, если данные не удалить.</p>
+      </div>
+      <div class="image-tools">
+        <h3>Картинки / План</h3>
+        <div class="image-card">
+          <div>
+            <strong>Общий план</strong>
+            <p id="overview-image-status" class="muted">Загрузка состояния картинки...</p>
+          </div>
+          <div class="image-buttons">
+            <input id="overview-image-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            <button type="button" id="btn-upload-overview-image">Загрузить / заменить общий план</button>
+            <button type="button" id="btn-reset-overview-image">Сбросить к fallback</button>
+          </div>
+          <p class="muted">Перед заменой или сбросом создаётся backup картинки, images_meta.json и layout.json. Если у новой картинки другое соотношение сторон, маркеры и зоны могут визуально сместиться.</p>
+        </div>
       </div>
       <div class="source-tools">
         <h3>Источники устройств из панели</h3>

@@ -1408,6 +1408,30 @@ body.editing .room-zone.edit-selected{outline:2px solid rgba(255,220,120,.95)!im
 body.invisible-zones:not(.editing) .room-zone{background:transparent!important;border-color:transparent!important;box-shadow:none!important;}
 
 
-/* v3.5.1 FAQ modal restored in settings */
-.faq-modal-card{width:min(1100px,96vw);height:min(820px,92vh);display:flex;flex-direction:column;}
-.faq-frame{width:100%;flex:1;min-height:420px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:#fff;}
+/* v3.5.1.1 FAQ modal restored in settings + stable scroll */
+.faq-modal-card{width:min(1100px,96vw);height:min(820px,92vh);max-height:92dvh;display:flex;flex-direction:column;overflow:hidden;}
+.faq-modal-card .modal-head{flex:0 0 auto;}
+.faq-frame{width:100%;flex:1 1 auto;min-height:0;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:#fff;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;}
+.info-section-row th{padding-top:14px!important;color:#f5c16a!important;background:rgba(178,131,57,.14)!important;text-transform:uppercase;letter-spacing:.05em;font-size:12px;}
+@media(max-width:720px){.faq-modal-card{width:calc(100vw - 12px);height:calc(100dvh - 12px);max-height:calc(100dvh - 12px);}.faq-frame{border-radius:10px;}}
+
+/* v3.5.2 overview image upload/reset */
+#settings-modal .image-tools{
+  padding:0 16px 12px!important;
+  background:#11161d!important;
+}
+#settings-modal .image-tools h3{font-size:18px;margin:10px 0 8px!important}
+#settings-modal .image-card{
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  padding:12px;
+  background:rgba(255,255,255,.035);
+  display:grid;
+  gap:10px;
+}
+#settings-modal .image-buttons{display:flex;flex-wrap:wrap;gap:8px}
+#settings-modal .image-buttons button{min-height:34px}
+@media(max-width:760px){
+  #settings-modal .image-tools{padding:0 10px 8px!important}
+  #settings-modal .image-buttons button{flex:1 1 100%;font-size:12px}
+}

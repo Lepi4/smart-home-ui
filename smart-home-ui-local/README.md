@@ -7,26 +7,24 @@
 > Репозиторий проекта: https://github.com/Lepi4/smart-home-ui  
 > Разработчик: **Lepi4**  
 > Приложение: **ALLHA-3D**  
-> Версия: **3.5.1**
+> Версия: **3.5.2**
 
 ---
 
-### v3.5.1: FAQ и фундамент пользовательских картинок
+### v3.5.2: загрузка и сброс общего плана
 
-В настройках восстановлена кнопка **FAQ / Помощь** рядом с диагностикой. Справка доступна из режимов viewer, control panel и admin, потому что не меняет настройки и не выполняет команды.
+В настройках появился раздел **Картинки / План → Общий план**. Через него можно загрузить или заменить картинку общего плана без ручной замены файлов внутри Docker. Также добавлена кнопка **Сбросить к fallback**, которая возвращает встроенный план.
 
-Сервер теперь подготавливает runtime-хранилище картинок в `/data/images`:
+Перед заменой или сбросом создаётся backup текущей картинки, `images_meta.json` и `layout.json`. Пользовательские картинки хранятся только в `/data/images`, а Docker image остаётся только источником fallback/demo assets.
 
 ```text
-/data/images/
 /data/images/overview/
-/data/images/rooms/
 /data/images/originals/
 /data/images/images_meta.json
 /data/backups/
 ```
 
-Добавлены маршруты `/media/images/overview.webp`, `/media/images/rooms/<room_id>.webp` и API `/api/images`. Если пользовательская картинка отсутствует, ALLHA-3D использует встроенный fallback из Docker image. Диагностика показывает состояние хранилища картинок, `images_meta.json`, overview image и количество custom room images.
+Поддерживаются PNG, JPG/JPEG и WEBP до 25 MB. Рабочая версия общего плана отдаётся через `/media/images/overview.webp`; если custom-картинки нет, используется встроенный fallback. API: `GET /api/images`, `POST /api/images/overview`, `DELETE /api/images/overview`.
 
 ## Что умеет ALLHA-3D
 
@@ -320,3 +318,10 @@ Developer: Lepi4
 GitHub: https://github.com/Lepi4/smart-home-ui
 Copyright: © Lepi4
 ```
+
+
+## v3.5.2 hotfix
+
+- Исправлен скролл FAQ-окна, открываемого из настроек.
+- Во вкладке `Информация / диагностика → Система` добавлен явный раздел `Images storage` с состоянием `/data/images`, подпапок, fallback/custom overview, количества room images и `images_meta.json`.
+- Следующий плановый шаг остаётся прежним: v3.5.2 — upload overview + reset image.

@@ -21,6 +21,7 @@ const DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview');
 const DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
 const DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
 const IMAGES_META_PATH = path.join(DATA_IMAGES_DIR, 'images_meta.json');
+const DATA_IMAGES_ORIGINALS_ROOMS_DIR = path.join(DATA_IMAGES_ORIGINALS_DIR, 'rooms');
 const DEFAULT_OVERVIEW_IMAGE = path.join(__dirname, 'public', 'assets', 'overview-plan.png');
 const DEFAULT_ROOM_IMAGE = path.join(__dirname, 'public', 'assets', 'wardrobe.webp');
 const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
@@ -29,7 +30,7 @@ const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.1';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.2';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -137,6 +138,7 @@ function ensureDataStore(){
   fs.mkdirSync(DATA_IMAGES_OVERVIEW_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_ROOMS_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_ORIGINALS_DIR, {recursive:true});
+  fs.mkdirSync(DATA_IMAGES_ORIGINALS_ROOMS_DIR, {recursive:true});
   if(!fs.existsSync(IMAGES_META_PATH)) atomicWriteJson(IMAGES_META_PATH, defaultImagesMeta());
   safeCopyIfMissing(FALLBACK_DEVICES_PATH, DEVICES_PATH);
   safeCopyIfMissing(path.join(__dirname, 'public', 'lovelace-source.js'), LOVELACE_PATH);
@@ -362,8 +364,66 @@ function fallbackRoomImagePath(roomId){
   const roomFile = safe ? path.join(__dirname, 'public', 'assets', 'rooms', `${safe}.webp`) : '';
   return roomFile && fs.existsSync(roomFile) ? roomFile : DEFAULT_ROOM_IMAGE;
 }
+
+function imageExtFromFilename(name){
+  const ext = path.extname(String(name||'')).toLowerCase().replace('.','');
+  return ['jpg','jpeg','png','webp'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : '';
+}
+function imageExtFromMime(mime){
+  const m = String(mime||'').toLowerCase().split(';')[0].trim();
+  if(m === 'image/jpeg' || m === 'image/jpg') return 'jpg';
+  if(m === 'image/png') return 'png';
+  if(m === 'image/webp') return 'webp';
+  return '';
+}
+function validateUploadedImage(req, buffer){
+  if(!buffer || !buffer.length) throw new Error('Файл изображения пустой');
+  const maxBytes = 25 * 1024 * 1024;
+  if(buffer.length > maxBytes) throw new Error('Файл слишком большой. Максимум 25 MB.');
+  const filename = decodeURIComponent(String(req.get('x-filename') || req.query.filename || 'overview'));
+  const ext = imageExtFromMime(req.get('content-type')) || imageExtFromFilename(filename);
+  if(!['jpg','png','webp'].includes(ext)) throw new Error('Поддерживаются только JPG, PNG и WEBP');
+  const tmp = path.join(DATA_IMAGES_DIR, `.upload-check-${Date.now()}.${ext}`);
+  fs.writeFileSync(tmp, buffer);
+  const size = getImageSize(tmp);
+  try{ fs.unlinkSync(tmp); }catch(e){}
+  if(!size.width || !size.height) throw new Error('Не удалось прочитать размеры изображения');
+  return { ext, filename, width:size.width, height:size.height, aspectRatio: Math.round((size.width/size.height)*1000)/1000, sizeBytes: buffer.length };
+}
+function backupDataFile(src, prefix, ext){
+  if(!src || !fs.existsSync(src)) return null;
+  fs.mkdirSync(LAYOUT_BACKUP_DIR, {recursive:true});
+  const safeExt = ext || path.extname(src) || '.bak';
+  const dst = path.join(LAYOUT_BACKUP_DIR, `${prefix}-${timestampForFile()}${safeExt.startsWith('.')?safeExt:'.'+safeExt}`);
+  fs.copyFileSync(src, dst);
+  return dst;
+}
+function backupImagesMeta(){ return backupDataFile(IMAGES_META_PATH, 'images-meta', '.json'); }
+function backupOverviewImage(){
+  const active = activeCustomOverviewImagePath();
+  return active && fs.existsSync(active) ? backupDataFile(active, 'overview-image', path.extname(active) || '.img') : null;
+}
+function activeCustomOverviewImagePath(){
+  const meta = loadImagesMeta();
+  const src = meta.overview?.file;
+  if(src && path.resolve(src).startsWith(path.resolve(DATA_IMAGES_OVERVIEW_DIR)) && fs.existsSync(src)) return src;
+  for(const ext of ['webp','png','jpg','jpeg']){
+    const f = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${ext}`);
+    if(fs.existsSync(f)) return f;
+  }
+  return customOverviewImagePath();
+}
+function saveImagesMeta(meta){
+  const next = {
+    version: Number(meta?.version) || 1,
+    overview: meta?.overview || null,
+    rooms: isPlainObject(meta?.rooms) ? meta.rooms : {}
+  };
+  atomicWriteJson(IMAGES_META_PATH, next);
+  return next;
+}
 function imageInfo(kind, roomId){
-  const custom = kind === 'overview' ? customOverviewImagePath() : customRoomImagePath(roomId);
+  const custom = kind === 'overview' ? activeCustomOverviewImagePath() : customRoomImagePath(roomId);
   const fallback = kind === 'overview' ? DEFAULT_OVERVIEW_IMAGE : fallbackRoomImagePath(roomId);
   const file = fs.existsSync(custom) ? custom : fallback;
   const size = getImageSize(file);
@@ -401,6 +461,7 @@ function imagesDiagnostics(){
     overviewDirExists: fs.existsSync(DATA_IMAGES_OVERVIEW_DIR),
     roomsDirExists: fs.existsSync(DATA_IMAGES_ROOMS_DIR),
     originalsDirExists: fs.existsSync(DATA_IMAGES_ORIGINALS_DIR),
+    backupsDirExists: fs.existsSync(LAYOUT_BACKUP_DIR),
     metaPath: IMAGES_META_PATH,
     metaExists: fs.existsSync(IMAGES_META_PATH),
     metaOk,
@@ -1091,8 +1152,8 @@ function sendImageFile(res, file){
   res.sendFile(file);
 }
 app.get(['/media/overview','/media/overview/:filename','/media/images/overview.webp'], (req,res)=>{
-  const custom = customOverviewImagePath();
-  sendImageFile(res, fs.existsSync(custom) ? custom : DEFAULT_OVERVIEW_IMAGE);
+  const custom = activeCustomOverviewImagePath();
+  sendImageFile(res, custom && fs.existsSync(custom) ? custom : DEFAULT_OVERVIEW_IMAGE);
 });
 app.get(['/media/rooms/:room_id','/media/rooms/:room_id/:filename','/media/images/rooms/:room_id.webp'], (req,res)=>{
   const roomId = req.params.room_id;
@@ -1107,6 +1168,60 @@ app.get('/api/images', (req,res)=>{
     const rooms = {};
     for(const roomId of roomIds) rooms[roomId] = imageInfo('room', roomId);
     res.json({ ok:true, meta: loadImagesMeta(), overview: imageInfo('overview'), rooms });
+  }catch(e){ res.status(500).json({ok:false, error:e.message}); }
+});
+
+app.post('/api/images/overview', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), (req,res)=>{
+  try{
+    ensureDataStore();
+    const info = validateUploadedImage(req, req.body);
+    const currentInfo = imageInfo('overview');
+    backupOverviewImage();
+    backupImagesMeta();
+    backupLayout();
+    for(const ext of ['webp','png','jpg','jpeg']){
+      const old = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${ext}`);
+      if(fs.existsSync(old)) fs.unlinkSync(old);
+    }
+    const originalPath = path.join(DATA_IMAGES_ORIGINALS_DIR, `overview-original.${info.ext}`);
+    const workingPath = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${info.ext}`);
+    fs.writeFileSync(originalPath, req.body);
+    fs.writeFileSync(workingPath, req.body);
+    const meta = loadImagesMeta();
+    meta.overview = {
+      src: mediaUrlForOverview(),
+      file: workingPath,
+      originalPath,
+      originalFilename: info.filename,
+      originalWidth: info.width,
+      originalHeight: info.height,
+      processedWidth: info.width,
+      processedHeight: info.height,
+      format: info.ext,
+      sizeBytes: info.sizeBytes,
+      aspectRatio: info.aspectRatio,
+      updatedAt: new Date().toISOString()
+    };
+    saveImagesMeta(meta);
+    const aspectChanged = currentInfo.aspectRatio && info.aspectRatio && Math.abs(currentInfo.aspectRatio - info.aspectRatio) > 0.01;
+    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:true, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:info.aspectRatio});
+  }catch(e){ res.status(400).json({ok:false, error:e.message}); }
+});
+
+app.delete('/api/images/overview', (req,res)=>{
+  try{
+    ensureDataStore();
+    backupOverviewImage();
+    backupImagesMeta();
+    backupLayout();
+    for(const ext of ['webp','png','jpg','jpeg']){
+      const f = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${ext}`);
+      if(fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    const meta = loadImagesMeta();
+    meta.overview = null;
+    saveImagesMeta(meta);
+    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:true});
   }catch(e){ res.status(500).json({ok:false, error:e.message}); }
 });
 

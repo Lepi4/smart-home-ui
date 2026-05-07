@@ -14,7 +14,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, attention:{ok:true,hasAlerts:false,rules:[]}
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, attention:{ok:true,hasAlerts:false,rules:[]}
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -2315,6 +2315,71 @@ function migrateLayout(){
 }
 async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
 async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
+
+async function loadImagesInfo(){
+  try{
+    state.images = await apiJson('api/images');
+    renderImagesSettings();
+    return state.images;
+  }catch(e){
+    state.images = null;
+    const box = el('overview-image-status');
+    if(box) box.textContent = 'Ошибка чтения images storage: ' + e.message;
+    return null;
+  }
+}
+function renderImagesSettings(){
+  const box = el('overview-image-status');
+  if(!box) return;
+  const overview = state.images?.overview;
+  if(!overview){ box.textContent = 'Нет данных о картинке общего плана'; return; }
+  const mode = overview.mode === 'custom' ? 'custom' : 'fallback';
+  const size = overview.processedWidth && overview.processedHeight ? `${overview.processedWidth}×${overview.processedHeight}` : 'размер неизвестен';
+  const fmt = overview.format ? ` · ${overview.format}` : '';
+  const ratio = overview.aspectRatio ? ` · aspect ${overview.aspectRatio}` : '';
+  box.textContent = `Текущая картинка: ${mode} · ${size}${fmt}${ratio}`;
+}
+async function uploadOverviewImage(file){
+  if(!file) return;
+  if(!/^image\/(png|jpeg|webp)$/i.test(file.type || '')){ showToast('Поддерживаются PNG, JPG и WEBP'); return; }
+  if(file.size > 25 * 1024 * 1024){ showToast('Файл слишком большой. Максимум 25 MB.'); return; }
+  const status = el('overview-image-status');
+  if(status) status.textContent = 'Загрузка общего плана...';
+  try{
+    const res = await fetch('api/images/overview', { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || 'overview') }, body:file });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || res.status);
+    state.images = { ...(state.images||{}), ...data };
+    await loadImagesInfo();
+    const img = el('overview-image');
+    if(img) img.src = 'media/images/overview.webp?t=' + Date.now();
+    fitStage('overview');
+    render();
+    showToast(data.aspectChanged ? 'Общий план заменён. Aspect ratio изменился, backup создан.' : 'Общий план заменён. Backup создан.');
+  }catch(e){
+    if(status) status.textContent = 'Ошибка загрузки: ' + e.message;
+    showToast('Ошибка загрузки общего плана: ' + e.message);
+  }
+}
+async function resetOverviewImage(){
+  if(!confirm('Сбросить пользовательскую картинку общего плана к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-планом. Перед сбросом будет создан backup.')) return;
+  const status = el('overview-image-status');
+  if(status) status.textContent = 'Сброс картинки общего плана...';
+  try{
+    const data = await apiJson('api/images/overview', { method:'DELETE' });
+    state.images = { ...(state.images||{}), ...data };
+    await loadImagesInfo();
+    const img = el('overview-image');
+    if(img) img.src = 'media/images/overview.webp?t=' + Date.now();
+    fitStage('overview');
+    render();
+    showToast('Общий план сброшен к fallback. Backup создан.');
+  }catch(e){
+    if(status) status.textContent = 'Ошибка сброса: ' + e.message;
+    showToast('Ошибка сброса картинки: ' + e.message);
+  }
+}
+
 async function saveConfig(){
   const status=el('settings-status');
   try{
@@ -2427,14 +2492,51 @@ async function loadDiagnostics(){
   catch(e){ if(box) box.textContent='Ошибка диагностики: '+e.message; }
 }
 function infoRow(k,v){ return `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`; }
+function infoSection(title){ return `<tr class="info-section-row"><th colspan="2">${esc(title)}</th></tr>`; }
 function renderInfoModal(){
   const d=state.diagnostics; const box=el('info-content'); if(!box||!d) return;
   qsa('[data-info-tab]').forEach(b=>b.classList.toggle('active', b.dataset.infoTab===state.infoTab));
   if(state.infoTab==='summary'){
     const ld=d.layoutDiagnostics||{};
     box.innerHTML=`<table class="info-table">${[
-      ['Название',d.brand?.name||'ALLHA-3D'],['Версия add-on',d.version],['Разработчик',d.brand?.developer||'Lepi4'],['HA API',d.ok?'OK':'Ошибка'],['Ошибка HA',d.haError||'—'],['Режим',d.mode],['DATA_DIR',d.dataDir],['HA API base',d.haApiBase],['Supervisor token',d.hasSupervisorToken?'есть':'нет'],['layout.json в /data',d.storage?.layoutExists?'есть':'нет'],['ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'],['devices.js в /data',d.storage?.devicesInData?'есть':'fallback'],['lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'],['/data/images',d.images?.exists?'есть':'нет'],['overview image',d.images?.overview?.mode||'—'],['room custom images',d.images?.customRoomImages??0],['images_meta.json',d.images?.metaOk?'OK':'error/missing'],['Layout координаты',ld.ok?'OK':'есть проблемы'],['Pixel-like координаты',ld.problems?.pixelLike?.length||0],['Координаты вне 0–100',ld.problems?.outOfRange?.length||0],['Устройств из панели',d.counts?.devices],['Entity из HA',d.counts?.haStates],['Не найдены в HA',d.counts?.missingInHa],['Дубли entity_id',d.counts?.duplicates],['Без комнаты',d.counts?.noRoom],['Без координат',d.counts?.noCoordinates],['Backup layout',d.counts?.backups],['Сформировано',d.generatedAt]
-    ].map(x=>infoRow(x[0],x[1])).join('')}</table>`;
+      infoSection('Система'),
+      infoRow('Название',d.brand?.name||'ALLHA-3D'),
+      infoRow('Версия add-on',d.version),
+      infoRow('Разработчик',d.brand?.developer||'Lepi4'),
+      infoRow('HA API',d.ok?'OK':'Ошибка'),
+      infoRow('Ошибка HA',d.haError||'—'),
+      infoRow('Режим',d.mode),
+      infoRow('DATA_DIR',d.dataDir),
+      infoRow('HA API base',d.haApiBase),
+      infoRow('Supervisor token',d.hasSupervisorToken?'есть':'нет'),
+      infoSection('Runtime storage'),
+      infoRow('layout.json в /data',d.storage?.layoutExists?'есть':'нет'),
+      infoRow('ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'),
+      infoRow('devices.js в /data',d.storage?.devicesInData?'есть':'fallback'),
+      infoRow('lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'),
+      infoSection('Images storage'),
+      infoRow('/data/images',d.images?.exists?'есть':'нет'),
+      infoRow('/data/images/overview',d.images?.overviewDirExists?'есть':'нет'),
+      infoRow('/data/images/rooms',d.images?.roomsDirExists?'есть':'нет'),
+      infoRow('/data/images/originals',d.images?.originalsDirExists?'есть':'нет'),
+      infoRow('/data/backups',d.images?.backupsDirExists?'есть':'нет'),
+      infoRow('overview image',d.images?.overview?.mode||'—'),
+      infoRow('rooms images count',d.images?.customRoomImages??0),
+      infoRow('images_meta.json',d.images?.metaOk?'OK':'error/missing'),
+      infoSection('Layout'),
+      infoRow('Layout координаты',ld.ok?'OK':'есть проблемы'),
+      infoRow('Pixel-like координаты',ld.problems?.pixelLike?.length||0),
+      infoRow('Координаты вне 0–100',ld.problems?.outOfRange?.length||0),
+      infoSection('Devices'),
+      infoRow('Устройств из панели',d.counts?.devices),
+      infoRow('Entity из HA',d.counts?.haStates),
+      infoRow('Не найдены в HA',d.counts?.missingInHa),
+      infoRow('Дубли entity_id',d.counts?.duplicates),
+      infoRow('Без комнаты',d.counts?.noRoom),
+      infoRow('Без координат',d.counts?.noCoordinates),
+      infoRow('Backup layout',d.counts?.backups),
+      infoRow('Сформировано',d.generatedAt)
+    ].join('')}</table>`;
   } else if(state.infoTab==='entities'){
     box.innerHTML=`<h3>Проблемы entity_id</h3><p class="muted">Показаны первые 200 записей каждого типа.</p>`+
       `<h4>Не найдены в HA (${d.counts?.missingInHa||0})</h4><div class="info-list">${(d.missingInHa||[]).map(x=>`<code>${esc(x.entity_id)}</code> <span>${esc(x.name||'')}</span>`).join('<br>')||'—'}</div>`+
@@ -2493,6 +2595,10 @@ function bindGlobal(){
   el('btn-close-faq').onclick=()=>closeModal('faq-modal');
   el('faq-modal').addEventListener('click',e=>{if(e.target.id==='faq-modal')closeModal('faq-modal')});
   el('btn-refresh-info').onclick=loadDiagnostics;
+  const overviewFile=el('overview-image-file');
+  el('btn-upload-overview-image').onclick=()=>overviewFile?.click();
+  if(overviewFile) overviewFile.onchange=e=>{ const file=e.target.files?.[0]; uploadOverviewImage(file); e.target.value=''; };
+  el('btn-reset-overview-image').onclick=resetOverviewImage;
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
   el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
@@ -2618,6 +2724,7 @@ async function initialHaSync(){
   await loadSourceConfig();
   await loadPersistedUiState();
   await loadAttention();
+  await loadImagesInfo();
   loadKioskLockLocal();
   bindGlobal();
   startClock();
@@ -2636,7 +2743,7 @@ async function initialHaSync(){
 window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
 window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});
 window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
-document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content')) return; e.preventDefault(); }, {passive:false});
+document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content,.faq-frame,.faq-modal-card')) return; e.preventDefault(); }, {passive:false});
 
 
 /* v3.4.12: keep mobile bottom bar and kiosk controls from covering open modals */
