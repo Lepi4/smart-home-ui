@@ -1,6 +1,6 @@
 name: ALLHA-2D
 slug: smart_home_ui_local
-version: "3.5.9.4"
+version: "3.5.9.5"
 description: ALLHA-2D — local 2D floor-plan Smart Home UI for Home Assistant
 url: https://github.com/Lepi4/smart-home-ui
 image: ghcr.io/lepi4/smart-home-ui-{arch}

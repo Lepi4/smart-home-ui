@@ -950,21 +950,33 @@ function cancelEditChanges(){
 
 
 function placedKioskTileDevices(){
+  // Kiosk Tile Mode intentionally uses ONLY overview markers.
+  // Room buttons can still open room-specific device lists; kiosk tiles stay
+  // a dashboard of devices explicitly placed on the common overview map.
+  const overviewMarkers=state.layout.overviewMarkers||{};
+  const byRoom=new Map();
   const seen=new Set();
-  const groups=[];
-  const addGroup=(id,label,ids)=>{
-    const items=[];
-    (ids||[]).forEach(entity=>{ if(seen.has(entity)) return; const d=devices().find(x=>x.entity_id===entity); if(!d) return; seen.add(entity); items.push(d); });
-    if(items.length) groups.push({id,label,items});
-  };
-  addGroup('overview','Общий план', Object.keys(state.layout.overviewMarkers||{}));
-  (ROOMS||[]).filter(r=>r.id!=='overview').forEach(r=>addGroup(r.id, r.label || roomGroupLabel(r.id), Object.keys((state.layout.roomMarkers||{})[r.id]||{})));
-  return groups;
+  Object.keys(overviewMarkers).forEach(entity=>{
+    if(seen.has(entity)) return;
+    const d=devices().find(x=>x.entity_id===entity);
+    if(!d) return;
+    seen.add(entity);
+    const rid=normalizedRoomId(d.room || inferRoomIdFromDevice(d) || '__noroom') || '__noroom';
+    if(!byRoom.has(rid)) byRoom.set(rid,[]);
+    byRoom.get(rid).push(d);
+  });
+  const roomOrder=(ROOMS||[]).filter(r=>r.id!=='overview').map(r=>r.id);
+  const ids=[...roomOrder.filter(id=>byRoom.has(id)), ...[...byRoom.keys()].filter(id=>!roomOrder.includes(id)).sort((a,b)=>roomGroupLabel(a).localeCompare(roomGroupLabel(b),'ru'))];
+  return ids.map(id=>({
+    id,
+    label:roomGroupLabel(id),
+    items:(byRoom.get(id)||[]).slice().sort((a,b)=>displayName(a).localeCompare(displayName(b),'ru'))
+  })).filter(g=>g.items.length);
 }
 function kioskTileDeviceHtml(d){
   const st=stateText(d);
   const value=markerValueLabel(d)||st;
-  return `<button type="button" class="kiosk-tile-device ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}"><span class="kiosk-tile-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-state">${esc(value)}</span></button>`;
+  return `<button type="button" class="kiosk-tile-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}"><span class="kiosk-tile-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-text"><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-room-name">${esc(roomGroupLabel(d.room || inferRoomIdFromDevice(d) || '__noroom'))}</span></span><span class="kiosk-tile-state state">${esc(value)}</span></button>`;
 }
 function renderKioskTiles(){
   const view=el('kiosk-tile-view');
@@ -978,7 +990,7 @@ function renderKioskTiles(){
   const tileBtn=el('btn-kiosk-tile-mode'); if(tileBtn) tileBtn.classList.toggle('active', !!state.ui.kioskTileMode);
   if(!active || !pages) return;
   const groups=placedKioskTileDevices();
-  if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">Нет размещённых устройств. Карточки строятся только из маркеров, расставленных на карте.</div>'; if(pager) pager.innerHTML=''; return; }
+  if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">Нет устройств, размещённых на общем плане. Карточки строятся только из маркеров overview-карты.</div>'; if(pager) pager.innerHTML=''; return; }
   const perPage=24;
   const flat=[];
   groups.forEach(g=>flat.push({type:'head',label:g.label}, ...g.items.map(d=>({type:'device',d}))));
@@ -3965,7 +3977,7 @@ function bindGlobal(){
   const exitKiosk=el('btn-exit-kiosk');
   if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
   const kioskMapMode=el('btn-kiosk-map-mode'); if(kioskMapMode) kioskMapMode.onclick=()=>{ state.ui.kioskTileMode=false; saveUiPrefs(); render(); };
-  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); render(); const groups=placedKioskTileDevices(); if(!groups.length) showToast('Карточки строятся только из размещённых маркеров на карте'); };
+  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); render(); const groups=placedKioskTileDevices(); if(!groups.length) showToast('Карточки строятся только из устройств, размещённых на общем плане'); };
   const kioskAttention=el('btn-kiosk-attention'); if(kioskAttention) kioskAttention.onclick=openAttentionModal;
   const closeAttention=el('btn-close-attention'); if(closeAttention) closeAttention.onclick=closeAttentionModal;
   const attentionModal=el('attention-modal'); if(attentionModal) attentionModal.addEventListener('click',e=>{ if(e.target.id==='attention-modal') closeAttentionModal(); });
