@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-2D HA Add-on v3.5.8.10</title>
+  <title>ALLHA-2D HA Add-on v3.5.9</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,6 +13,7 @@
   <button type="button" id="btn-exit-kiosk" class="kiosk-exit-btn" title="Выйти из режима киоска">⋮ Выйти</button>
   <div id="kiosk-lock-badge" class="kiosk-lock-badge hidden">🔒 Заблокировано</div>
   <div id="kiosk-level-switcher" class="kiosk-level-switcher hidden" aria-label="Переключение уровней"></div>
+  <div id="kiosk-view-switcher" class="kiosk-view-switcher hidden"><button type="button" id="btn-kiosk-map-mode">Карта</button><button type="button" id="btn-kiosk-tile-mode">Карточки</button></div>
   <div id="kiosk-room-overlay" class="kiosk-room-overlay hidden" aria-label="Список комнат в режиме киоска">
     <div class="kiosk-room-head"><strong>Комнаты</strong><button type="button" id="btn-close-kiosk-rooms">×</button></div>
     <button type="button" id="btn-kiosk-overview" class="kiosk-room-item kiosk-overview-item">Общий план</button>
@@ -71,6 +72,11 @@
         <div id="kiosk-widget" class="kiosk-widget hidden" aria-label="Часы и погода">
           <div id="kiosk-clock" class="kiosk-clock">--:--</div>
           <div id="kiosk-weather" class="kiosk-weather"></div>
+        </div>
+        <div id="project-setup-empty" class="project-setup-empty hidden">
+          <strong>Проект пустой</strong>
+          <p>Запустите мастер: профиль → уровни → карты → источники Lovelace → комнаты → зоны → датчики.</p>
+          <button type="button" id="btn-project-setup-empty">Мастер настройки</button>
         </div>
         <div id="overview-view" class="view active">
           <div id="overview-stage" class="plan-stage">
@@ -149,6 +155,7 @@
         <div id="device-list" class="device-list"></div>
       </aside>
     </section>
+    <section id="kiosk-tile-view" class="kiosk-tile-view hidden" aria-label="Kiosk карточки"><div class="kiosk-tile-head"><h2>Карточки устройств</h2><p>Только размещённые элементы текущего проекта. Редактирование выполняется на карте.</p></div><div id="kiosk-tile-pages" class="kiosk-tile-pages"></div><div id="kiosk-tile-pager" class="kiosk-tile-pager"></div></section>
   </main>
 
   <div id="settings-modal" class="modal hidden">
@@ -172,6 +179,7 @@
         <label class="settings-check"><input type="checkbox" id="pref-debug-mode"> Debug mode: показывать координатные окна</label>
         <label class="settings-check"><input type="checkbox" id="pref-invisible-zones"> Невидимые зоны: кликабельны, но не видны</label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-mode"> Режим киоска: скрыть панели и оставить только план</label>
+        <label class="settings-check"><input type="checkbox" id="pref-kiosk-tile-mode"> Kiosk-карточки вместо карты</label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-autolock"> Автоблокировка киоска</label>
         <label>Автоблокировка после, сек<input id="pref-kiosk-autolock-seconds" type="number" min="5" max="300" value="15"></label>
         <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
@@ -200,6 +208,7 @@
         <button type="button" data-settings-panel="rooms">Комнаты / зоны / датчики</button>
         <button type="button" data-settings-panel="sources">Источники устройств</button>
         <button type="button" data-settings-panel="profiles">Профили</button>
+        <button type="button" id="btn-open-project-setup-wizard-settings">Мастер настройки</button>
         <button type="button" data-settings-panel="levels">Уровни / области</button>
         <button type="button" data-settings-panel="backups">Backup / архивы</button>
       </div>
