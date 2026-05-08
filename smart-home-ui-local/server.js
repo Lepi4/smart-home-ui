@@ -627,10 +627,10 @@ function atomicWriteJson(file, payload){
 }
 function defaultUiState(){
   return {
-    version: 1,
+    version: 2,
     selectedRoom: 'overview',
     ui: {
-      hideSidebar:false, hideDevicePanel:false, hideToolbar:false,
+      hideSidebar:true, hideDevicePanel:false, hideToolbar:false,
       mobileMode:false, autoHide:false, compact:false, darkTheme:true,
       kioskWidget:false, kioskMode:false, weatherEntity:'',
       haloScale:0.50, hardwareScale:1.00,
@@ -644,10 +644,19 @@ function defaultUiState(){
 function loadUiState(){
   const loaded = readJsonSafe(UI_STATE_PATH, {});
   const def = defaultUiState();
+  const legacyUi = (loaded && loaded.ui && typeof loaded.ui === 'object') ? loaded.ui : {};
+  const cleanUi = { ...def.ui };
+  for(const key of Object.keys(def.ui)){
+    if(Object.prototype.hasOwnProperty.call(legacyUi, key)) cleanUi[key] = legacyUi[key];
+  }
+  // Older resets could revive the legacy left sidebar. New/current defaults keep it hidden
+  // unless the user explicitly opens it after the reset.
+  if(Number(loaded?.version || 0) < 2 && !Object.prototype.hasOwnProperty.call(legacyUi, 'hideSidebar')) cleanUi.hideSidebar = true;
   return {
     ...def,
     ...loaded,
-    ui: { ...def.ui, ...(loaded.ui||{}) },
+    version: Math.max(Number(loaded?.version)||0, def.version),
+    ui: cleanUi,
     viewport: { ...def.viewport, ...(loaded.viewport||{}), overview:{...def.viewport.overview, ...(loaded.viewport?.overview||{})}, rooms: loaded.viewport?.rooms || {} }
   };
 }
@@ -1006,7 +1015,7 @@ function factoryResetProject(confirmWord){
   atomicWriteJson(path.join(DATA_DIR,'lovelace_raw.json'), { version:1, views:[] });
 
   ensureDataStore();
-  return { ok:true, reset:true, backup:path.basename(backupDir), backedUp, config: publicConfig(loadAddonConfig()), layout: loadLayout(), profiles: profilesDiagnostics(), levels: levelsDiagnostics() };
+  return { ok:true, reset:true, backup:path.basename(backupDir), backedUp, config: publicConfig(loadAddonConfig()), layout: loadLayout(), uiState: loadUiState(), profiles: profilesDiagnostics(), levels: levelsDiagnostics() };
 }
 
 function defaultImagesMeta(){

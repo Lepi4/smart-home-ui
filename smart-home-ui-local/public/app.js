@@ -12,7 +12,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:true, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set()
 };
@@ -3093,9 +3093,13 @@ function applyFactoryResetClientState(res={}){
   state.images = { version:1, overview:null, rooms:{} };
   state.profiles = res.profiles || null;
   state.levels = res.levels || null;
-  state.ui = { ...state.ui, hideSidebar:false, hideDevicePanel:false, hideToolbar:false, kioskMode:false, showZones:true, invisibleZones:false, showMarkers:true, showSensors:true };
+  state.serverUiState = res.uiState || null;
+  state.ui = { ...state.ui, hideSidebar:true, hideDevicePanel:false, hideToolbar:false, kioskMode:false, mobileMode:false, autoHide:false, compact:false, showZones:true, invisibleZones:false, showMarkers:true, showSensors:true };
+  try{
+    ['ui_prefs','last_view','viewport_prefs','kiosk_locked','card_font_size'].forEach(k=>localStorage.removeItem(k));
+    sessionStorage.clear();
+  }catch(e){}
   state.viewport = { overview:{zoom:1,panX:0,panY:0}, rooms:{} };
-  try{ localStorage.removeItem('ui_prefs'); localStorage.removeItem('last_view'); }catch(e){}
   refreshRuntimeRooms();
   applyUiPrefs();
   render();

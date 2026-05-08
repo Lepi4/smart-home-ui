@@ -1,3 +1,12 @@
+## v3.5.8.6 — factory reset UI defaults hotfix
+
+- Исправлен случай, когда после полного сброса данных появлялось старое левое меню `ALLHA-2D LOCAL`.
+- `defaultUiState()` обновлён до `version: 2`; актуальный дефолт скрывает legacy sidebar.
+- `loadUiState()` теперь очищает старые/лишние UI-ключи и не переносит неподдерживаемые legacy-поля.
+- Frontend после factory reset очищает `ui_prefs`, `last_view`, `viewport_prefs`, `kiosk_locked`, `card_font_size` и `sessionStorage`.
+- Factory reset API возвращает актуальный `uiState`, чтобы клиент применял новый UI сразу до перезагрузки страницы.
+- README/FAQ обновлены под v3.5.8.6.
+
 # Changelog
 
 ## v3.5.8.5 — factory reset runtime cleanup
