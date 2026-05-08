@@ -14,7 +14,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
 };
 
 const STATIC_ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -949,23 +949,17 @@ function cancelEditChanges(){
 }
 
 
-function placedKioskTileDevices(){
-  // Kiosk Tile Mode intentionally uses ONLY overview markers.
-  // Room buttons can still open room-specific device lists; kiosk tiles stay
-  // a dashboard of devices explicitly placed on the common overview map.
-  const overviewMarkers=state.layout.overviewMarkers||{};
+function groupDevicesByRoomForKioskTile(list){
   const byRoom=new Map();
   const seen=new Set();
-  Object.keys(overviewMarkers).forEach(entity=>{
-    if(seen.has(entity)) return;
-    const d=devices().find(x=>x.entity_id===entity);
-    if(!d) return;
-    seen.add(entity);
+  (list||[]).forEach(d=>{
+    if(!d || seen.has(d.entity_id)) return;
+    seen.add(d.entity_id);
     const rid=normalizedRoomId(d.room || inferRoomIdFromDevice(d) || '__noroom') || '__noroom';
     if(!byRoom.has(rid)) byRoom.set(rid,[]);
     byRoom.get(rid).push(d);
   });
-  const roomOrder=(ROOMS||[]).filter(r=>r.id!=='overview').map(r=>r.id);
+  const roomOrder=(ROOMS||[]).filter(r=>r.id!=='overview').map(r=>normalizedRoomId(r.id));
   const ids=[...roomOrder.filter(id=>byRoom.has(id)), ...[...byRoom.keys()].filter(id=>!roomOrder.includes(id)).sort((a,b)=>roomGroupLabel(a).localeCompare(roomGroupLabel(b),'ru'))];
   return ids.map(id=>({
     id,
@@ -973,10 +967,55 @@ function placedKioskTileDevices(){
     items:(byRoom.get(id)||[]).slice().sort((a,b)=>displayName(a).localeCompare(displayName(b),'ru'))
   })).filter(g=>g.items.length);
 }
+function placedKioskTileDevices(){
+  // Room filter is opened from the kiosk room list: it is a room device list,
+  // not the overview dashboard. Default tile dashboard stays overview-only.
+  const filter=normalizedRoomId(state.kioskTileRoomFilter||'');
+  if(filter && filter!=='overview'){
+    const all=devices().filter(d=>normalizedRoomId(effectiveDeviceRoomId(d) || d.room || inferRoomIdFromDevice(d))===filter && IMPORTANT_DOMAINS.has(d.domain));
+    return groupDevicesByRoomForKioskTile(all);
+  }
+  const overviewMarkers=state.layout.overviewMarkers||{};
+  const list=[];
+  const seen=new Set();
+  Object.keys(overviewMarkers).forEach(entity=>{
+    if(seen.has(entity)) return;
+    const d=devices().find(x=>x.entity_id===entity);
+    if(!d || !IMPORTANT_DOMAINS.has(d.domain)) return;
+    seen.add(entity);
+    list.push(d);
+  });
+  return groupDevicesByRoomForKioskTile(list);
+}
 function kioskTileDeviceHtml(d){
   const st=stateText(d);
   const value=markerValueLabel(d)||st;
   return `<button type="button" class="kiosk-tile-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}"><span class="kiosk-tile-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-text"><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-room-name">${esc(roomGroupLabel(d.room || inferRoomIdFromDevice(d) || '__noroom'))}</span></span><span class="kiosk-tile-state state">${esc(value)}</span></button>`;
+}
+function buildKioskTilePages(groups, cols, maxUnits){
+  const pages=[];
+  let html='';
+  let units=0;
+  const headerUnits=0.42;
+  const deviceUnit=1;
+  const flush=()=>{ if(html.trim()){ pages.push(html); html=''; units=0; } };
+  groups.forEach(g=>{
+    const header=`<h3 class="kiosk-tile-room">${esc(g.label)}</h3>`;
+    if(units + headerUnits + deviceUnit > maxUnits) flush();
+    html += header;
+    units += headerUnits;
+    g.items.forEach(d=>{
+      if(units + deviceUnit > maxUnits && html.trim()){
+        flush();
+        html += header;
+        units += headerUnits;
+      }
+      html += kioskTileDeviceHtml(d);
+      units += deviceUnit;
+    });
+  });
+  flush();
+  return pages.length ? pages : [''];
 }
 function renderKioskTiles(){
   const view=el('kiosk-tile-view');
@@ -990,38 +1029,50 @@ function renderKioskTiles(){
   const tileBtn=el('btn-kiosk-tile-mode'); if(tileBtn) tileBtn.classList.toggle('active', !!state.ui.kioskTileMode);
   if(!active || !pages) return;
   const groups=placedKioskTileDevices();
-  if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">Нет устройств, размещённых на общем плане. Карточки строятся только из маркеров overview-карты.</div>'; if(pager) pager.innerHTML=''; return; }
+  const roomFilter=normalizedRoomId(state.kioskTileRoomFilter||'');
+  const head=view?.querySelector('.kiosk-tile-head');
+  if(head){
+    if(roomFilter && roomFilter!=='overview'){
+      head.innerHTML=`<h2>Устройства: ${esc(roomGroupLabel(roomFilter))}</h2><p>Список всех устройств выбранной комнаты. Кнопка “Комнаты” выбирает другую комнату, “Общий план” возвращает карту.</p><button type="button" class="kiosk-tile-back" id="btn-kiosk-tile-clear-room">Плитки общего плана</button>`;
+    }else{
+      head.innerHTML='<h2>Карточки устройств</h2><p>Только устройства, размещённые на общем плане. Редактирование выполняется на карте.</p>';
+    }
+    const clear=el('btn-kiosk-tile-clear-room'); if(clear) clear.onclick=()=>{ state.kioskTileRoomFilter=''; state.kioskTilePage=0; render(); };
+  }
+  if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">Нет устройств для отображения. Основной экран карточек строится только из маркеров overview-карты.</div>'; if(pager) pager.innerHTML=''; return; }
 
   const totalDevices=groups.reduce((sum,g)=>sum+g.items.length,0);
-  const groupCount=groups.length;
   const vw=Math.max(320, window.innerWidth || 1280);
   const vh=Math.max(320, window.innerHeight || 720);
-  const headerReserve = vw < 720 ? 96 : 76;
-  const footerReserve = vw < 720 ? 76 : 58;
+  const headerReserve = vw < 720 ? 104 : 86;
+  const footerReserve = 36;
   const availableH=Math.max(260, vh - headerReserve - footerReserve);
   const availableW=Math.max(300, vw - 28);
-  let cols=clamp(Math.ceil(Math.sqrt(Math.max(1,totalDevices) * availableW / Math.max(1,availableH*1.35))), vw<760?2:3, vw>1600?8:7);
-  let best={cols, tileH:86, rows:999};
-  for(let c=cols;c<=9;c++){
-    const deviceRows=groups.reduce((sum,g)=>sum+Math.ceil(g.items.length/c),0);
-    const rows=deviceRows + groupCount;
-    const gap=c>=7?6:8;
-    const headH=c>=7?26:32;
-    const tileH=Math.floor((availableH - (groupCount*headH) - (rows*gap)) / Math.max(1,deviceRows));
-    if(tileH>=54){ best={cols:c,tileH:Math.min(112,tileH),rows}; break; }
-    best={cols:c,tileH:Math.max(44,tileH),rows};
-  }
-  const compact = best.tileH < 72 || totalDevices > 24;
+  let cols=clamp(Math.floor(availableW / 168), vw<760?2:4, vw>1700?11:9);
+  if(totalDevices>36 && vw>1500) cols=Math.min(12, cols+1);
+  let tileH=clamp(Math.floor(availableH / 9.2), 42, 78);
+  if(totalDevices>30) tileH=Math.min(tileH,58);
+  if(totalDevices>45) tileH=Math.min(tileH,48);
+  const compact = tileH < 62 || totalDevices > 28;
+  const ultra = tileH < 52 || totalDevices > 42;
   if(view){
-    view.style.setProperty('--kt-cols', String(best.cols));
-    view.style.setProperty('--kt-tile-h', `${best.tileH}px`);
-    view.style.setProperty('--kt-gap', compact ? '6px' : '9px');
+    view.style.setProperty('--kt-cols', String(cols));
+    view.style.setProperty('--kt-tile-h', `${tileH}px`);
+    view.style.setProperty('--kt-gap', ultra ? '4px' : compact ? '5px' : '7px');
     view.classList.toggle('kiosk-tiles-compact', compact);
-    view.classList.toggle('kiosk-tiles-ultra', best.tileH < 58);
+    view.classList.toggle('kiosk-tiles-ultra', ultra);
+    view.classList.toggle('kiosk-tiles-room-filter', !!(roomFilter && roomFilter!=='overview'));
   }
-
-  pages.innerHTML=`<div class="kiosk-tile-page active">${groups.map(g=>`<h3 class="kiosk-tile-room">${esc(g.label)}</h3>${g.items.map(d=>kioskTileDeviceHtml(d)).join('')}`).join('')}</div>`;
-  if(pager) pager.innerHTML='';
+  const maxRows=Math.max(3, Math.floor((availableH - 12) / (tileH + (ultra?4:compact?5:7))));
+  const maxUnits=Math.max(cols*2, cols * maxRows);
+  const pageHtml=buildKioskTilePages(groups, cols, maxUnits);
+  state.kioskTilePage=clamp(Number(state.kioskTilePage||0),0,pageHtml.length-1);
+  pages.innerHTML=pageHtml.map((h,i)=>`<div class="kiosk-tile-page ${i===state.kioskTilePage?'active':''}">${h}</div>`).join('');
+  if(pager){
+    pager.innerHTML=pageHtml.length>1 ? `<button type="button" id="btn-kiosk-tile-prev">‹</button><span>${state.kioskTilePage+1} / ${pageHtml.length}</span><button type="button" id="btn-kiosk-tile-next">›</button>` : '';
+    const prev=el('btn-kiosk-tile-prev'); if(prev) prev.onclick=()=>{ state.kioskTilePage=(state.kioskTilePage+pageHtml.length-1)%pageHtml.length; render(); };
+    const next=el('btn-kiosk-tile-next'); if(next) next.onclick=()=>{ state.kioskTilePage=(state.kioskTilePage+1)%pageHtml.length; render(); };
+  }
   qsa('[data-kiosk-tile-device]', pages).forEach(btn=>{ const d=devices().find(x=>x.entity_id===btn.dataset.kioskTileDevice); if(d) attachPressActions(btn,d); });
 }
 
@@ -2583,7 +2634,10 @@ function renderKioskRoomOverlay(){
     b.type='button';
     b.className='kiosk-room-item'+(normalizedRoomId(state.selectedRoom)===normalizedRoomId(r.id)?' active':'');
     b.textContent=r.label;
-    b.onclick=()=>{ selectRoom(r.id); hideKioskRooms(); };
+    b.onclick=()=>{
+      if(state.ui.kioskMode && state.ui.kioskTileMode){ state.kioskTileRoomFilter=r.id; state.kioskTilePage=0; hideKioskRooms(); render(); }
+      else { selectRoom(r.id); hideKioskRooms(); }
+    };
     list.appendChild(b);
   });
 }
@@ -2639,7 +2693,9 @@ function renderLevelSwitcher(){
   const levels=currentLevelList();
   const active=activeLevelMeta();
   const others=levels.filter(l=>l.id !== active.id);
-  const html = levels.length > 1 ? others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
+  const levelHtml = levels.length > 1 ? others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
+  const overviewHtml = (state.ui.kioskMode && !state.ui.kioskTileMode && state.selectedRoom!=='overview') ? '<button type="button" class="level-switch-btn overview-switch-btn" data-kiosk-overview-home="1">Общий план</button>' : '';
+  const html = overviewHtml + levelHtml;
   ['level-switcher','kiosk-level-switcher'].forEach(id=>{ const box=el(id); if(box){ box.innerHTML=html; box.classList.toggle('hidden', !html); } });
 }
 async function loadRuntimeScripts(){
@@ -3852,7 +3908,7 @@ function bindGlobal(){
     const dup=e.target.closest('[data-profile-duplicate]'); if(dup){ duplicateProfileFromSettings(dup.dataset.profileDuplicate); return; }
     const del=e.target.closest('[data-profile-delete]'); if(del){ deleteProfileFromSettings(del.dataset.profileDelete); return; }
   });
-  document.addEventListener('click', e=>{ const q=e.target.closest('[data-quick-level]'); if(q){ activateLevelQuick(q.dataset.quickLevel); } });
+  document.addEventListener('click', e=>{ const home=e.target.closest('[data-kiosk-overview-home]'); if(home){ selectRoom('overview'); return; } const q=e.target.closest('[data-quick-level]'); if(q){ activateLevelQuick(q.dataset.quickLevel); } });
   const levelWizardModal=el('level-setup-wizard-modal');
   if(levelWizardModal) levelWizardModal.addEventListener('click', e=>{
     const wizActivate=e.target.closest('[data-level-wizard-activate]'); if(wizActivate){ (async()=>{ await ensureWizardLevelActive(wizActivate.dataset.levelWizardActivate); openLevelSetupWizard(wizActivate.dataset.levelWizardActivate); })(); return; }
@@ -3997,9 +4053,9 @@ function bindGlobal(){
   const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); resetKioskAutoLock(); showToast('Режим киоска включён'); };
   el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
   const exitKiosk=el('btn-exit-kiosk');
-  if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
-  const kioskMapMode=el('btn-kiosk-map-mode'); if(kioskMapMode) kioskMapMode.onclick=()=>{ state.ui.kioskTileMode=false; saveUiPrefs(); render(); };
-  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); render(); const groups=placedKioskTileDevices(); if(!groups.length) showToast('Карточки строятся только из устройств, размещённых на общем плане'); };
+  if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.kioskTileRoomFilter=''; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
+  const kioskMapMode=el('btn-kiosk-map-mode'); if(kioskMapMode) kioskMapMode.onclick=()=>{ state.ui.kioskTileMode=false; state.kioskTileRoomFilter=''; saveUiPrefs(); render(); };
+  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTileRoomFilter=''; state.kioskTilePage=0; saveUiPrefs(); render(); const groups=placedKioskTileDevices(); if(!groups.length) showToast('Карточки строятся только из устройств, размещённых на общем плане'); };
   const kioskAttention=el('btn-kiosk-attention'); if(kioskAttention) kioskAttention.onclick=openAttentionModal;
   const closeAttention=el('btn-close-attention'); if(closeAttention) closeAttention.onclick=closeAttentionModal;
   const attentionModal=el('attention-modal'); if(attentionModal) attentionModal.addEventListener('click',e=>{ if(e.target.id==='attention-modal') closeAttentionModal(); });
