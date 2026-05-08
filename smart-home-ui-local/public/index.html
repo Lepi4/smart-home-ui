@@ -318,6 +318,42 @@
   </div>
 
 
+
+  <div id="project-setup-wizard-modal" class="modal hidden level-setup-wizard-modal project-setup-wizard-modal">
+    <div class="modal-card level-setup-wizard-card project-setup-wizard-card">
+      <div class="modal-head">
+        <h2 id="project-setup-wizard-title">Мастер настройки</h2>
+        <button type="button" id="btn-close-project-setup-wizard" class="close-word">× Закрыть</button>
+      </div>
+      <div id="project-setup-wizard-body" class="level-setup-wizard-body project-setup-wizard-body">
+        <p class="muted">Мастер создаёт профиль, уровни и затем проводит по настройке каждого уровня.</p>
+      </div>
+      <div class="modal-actions level-setup-wizard-actions project-setup-wizard-actions">
+        <button type="button" id="btn-project-setup-back">Назад</button>
+        <button type="button" id="btn-project-setup-next">Далее</button>
+        <button type="button" id="btn-project-setup-create" class="hidden">Создать и перейти к настройке уровня</button>
+        <button type="button" id="btn-project-setup-cancel">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="level-setup-wizard-modal" class="modal hidden level-setup-wizard-modal">
+    <div class="modal-card level-setup-wizard-card">
+      <div class="modal-head">
+        <h2 id="level-setup-wizard-title">Мастер настройки уровня</h2>
+        <button type="button" id="btn-close-level-setup-wizard" class="close-word">× Закрыть</button>
+      </div>
+      <div id="level-setup-wizard-body" class="level-setup-wizard-body">
+        <p class="muted">Выберите уровень в настройках и нажмите “Мастер настройки”.</p>
+      </div>
+      <div class="modal-actions level-setup-wizard-actions">
+        <button type="button" id="btn-level-setup-refresh">Обновить статус</button>
+        <button type="button" id="btn-level-setup-close">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
   <div id="faq-modal" class="modal hidden">
     <div class="modal-card faq-modal-card">
       <div class="modal-head">

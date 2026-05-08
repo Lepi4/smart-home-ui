@@ -1686,3 +1686,41 @@ body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions #btn-hide-sidebar
 .placement-editor-zone-draw.hidden{display:none!important;}
 #btn-delete-placement-zone.danger{background:#5b1d1d;color:#fff;}
 #btn-clear-zone-draw{background:#263243;}
+
+/* v3.5.8.13 — Level setup wizard */
+.level-status-grid{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+.level-status-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:700;color:#dce6f3}
+.level-status-chip.ok{border-color:rgba(58,203,127,.4);background:rgba(58,203,127,.12);color:#b9f3d3}
+.level-status-chip.warn{border-color:rgba(230,165,58,.45);background:rgba(230,165,58,.12);color:#f5d08a}
+
+.level-setup-wizard-card{max-width:min(760px,96vw);}
+.level-setup-wizard-body{display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto;padding-right:4px;-webkit-overflow-scrolling:touch;}
+.level-wizard-summary{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);border-radius:18px;padding:12px 14px;margin-bottom:4px;}
+.level-wizard-step{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.055);border-radius:18px;padding:12px 14px;}
+.level-wizard-step.ok{border-color:rgba(58,203,127,.32);background:rgba(58,203,127,.08);}
+.level-wizard-step.warn{border-color:rgba(230,165,58,.34);background:rgba(230,165,58,.08);}
+.level-wizard-step-head{display:flex;align-items:center;gap:10px;}
+.level-wizard-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:rgba(255,255,255,.12);font-weight:900;}
+.level-wizard-badge{display:inline-flex;margin-left:6px;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:800;}
+.level-wizard-badge.ok{background:rgba(58,203,127,.18);color:#b9f3d3;}
+.level-wizard-badge.warn{background:rgba(230,165,58,.18);color:#f5d08a;}
+.level-wizard-warning{border-left:3px solid rgba(230,165,58,.7);padding-left:10px;color:#f5d08a;font-weight:700;}
+.level-wizard-step-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+.level-wizard-note{margin:4px 2px 0;}
+.level-setup-wizard-actions{justify-content:flex-end;}
+@media(max-width:720px){.level-setup-wizard-card{width:96vw;max-height:92vh}.level-setup-wizard-body{max-height:68vh}.level-wizard-step-actions button{width:100%;}}
+
+/* v3.5.8.13: project setup wizard */
+.project-wizard-progress{display:flex;gap:8px;margin:0 0 10px;align-items:center;}
+.project-wizard-progress span{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:999px;background:rgba(255,255,255,.10);font-weight:900;border:1px solid rgba(255,255,255,.12);}
+.project-wizard-progress span.active{background:rgba(84,163,255,.24);border-color:rgba(84,163,255,.55);}
+.project-wizard-progress span.done{background:rgba(58,203,127,.16);border-color:rgba(58,203,127,.38);}
+.wizard-field{display:flex;flex-direction:column;gap:6px;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:12px;background:rgba(255,255,255,.055);}
+.wizard-field span{font-weight:800;}
+.wizard-field input{width:100%;min-height:42px;border-radius:12px;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.24);color:var(--text);padding:9px 11px;font-size:16px;}
+.wizard-level-names{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;}
+.wizard-review{border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:12px;background:rgba(255,255,255,.055);}
+.wizard-review p{margin:4px 0 8px;}
+.wizard-review ol{margin:6px 0 0 22px;padding:0;}
+.project-setup-wizard-actions{gap:8px;}
+@media(max-width:720px){.project-setup-wizard-actions button{width:100%;}.wizard-level-names{grid-template-columns:1fr;}}

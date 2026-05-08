@@ -14,7 +14,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set()
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
 };
 
 const STATIC_ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -2595,6 +2595,7 @@ function renderProfilesManager(){
     `<label class="settings-check"><input type="checkbox" id="new-profile-copy-zones"> Дублировать зоны из текущего профиля</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-profile-copy-markers"> Дублировать значки/маркеры из текущего профиля</label>`+
     `<p class="muted">Создать профиль с нуля = пустой профиль без комнат/устройств/источников. Дублирование профиля = полная копия. Галочки копируют только зоны/значки, без автопарсинга старых карт.</p>`+
+    `<button type="button" id="btn-open-project-setup-wizard" ${canCreate?'':'disabled'}>Мастер настройки</button>`+
     `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 5 профилей'}</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
     `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей. После переключения профиль лучше перезагрузить страницу.</p>`;
@@ -2684,16 +2685,26 @@ function renderLevelsManager(){
   const rows=levels.map(l=>{
     const active=l.id===activeId || l.active;
     const sc=l.sourceConfig || {};
+    const st=l.status || {};
     const sourceText=String(sc.dashboardPathText || (Array.isArray(sc.dashboardPaths)?sc.dashboardPaths.join('\n'):'') || '');
+    const statusHtml = `<div class="level-status-grid">`+
+      `<span class="level-status-chip ${st.hasOverviewImage?'ok':'warn'}">Карта: ${st.hasOverviewImage?'есть':'fallback'}</span>`+
+      `<span class="level-status-chip ${st.hasSources?'ok':'warn'}">Источники: ${Number(st.sourcesCount||0)}</span>`+
+      `<span class="level-status-chip">Устройства: ${Number(st.devicesCount||0)}</span>`+
+      `<span class="level-status-chip">Комнаты: ${Number(st.roomsCount||0)}</span>`+
+      `<span class="level-status-chip">Зоны: ${Number(st.zonesCount||0)}</span>`+
+      `<span class="level-status-chip">Маркеры: ${Number(st.overviewMarkersCount||0)+Number(st.roomMarkersCount||0)}</span>`+
+      `</div>`;
     return `<div class="profile-row level-row${active?' active-profile':''}" data-level-row="${esc(l.id)}">`+
       `<div class="level-row-top"><div><strong>${esc(l.name||l.id)}</strong>${active?' <span class="profile-badge">текущий</span>':''}<br>`+
       `<small class="muted">${esc(l.id)} · ${l.exists?'папка есть':'папка не найдена'}</small></div>`+
       `<div class="profile-actions">`+
+      `<button type="button" data-level-init="${esc(l.id)}">Мастер настройки</button>`+
       `<button type="button" data-level-activate="${esc(l.id)}" ${active?'disabled':''}>Переключить</button>`+
       `<button type="button" data-level-rename="${esc(l.id)}">Переименовать</button>`+
       `<button type="button" data-level-duplicate="${esc(l.id)}">Дублировать</button>`+
       `<button type="button" class="danger-button small-danger" data-level-delete="${esc(l.id)}" ${levels.length<=1?'disabled':''}>Удалить</button>`+
-      `</div></div>`+
+      `</div></div>`+statusHtml+
       `<details class="level-source-details" ${active?'open':''}><summary>Источники Lovelace этого уровня</summary>`+
       `<label>Адреса панелей / карточек для парсинга уровня<textarea rows="3" data-level-source-paths="${esc(l.id)}" placeholder="dashboard-unknown/0\ndashboard-unknown/1\ndashboard-unknown/media">${esc(sourceText)}</textarea></label>`+
       `<div class="level-source-actions"><button type="button" data-level-source-save="${esc(l.id)}">Сохранить источники</button><button type="button" data-level-source-import="${esc(l.id)}">Перечитать этот уровень</button></div>`+
@@ -2763,6 +2774,186 @@ async function importLevelSources(levelId){
     showToast(`Уровень перечитан. Устройств: ${imp.devices ?? 0}`);
   }catch(e){ showToast('Ошибка перечитывания уровня: '+e.message); }
 }
+
+
+function normalizeWizardLevelCount(v){ return clamp(parseInt(v,10)||1,1,10); }
+function defaultWizardLevelName(i,count){
+  if(count===1) return 'Основной уровень';
+  if(i===0) return '1 этаж';
+  if(i===1) return '2 этаж';
+  if(i===2) return 'Мансарда';
+  return `Уровень ${i+1}`;
+}
+function ensureSetupWizardDefaults(){
+  const w=state.setupWizard || (state.setupWizard={step:1,profileName:'Дом',levelCount:1,levelNames:['1 этаж'],createdProfileId:null});
+  w.levelCount=normalizeWizardLevelCount(w.levelCount);
+  if(!Array.isArray(w.levelNames)) w.levelNames=[];
+  for(let i=0;i<w.levelCount;i++) if(!String(w.levelNames[i]||'').trim()) w.levelNames[i]=defaultWizardLevelName(i,w.levelCount);
+  w.levelNames=w.levelNames.slice(0,w.levelCount);
+  if(!String(w.profileName||'').trim()) w.profileName='Дом';
+  return w;
+}
+function renderProjectSetupWizard(){
+  const body=el('project-setup-wizard-body');
+  const title=el('project-setup-wizard-title');
+  if(!body) return;
+  const w=ensureSetupWizardDefaults();
+  const step=clamp(Number(w.step)||1,1,4);
+  w.step=step;
+  if(title) title.textContent='Мастер настройки';
+  const stepsHead=`<div class="project-wizard-progress">${[1,2,3,4].map(n=>`<span class="${n===step?'active':''}${n<step?' done':''}">${n}</span>`).join('')}</div>`;
+  let html='';
+  if(step===1){
+    html=`<div class="level-wizard-summary"><strong>Шаг 1 — профиль</strong><br><span class="muted">Создайте новый профиль проекта. Профиль хранит свои уровни, карты, layout, зоны, комнаты, устройства и Lovelace-источники.</span></div>`+
+      `<label class="wizard-field"><span>Название профиля</span><input id="setup-profile-name" type="text" value="${esc(w.profileName)}" placeholder="Дом / Квартира / Дача / Офис"></label>`+
+      `<p class="muted">Security/PIN, dangerous rules, Attention Monitor и command log остаются глобальными, как и раньше.</p>`;
+  }else if(step===2){
+    html=`<div class="level-wizard-summary"><strong>Шаг 2 — уровни / области</strong><br><span class="muted">Укажите сколько этажей или областей нужно создать внутри профиля.</span></div>`+
+      `<label class="wizard-field"><span>Количество уровней / областей</span><input id="setup-level-count" type="number" min="1" max="10" value="${esc(w.levelCount)}"></label>`+
+      `<p class="muted">Например: 1 уровень, 2 этажа, мансарда, двор, гараж, участок. Пустые уровни не копируют карты, зоны, комнаты, источники, маркеры и устройства без явного дублирования.</p>`;
+  }else if(step===3){
+    html=`<div class="level-wizard-summary"><strong>Шаг 3 — названия уровней</strong><br><span class="muted">Названия уровней вводятся вручную и не берутся из HA/Lovelace или имён картинок.</span></div>`+
+      `<div class="wizard-level-names">${Array.from({length:w.levelCount},(_,i)=>`<label class="wizard-field"><span>Уровень ${i+1}</span><input data-setup-level-name="${i}" type="text" value="${esc(w.levelNames[i]||defaultWizardLevelName(i,w.levelCount))}"></label>`).join('')}</div>`;
+  }else{
+    html=`<div class="level-wizard-summary"><strong>Шаг 4 — создание структуры</strong><br><span class="muted">Будет создан новый профиль и уровни. После этого мастер откроет пошаговую настройку первого уровня: карта → источники → перечитать → комнаты → зоны/датчики.</span></div>`+
+      `<div class="wizard-review"><p><b>Профиль:</b> ${esc(w.profileName)}</p><p><b>Уровней:</b> ${esc(w.levelCount)}</p><ol>${w.levelNames.map(x=>`<li>${esc(x)}</li>`).join('')}</ol></div>`+
+      `<p class="level-wizard-warning">Мастер не подтягивает старые источники, комнаты, зоны или картинки. Каждый уровень создаётся пустым и настраивается отдельно.</p>`;
+  }
+  body.innerHTML=stepsHead + html;
+  const back=el('btn-project-setup-back'), next=el('btn-project-setup-next'), create=el('btn-project-setup-create');
+  if(back) back.disabled=step<=1;
+  if(next) next.classList.toggle('hidden', step>=4);
+  if(create) create.classList.toggle('hidden', step<4);
+}
+function syncProjectSetupWizardInputs(){
+  const w=ensureSetupWizardDefaults();
+  const profile=el('setup-profile-name'); if(profile) w.profileName=profile.value.trim() || 'Дом';
+  const count=el('setup-level-count');
+  if(count){
+    const old=w.levelCount; w.levelCount=normalizeWizardLevelCount(count.value);
+    if(w.levelCount!==old){ for(let i=0;i<w.levelCount;i++) if(!w.levelNames[i]) w.levelNames[i]=defaultWizardLevelName(i,w.levelCount); w.levelNames=w.levelNames.slice(0,w.levelCount); }
+  }
+  qsa('[data-setup-level-name]').forEach(inp=>{ const i=Number(inp.dataset.setupLevelName); w.levelNames[i]=inp.value.trim() || defaultWizardLevelName(i,w.levelCount); });
+}
+function openProjectSetupWizard(){
+  if(!canEditLayout()){ showToast('Мастер настройки доступен только в admin mode'); return; }
+  state.setupWizard={step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null};
+  renderProjectSetupWizard();
+  openModal('project-setup-wizard-modal');
+}
+function closeProjectSetupWizard(){ closeModal('project-setup-wizard-modal'); }
+function projectSetupNext(delta){
+  syncProjectSetupWizardInputs();
+  const w=ensureSetupWizardDefaults();
+  w.step=clamp((Number(w.step)||1)+delta,1,4);
+  renderProjectSetupWizard();
+}
+async function createProjectFromSetupWizard(){
+  if(!canEditLayout()){ showToast('Мастер настройки доступен только в admin mode'); return; }
+  syncProjectSetupWizardInputs();
+  const w=ensureSetupWizardDefaults();
+  const btn=el('btn-project-setup-create'); if(btn) btn.disabled=true;
+  try{
+    showToast('Создаю профиль...');
+    const before=(state.profiles?.profiles||[]).map(p=>p.id);
+    const profRes=await apiJson('api/profiles',{method:'POST',body:JSON.stringify({name:w.profileName})});
+    const profiles=profRes.profiles||[];
+    let newProfile=profiles.find(p=>!before.includes(p.id)) || profiles.slice(-1)[0];
+    if(!newProfile) throw new Error('Новый профиль не найден после создания');
+    await apiJson(`api/profiles/${encodeURIComponent(newProfile.id)}/activate`,{method:'POST'});
+    state.profiles=await apiJson('api/profiles');
+    state.levels=await apiJson('api/levels');
+    const firstLevelId=state.levels?.activeLevelId || state.levels?.levels?.[0]?.id || 'level-1';
+    await apiJson(`api/levels/${encodeURIComponent(firstLevelId)}`,{method:'PATCH',body:JSON.stringify({name:w.levelNames[0]||'Основной уровень'})});
+    for(let i=1;i<w.levelCount;i++){
+      await apiJson('api/levels',{method:'POST',body:JSON.stringify({name:w.levelNames[i]||defaultWizardLevelName(i,w.levelCount)})});
+    }
+    state.profiles=await apiJson('api/profiles');
+    state.levels=await apiJson('api/levels');
+    renderProfilesManager();
+    renderLevelsManager();
+    renderLevelSwitcher();
+    closeProjectSetupWizard();
+    await reloadActiveLevelRuntime();
+    showToast('Структура создана. Открываю мастер первого уровня.');
+    openSettingsPanel('levels');
+    openLevelSetupWizard(firstLevelId);
+  }catch(e){
+    showToast('Ошибка мастера настройки: '+e.message);
+  }finally{
+    if(btn) btn.disabled=false;
+  }
+}
+
+function levelWizardStep({num,title,ok,warning,body,actions}){
+  return `<div class="level-wizard-step ${ok?'ok':'warn'}">`+
+    `<div class="level-wizard-step-head"><span class="level-wizard-num">${num}</span><div><strong>${esc(title)}</strong>${ok?' <span class="level-wizard-badge ok">готово</span>':' <span class="level-wizard-badge warn">нужно настроить</span>'}</div></div>`+
+    `<p class="muted">${esc(body||'')}</p>`+
+    (warning?`<p class="level-wizard-warning">${esc(warning)}</p>`:'')+
+    (actions?`<div class="level-wizard-step-actions">${actions}</div>`:'')+
+    `</div>`;
+}
+function renderLevelSetupWizard(levelId){
+  const body=el('level-setup-wizard-body');
+  const title=el('level-setup-wizard-title');
+  if(!body) return;
+  const levels=state.levels?.levels || [];
+  const activeId=state.levels?.activeLevelId || levels.find(l=>l.active)?.id || 'level-1';
+  const level=levels.find(l=>l.id===levelId) || levels.find(l=>l.id===activeId);
+  if(!level){ body.innerHTML='<p class="muted">Уровень не найден. Обновите список уровней.</p>'; return; }
+  const st=level.status || {};
+  const sc=level.sourceConfig || {};
+  const sourceText=String(sc.dashboardPathText || (Array.isArray(sc.dashboardPaths)?sc.dashboardPaths.join('\n'):'') || '').trim();
+  const isActive=level.id===activeId || level.active;
+  if(title) title.textContent='Мастер настройки: '+(level.name||level.id);
+  const activeWarn=isActive?'':'Этот уровень сейчас не активен. Для загрузки карты, проверки комнат, зон и датчиков мастер сначала переключит приложение на него.';
+  const activateAction=isActive?'':`<button type="button" data-level-wizard-activate="${esc(level.id)}">Сделать текущим</button>`;
+  const steps=[
+    levelWizardStep({num:1,title:'Выбрать уровень',ok:isActive,warning:activeWarn,body:isActive?'Уровень активен. Можно настраивать карту, комнаты, зоны и датчики.':'Перед настройкой карты и зон лучше переключиться на этот уровень.',actions:activateAction}),
+    levelWizardStep({num:2,title:'Карта уровня',ok:!!st.hasOverviewImage,body:st.hasOverviewImage?'Карта уровня загружена.':'Загрузите отдельную overview-карту для этого этажа/области. Пустой уровень не должен копировать карту другого уровня без явной галки.',actions:`<button type="button" data-level-wizard-images="${esc(level.id)}">Открыть загрузку карты</button>`}),
+    levelWizardStep({num:3,title:'Источники Lovelace',ok:!!st.hasSources || !!sourceText,body:(st.hasSources||sourceText)?`Задано источников: ${Number(st.sourcesCount||sourceText.split(/\n+/).filter(Boolean).length||0)}. Источники хранятся отдельно для каждого уровня.`:'Укажите dashboard/panel/card sources именно для этого уровня. Старые источники других уровней не подтягиваются.',actions:`<button type="button" data-level-wizard-sources="${esc(level.id)}">Настроить источники</button>`}),
+    levelWizardStep({num:4,title:'Перечитать уровень',ok:Number(st.devicesCount||0)>0 || Number(st.roomsCount||0)>0,body:`Сейчас найдено устройств: ${Number(st.devicesCount||0)}, комнат: ${Number(st.roomsCount||0)}. Перечитывание должно затрагивать только этот уровень.`,actions:`<button type="button" data-level-wizard-import="${esc(level.id)}">Перечитать этот уровень</button>`}),
+    levelWizardStep({num:5,title:'Комнаты',ok:Number(st.roomsCount||0)>0,body:Number(st.roomsCount||0)>0?`Найдено комнат: ${Number(st.roomsCount||0)}. Проверьте названия и картинки комнат.`:'Комнаты появятся после импорта Lovelace/HA sources. Имена картинок не должны создавать комнаты.',actions:`<button type="button" data-level-wizard-rooms="${esc(level.id)}">Проверить комнаты</button>`}),
+    levelWizardStep({num:6,title:'Зоны и стандартные датчики',ok:Number(st.zonesCount||0)>0,body:`Зон создано: ${Number(st.zonesCount||0)}. Стандартные датчики задаются вручную по комнатам и не появляются из hardcode.`,actions:`<button type="button" data-level-wizard-zones="${esc(level.id)}">Настроить зоны / датчики</button>`})
+  ];
+  body.innerHTML=`<div class="level-wizard-summary"><strong>${esc(level.name||level.id)}</strong><br><span class="muted">${esc(level.id)} · ${isActive?'текущий уровень':'не текущий уровень'}</span></div>`+steps.join('')+`<p class="muted level-wizard-note">Мастер ничего не делает скрыто: каждый шаг открывает нужный раздел или запускает явное действие по кнопке.</p>`;
+}
+function openLevelSetupWizard(levelId){
+  if(!levelId) return;
+  state.levelSetupWizardId=levelId;
+  renderLevelSetupWizard(levelId);
+  openModal('level-setup-wizard-modal');
+}
+async function ensureWizardLevelActive(levelId){
+  if(levelId && levelId !== (state.levels?.activeLevelId || 'level-1')){
+    await activateLevelSmooth(levelId, {fromSettings:true});
+    await loadLevelsInfo();
+  }
+}
+async function openWizardPanel(levelId, panel){
+  closeModal('level-setup-wizard-modal');
+  openModal('settings-modal');
+  if(panel==='images' || panel==='rooms') await ensureWizardLevelActive(levelId);
+  openSettingsPanel(panel);
+}
+function focusLevelSources(levelId){
+  closeModal('level-setup-wizard-modal');
+  openModal('settings-modal');
+  openSettingsPanel('levels');
+  setTimeout(()=>{
+    const row=document.querySelector(`[data-level-row="${CSS.escape(levelId)}"]`);
+    const details=row?.querySelector('.level-source-details');
+    if(details) details.open=true;
+    const ta=row?.querySelector(`[data-level-source-paths="${CSS.escape(levelId)}"]`);
+    if(row) row.scrollIntoView({block:'center', behavior:'smooth'});
+    if(ta) ta.focus();
+  }, 80);
+}
+async function initializeLevelFromSettings(levelId){
+  if(!levelId) return;
+  openLevelSetupWizard(levelId);
+}
+
 async function renameLevelFromSettings(levelId){
   if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
   const current=state.levels?.levels?.find(l=>l.id===levelId);
@@ -3441,6 +3632,17 @@ function bindGlobal(){
   ['pointerdown','touchstart','keydown'].forEach(evt=>document.addEventListener(evt, registerKioskActivity, {passive:true}));
   el('btn-settings').onclick=()=>openModal('settings-modal');
   el('btn-close-settings').onclick=()=>closeModal('settings-modal');
+  const closeLevelWizard=()=>closeModal('level-setup-wizard-modal');
+  const bwc=el('btn-close-level-setup-wizard'); if(bwc) bwc.onclick=closeLevelWizard;
+  const closeProjectWizard=()=>closeProjectSetupWizard();
+  const pswClose=el('btn-close-project-setup-wizard'); if(pswClose) pswClose.onclick=closeProjectWizard;
+  const pswCancel=el('btn-project-setup-cancel'); if(pswCancel) pswCancel.onclick=closeProjectWizard;
+  const pswBack=el('btn-project-setup-back'); if(pswBack) pswBack.onclick=()=>projectSetupNext(-1);
+  const pswNext=el('btn-project-setup-next'); if(pswNext) pswNext.onclick=()=>projectSetupNext(1);
+  const pswCreate=el('btn-project-setup-create'); if(pswCreate) pswCreate.onclick=createProjectFromSetupWizard;
+  const pswModal=el('project-setup-wizard-modal'); if(pswModal) pswModal.addEventListener('click',e=>{ if(e.target.id==='project-setup-wizard-modal') closeProjectSetupWizard(); });
+  const bwc2=el('btn-level-setup-close'); if(bwc2) bwc2.onclick=closeLevelWizard;
+  const bwr=el('btn-level-setup-refresh'); if(bwr) bwr.onclick=async()=>{ await loadLevelsInfo(); renderLevelSetupWizard(state.levelSetupWizardId); };
   el('btn-close-device').onclick=closeDeviceModal;
   el('device-modal').addEventListener('click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
   el('btn-close-info').onclick=()=>el('info-modal').classList.add('hidden');
@@ -3483,6 +3685,7 @@ function bindGlobal(){
   const openPlacementBtn=el('btn-open-device-placement'); if(openPlacementBtn) openPlacementBtn.onclick=openMarkerPlacementFromSettings;
   const profilesManager=el('profiles-manager');
   if(profilesManager) profilesManager.addEventListener('click', e=>{
+    const setup=e.target.closest('#btn-open-project-setup-wizard'); if(setup){ openProjectSetupWizard(); return; }
     const create=e.target.closest('#btn-create-profile'); if(create){ createProfileFromSettings(); return; }
     const act=e.target.closest('[data-profile-activate]'); if(act){ activateProfileFromSettings(act.dataset.profileActivate); return; }
     const ren=e.target.closest('[data-profile-rename]'); if(ren){ renameProfileFromSettings(ren.dataset.profileRename); return; }
@@ -3490,9 +3693,26 @@ function bindGlobal(){
     const del=e.target.closest('[data-profile-delete]'); if(del){ deleteProfileFromSettings(del.dataset.profileDelete); return; }
   });
   document.addEventListener('click', e=>{ const q=e.target.closest('[data-quick-level]'); if(q){ activateLevelQuick(q.dataset.quickLevel); } });
+  const levelWizardModal=el('level-setup-wizard-modal');
+  if(levelWizardModal) levelWizardModal.addEventListener('click', e=>{
+    const wizActivate=e.target.closest('[data-level-wizard-activate]'); if(wizActivate){ (async()=>{ await ensureWizardLevelActive(wizActivate.dataset.levelWizardActivate); openLevelSetupWizard(wizActivate.dataset.levelWizardActivate); })(); return; }
+    const wizImages=e.target.closest('[data-level-wizard-images]'); if(wizImages){ openWizardPanel(wizImages.dataset.levelWizardImages,'images'); return; }
+    const wizSources=e.target.closest('[data-level-wizard-sources]'); if(wizSources){ focusLevelSources(wizSources.dataset.levelWizardSources); return; }
+    const wizImport=e.target.closest('[data-level-wizard-import]'); if(wizImport){ (async()=>{ await importLevelSources(wizImport.dataset.levelWizardImport); await loadLevelsInfo(); openLevelSetupWizard(wizImport.dataset.levelWizardImport); })(); return; }
+    const wizRooms=e.target.closest('[data-level-wizard-rooms]'); if(wizRooms){ openWizardPanel(wizRooms.dataset.levelWizardRooms,'rooms'); return; }
+    const wizZones=e.target.closest('[data-level-wizard-zones]'); if(wizZones){ openWizardPanel(wizZones.dataset.levelWizardZones,'rooms'); return; }
+    if(e.target.id==='level-setup-wizard-modal') closeModal('level-setup-wizard-modal');
+  });
   const levelsManager=el('levels-manager');
   if(levelsManager) levelsManager.addEventListener('click', e=>{
     const create=e.target.closest('#btn-create-level'); if(create){ createLevelFromSettings(); return; }
+    const init=e.target.closest('[data-level-init]'); if(init){ initializeLevelFromSettings(init.dataset.levelInit); return; }
+    const wizActivate=e.target.closest('[data-level-wizard-activate]'); if(wizActivate){ (async()=>{ await ensureWizardLevelActive(wizActivate.dataset.levelWizardActivate); openLevelSetupWizard(wizActivate.dataset.levelWizardActivate); })(); return; }
+    const wizImages=e.target.closest('[data-level-wizard-images]'); if(wizImages){ openWizardPanel(wizImages.dataset.levelWizardImages,'images'); return; }
+    const wizSources=e.target.closest('[data-level-wizard-sources]'); if(wizSources){ focusLevelSources(wizSources.dataset.levelWizardSources); return; }
+    const wizImport=e.target.closest('[data-level-wizard-import]'); if(wizImport){ (async()=>{ await importLevelSources(wizImport.dataset.levelWizardImport); await loadLevelsInfo(); openLevelSetupWizard(wizImport.dataset.levelWizardImport); })(); return; }
+    const wizRooms=e.target.closest('[data-level-wizard-rooms]'); if(wizRooms){ openWizardPanel(wizRooms.dataset.levelWizardRooms,'rooms'); return; }
+    const wizZones=e.target.closest('[data-level-wizard-zones]'); if(wizZones){ openWizardPanel(wizZones.dataset.levelWizardZones,'rooms'); return; }
     const act=e.target.closest('[data-level-activate]'); if(act){ activateLevelFromSettings(act.dataset.levelActivate); return; }
     const ren=e.target.closest('[data-level-rename]'); if(ren){ renameLevelFromSettings(ren.dataset.levelRename); return; }
     const saveSrc=e.target.closest('[data-level-source-save]'); if(saveSrc){ saveLevelSources(saveSrc.dataset.levelSourceSave); return; }

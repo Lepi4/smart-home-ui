@@ -357,6 +357,42 @@ function profilesDiagnostics(){
   };
 }
 
+
+function safeJsonFileCount(file, kind){
+  try{
+    if(!fs.existsSync(file)) return 0;
+    const data = JSON.parse(fs.readFileSync(file,'utf8'));
+    if(Array.isArray(data)) return data.length;
+    if(kind === 'rooms') return Object.keys(data.rooms || {}).length;
+    if(kind === 'zones') return Object.keys(data.zones || {}).length;
+    return Object.keys(data || {}).length;
+  }catch(e){ return 0; }
+}
+function summarizeLevelStatus(profileId, levelId){
+  const lp = levelPaths(profileId, levelId);
+  const sc = loadSourceConfigForLevel(profileId, levelId);
+  const dashboardPaths = normalizeDashboardPaths(sc.dashboardPaths ?? sc.dashboardPathText ?? '');
+  const layout = readJsonSafe(lp.layout, emptyLayout());
+  const rooms = readJsonSafe(lp.rooms, defaultRoomsSettings());
+  const devicesCount = safeJsonFileCount(lp.devicesJson, 'devices');
+  const hasOverviewImage = !!(activeCustomOverviewImagePath && profileId === ACTIVE_PROFILE_ID && levelId === ACTIVE_LEVEL_ID ? fs.existsSync(activeCustomOverviewImagePath()) : fs.existsSync(path.join(lp.images,'overview','overview.webp')) || fs.existsSync(path.join(lp.images,'overview.webp')));
+  const roomImageDir = path.join(lp.images, 'rooms');
+  let roomImagesCount = 0;
+  try{ if(fs.existsSync(roomImageDir)) roomImagesCount = fs.readdirSync(roomImageDir).filter(n=>/\.(webp|png|jpg|jpeg|svg)$/i.test(n)).length; }catch(e){}
+  return {
+    hasOverviewImage,
+    overviewMode: hasOverviewImage ? 'custom' : 'fallback',
+    hasSources: dashboardPaths.length > 0,
+    sourcesCount: dashboardPaths.length,
+    devicesCount,
+    roomsCount: Object.keys(rooms.rooms || {}).length,
+    zonesCount: Object.keys(layout.zones || {}).length,
+    overviewMarkersCount: Object.keys(layout.overviewMarkers || {}).length,
+    roomMarkersCount: Object.values(layout.roomMarkers || {}).reduce((sum,v)=>sum+Object.keys(v||{}).length,0),
+    roomImagesCount
+  };
+}
+
 function levelsDiagnostics(profileId=ACTIVE_PROFILE_ID){
   const pid = sanitizeProfileId(profileId);
   const meta = loadLevelsMeta(pid);
@@ -375,7 +411,8 @@ function levelsDiagnostics(profileId=ACTIVE_PROFILE_ID){
         active: l.id === meta.activeLevelId,
         dir: lp.dir,
         exists: fs.existsSync(lp.dir),
-        sourceConfig: { ...sc, dashboardPaths, dashboardPathText: dashboardPaths.join('\n') }
+        sourceConfig: { ...sc, dashboardPaths, dashboardPathText: dashboardPaths.join('\n') },
+        status: summarizeLevelStatus(pid, l.id)
       };
     }),
     activePaths: levelPaths(pid, meta.activeLevelId)
