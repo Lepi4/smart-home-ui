@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-2D HA Add-on v3.5.7</title>
+  <title>ALLHA-2D HA Add-on v3.5.8.1</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,6 +12,7 @@
   <button type="button" id="btn-kiosk-lock" class="kiosk-lock-btn" title="Заблокировать/разблокировать киоск">🔓 Unlock</button>
   <button type="button" id="btn-exit-kiosk" class="kiosk-exit-btn" title="Выйти из режима киоска">⋮ Выйти</button>
   <div id="kiosk-lock-badge" class="kiosk-lock-badge hidden">🔒 Заблокировано</div>
+  <div id="kiosk-level-switcher" class="kiosk-level-switcher hidden" aria-label="Переключение уровней"></div>
   <div id="kiosk-room-overlay" class="kiosk-room-overlay hidden" aria-label="Список комнат в режиме киоска">
     <div class="kiosk-room-head"><strong>Комнаты</strong><button type="button" id="btn-close-kiosk-rooms">×</button></div>
     <button type="button" id="btn-kiosk-overview" class="kiosk-room-item kiosk-overview-item">Общий план</button>
@@ -43,6 +44,7 @@
       <div class="toolbar-actions">
         <a class="button-link ha-back-link toolbar-back" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← Назад в HA</a>
         <button type="button" id="btn-overview">Общий план</button>
+        <div id="level-switcher" class="level-switcher" aria-label="Переключение уровней"></div>
         <label><input type="checkbox" id="toggle-zones" checked> Зоны</label>
         <label><input type="checkbox" id="toggle-devices" checked> Маркеры</label>
         <label><input type="checkbox" id="toggle-sensors" checked> Датчики</label>
@@ -199,6 +201,7 @@
         <button type="button" data-settings-panel="sources">Источники устройств</button>
         <button type="button" data-settings-panel="profiles">Профили</button>
         <button type="button" data-settings-panel="levels">Уровни / области</button>
+        <button type="button" data-settings-panel="backups">Backup / архивы</button>
       </div>
       <div class="image-tools settings-section-panel hidden" id="settings-panel-images">
         <h3>Картинки / План</h3>
@@ -212,7 +215,7 @@
             <button type="button" id="btn-upload-overview-image">Загрузить / заменить общий план</button>
             <button type="button" id="btn-reset-overview-image">Сбросить к fallback</button>
           </div>
-          <p class="muted">Перед заменой или сбросом создаётся backup картинки, images_meta.json и layout.json. Начиная с v3.5.3 загружаемые картинки проверяются по MIME/расширению/содержимому, ограничиваются по размеру и оптимизируются до рабочей версии WebP с сохранением aspect ratio. Если у новой картинки другое соотношение сторон, маркеры и зоны могут визуально сместиться.</p>
+          <p class="muted">При замене картинок старые image-файлы не backup-ятся автоматически. Если соотношение сторон изменилось, приложение предложит “Бэкап и продолжить” или “Продолжить”. Загружаемые картинки проверяются и оптимизируются с сохранением aspect ratio.</p>
         </div>
         <div class="image-card image-card-wide">
           <div>
@@ -232,30 +235,33 @@
           </div>
           <button type="button" id="btn-clear-markers" class="danger-button">Очистить маркеры</button>
         </div>
-        <div class="layout-service-card">
-          <div>
-            <strong>Очистить зоны</strong>
-            <p class="muted">Удаляет прямоугольные зоны комнат на overview. Маркеры, устройства, комнаты, картинки, PIN, dangerous и Attention не затрагиваются.</p>
+        <details class="advanced-maintenance">
+          <summary>Расширенные действия с зонами и маркерами</summary>
+          <div class="layout-service-card">
+            <div>
+              <strong>Очистить зоны</strong>
+              <p class="muted">Опасное действие: удаляет зоны найденных комнат. Обычно зоны появляются/пересоздаются после сканирования источников или редактируются по комнате.</p>
+            </div>
+            <button type="button" id="btn-clear-zones" class="danger-button">Очистить зоны</button>
           </div>
-          <button type="button" id="btn-clear-zones" class="danger-button">Очистить зоны</button>
-        </div>
-        <div class="layout-service-card layout-create-card">
-          <div>
-            <strong>Создать / восстановить зону</strong>
-            <p class="muted">После очистки зон выберите найденную комнату и откройте SVG Zone Editor. Зона сохранится только после “Применить” в редакторе и “Сохранить изменения” в edit mode.</p>
+          <div class="layout-service-card layout-create-card">
+            <div>
+              <strong>Пересоздать / назначить зону вручную</strong>
+              <p class="muted">Выберите найденную комнату и откройте SVG Zone Editor. Это расширенное admin-действие, а не создание комнаты.</p>
+            </div>
+            <div class="layout-create-controls">
+              <select id="zone-create-room"></select>
+              <button type="button" id="btn-create-zone">Пересоздать / назначить зону</button>
+            </div>
           </div>
-          <div class="layout-create-controls">
-            <select id="zone-create-room"></select>
-            <button type="button" id="btn-create-zone">Создать зону</button>
+          <div class="layout-service-card layout-create-card secondary-layout-tool">
+            <div>
+              <strong>Разместить маркеры</strong>
+              <p class="muted">Вторичный инструмент после очистки маркеров. Основной workflow: источники → комнаты → зоны/картинки → датчики → маркеры.</p>
+            </div>
+            <button type="button" id="btn-open-device-placement">Открыть размещение устройств</button>
           </div>
-        </div>
-        <div class="layout-service-card layout-create-card secondary-layout-tool">
-          <div>
-            <strong>Разместить маркеры</strong>
-            <p class="muted">Вторичный инструмент после очистки маркеров. Основной workflow: сначала восстановить зоны найденных комнат и стандартные датчики, затем размещать устройства.</p>
-          </div>
-          <button type="button" id="btn-open-device-placement">Открыть размещение устройств</button>
-        </div>
+        </details>
         <p id="layout-maintenance-status" class="muted">Доступно только в admin mode. Перед очисткой создаётся backup layout.json.</p>
         <div class="layout-service-card factory-reset-card">
           <div>
@@ -281,6 +287,12 @@
         <h3>Уровни / области</h3>
         <p class="muted">Уровни позволяют разделить объект на этажи, мансарду, двор, придомовую территорию и другие области. Название уровня вводится вручную; для каждого уровня отдельно настраиваются карта, зоны, маркеры, картинки и источники Lovelace.</p>
         <div id="levels-manager" class="profiles-manager"><p class="muted">Загрузка уровней...</p></div>
+      </div>
+
+      <div class="backup-tools settings-section-panel hidden" id="settings-panel-backups">
+        <h3>Backup / архивы</h3>
+        <p class="muted">Здесь можно создать ручной backup текущего проекта и удалить накопившиеся backup-и. Удаляются только файлы в /data/backups, активные данные не трогаются.</p>
+        <div id="backup-manager" class="backup-manager"><p class="muted">Загрузка backup-ов...</p></div>
       </div>
 
       <div class="source-tools settings-section-panel hidden" id="settings-panel-sources">

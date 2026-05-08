@@ -14,11 +14,27 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set()
 };
 
-const ROOMS = window.PLAN_CONFIG.rooms || [];
-const ROOM_MAP = Object.fromEntries(ROOMS.map(r => [r.id, r]));
+const STATIC_ROOMS = window.PLAN_CONFIG.rooms || [];
+let ROOMS = [];
+let ROOM_MAP = {};
+function rebuildRoomMap(){ ROOM_MAP = Object.fromEntries(ROOMS.map(r => [r.id, r])); }
+function refreshRuntimeRooms(){
+  const byId = new Map();
+  for(const item of (state.roomsSettings?.knownRooms || [])){
+    const id=normalizedRoomId(item.id); if(!id || id==='overview') continue;
+    const staticRoom = STATIC_ROOMS.find(r=>normalizedRoomId(r.id)===id) || {};
+    byId.set(id, { ...staticRoom, id, label:item.label || item.settings?.alias || staticRoom.label || id, image:staticRoom.image || `media/images/rooms/${encodeURIComponent(id)}.webp` });
+  }
+  for(const d of allDevices()){
+    const id=normalizedRoomId(d.room); if(!id || id==='overview' || id==='unassigned') continue;
+    if(!byId.has(id)){ const staticRoom=STATIC_ROOMS.find(r=>normalizedRoomId(r.id)===id)||{}; byId.set(id,{...staticRoom,id,label:staticRoom.label||d.roomLabel||id,image:staticRoom.image||`media/images/rooms/${encodeURIComponent(id)}.webp`}); }
+  }
+  ROOMS=[{id:'overview',label:'Общий план'}, ...[...byId.values()].sort((a,b)=>(a.label||a.id).localeCompare(b.label||b.id,'ru'))];
+  rebuildRoomMap();
+}
 const TYPE_ICONS = { light:'💡', switch:'🔌', cover:'▤', climate:'❄️', media_player:'▶️', humidifier:'💧', sensor:'📟', binary_sensor:'●', valve:'🚰', lock:'🔒', scene:'✨', fan:'💨', input_boolean:'✅', input_number:'🔢', input_select:'▾', button:'⏺', script:'▶', automation:'⚙', person:'👤' };
 const TOGGLE_DOMAINS = new Set(['light','switch','fan','input_boolean','cover','media_player','climate','humidifier','valve']);
 const IMPORTANT_DOMAINS = new Set(['light','switch','cover','climate','media_player','humidifier','fan','sensor','binary_sensor','input_boolean','input_number','input_select','valve','lock','button','script','automation']);
@@ -2377,6 +2393,19 @@ async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POS
 async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
 
 
+
+function currentLevelList(){ return Array.isArray(state.levels?.levels) ? state.levels.levels : []; }
+function renderLevelSwitcher(){
+  const levels=currentLevelList();
+  const active=state.levels?.activeLevelId || levels.find(l=>l.active)?.id || '';
+  const html = levels.length > 1 ? levels.map(l=>`<button type="button" class="level-switch-btn${l.id===active?' active':''}" data-quick-level="${esc(l.id)}" ${l.id===active?'disabled':''}>${esc(l.name||l.id)}</button>`).join('') : '';
+  ['level-switcher','kiosk-level-switcher'].forEach(id=>{ const box=el(id); if(box){ box.innerHTML=html; box.classList.toggle('hidden', !html); } });
+}
+async function activateLevelQuick(levelId){
+  try{ await apiJson(`api/levels/${encodeURIComponent(levelId)}/activate`,{method:'POST'}); showToast('Уровень переключён'); setTimeout(()=>location.reload(),450); }
+  catch(e){ showToast('Ошибка переключения уровня: '+e.message); }
+}
+
 async function loadProfilesInfo(){
   try{
     state.profiles = await apiJson('api/profiles');
@@ -2415,7 +2444,7 @@ function renderProfilesManager(){
     `<label>Название профиля <input id="new-profile-name" type="text" placeholder="Например: Этаж 2 / Двор / Тест"></label>`+
     `<label class="settings-check"><input type="checkbox" id="new-profile-copy-zones"> Дублировать зоны из текущего профиля</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-profile-copy-markers"> Дублировать значки/маркеры из текущего профиля</label>`+
-    `<p class="muted">Название профиля вводится вручную. Для будущих этажей/мансарды/двора это будет отдельная область с собственными источниками Lovelace.</p>`+
+    `<p class="muted">Создать профиль с нуля = пустой профиль без комнат/устройств/источников. Дублирование профиля = полная копия. Галочки копируют только зоны/значки, без автопарсинга старых карт.</p>`+
     `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 3 профиля'}</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
     `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей. После переключения профиль лучше перезагрузить страницу.</p>`;
@@ -2486,6 +2515,7 @@ async function loadLevelsInfo(){
   try{
     state.levels = await apiJson('api/levels');
     renderLevelsManager();
+    renderLevelSwitcher();
     return state.levels;
   }catch(e){
     state.levels = null;
@@ -2509,6 +2539,7 @@ function renderLevelsManager(){
       `<div class="profile-actions">`+
       `<button type="button" data-level-activate="${esc(l.id)}" ${active?'disabled':''}>Переключить</button>`+
       `<button type="button" data-level-rename="${esc(l.id)}">Переименовать</button>`+
+      `<button type="button" data-level-sources="${esc(l.id)}">Источники</button>`+
       `<button type="button" data-level-duplicate="${esc(l.id)}">Дублировать</button>`+
       `<button type="button" class="danger-button small-danger" data-level-delete="${esc(l.id)}" ${levels.length<=1?'disabled':''}>Удалить</button>`+
       `</div></div>`;
@@ -2520,7 +2551,7 @@ function renderLevelsManager(){
     `<label class="settings-check"><input type="checkbox" id="new-level-copy-markers"> Дублировать значки/маркеры из текущего уровня</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-level-copy-images"> Дублировать картинки</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-level-copy-sources"> Дублировать Lovelace-источники и устройства</label>`+
-    `<p class="muted">Название уровня вводится вручную и не парсится из Home Assistant. Источники Lovelace затем настраиваются отдельно на вкладке “Источники устройств” для текущего уровня.</p>`+
+    `<p class="muted">Создать уровень с нуля = пустой уровень без комнат/устройств/зон/источников. Источники Lovelace настраиваются отдельно для каждого уровня. Галочки копирования применяются только явно.</p>`+
     `<button type="button" id="btn-create-level">Создать уровень</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
     `<p class="muted">Уровни живут внутри активного профиля. У каждого уровня свои карта, зоны, маркеры, картинки, комнаты, источники Lovelace и импортированные устройства. Security/PIN и Attention остаются глобальными.</p>`;
@@ -2593,6 +2624,8 @@ async function loadImagesInfo(){
 async function loadRoomsSettings(){
   try{
     state.roomsSettings = await apiJson('api/rooms');
+    refreshRuntimeRooms();
+    renderRooms();
     renderRoomsZonesManager();
     renderLayoutMaintenanceTools();
     return state.roomsSettings;
@@ -2609,20 +2642,26 @@ function renderRoomsZonesManager(){
   if(!box) return;
   const admin = canEditLayout();
   const rooms=layoutEditableRooms();
-  if(!rooms.length){ box.innerHTML='<p class="muted">Комнаты пока не найдены. Список комнат появится из Lovelace / HA Areas / entity names.</p>'; return; }
+  if(!rooms.length){ box.innerHTML='<p class="muted">Комнаты пока не найдены. Список комнат появится только после настройки источников текущего уровня и сканирования Lovelace / HA Areas / entity names.</p>'; return; }
   box.innerHTML=rooms.map(r=>{
     const rid=normalizedRoomId(r.id);
     const hasZone=!!state.layout?.zones?.[rid];
     const sensors=standardSensorsForSettings(rid);
     const active=STANDARD_SENSOR_DEFS.filter(def=>String(sensors[def.key]||'').trim()).map(def=>def.label).join(', ') || 'не заданы';
     const fields=STANDARD_SENSOR_DEFS.map(def=>`<label class="standard-sensor-field"><span>${esc(def.label)}</span><input type="text" value="${esc(sensors[def.key]||'')}" placeholder="${esc(def.placeholder)}" data-standard-sensor-input="${esc(def.key)}"><button type="button" data-clear-standard-sensor="${esc(def.key)}">Очистить</button></label>`).join('');
+    const open = state.openStandardSensorRooms instanceof Set && state.openStandardSensorRooms.has(rid);
     return `<div class="room-manager-card${admin?'':' room-manager-disabled'}" data-room-manager="${esc(rid)}">`+
       `<div class="room-manager-head"><div><strong>${esc(r.label||rid)}</strong><br><span class="muted">room_id: ${esc(rid)} · зона: ${hasZone?'есть':'нет'} · датчики: ${esc(active)}</span></div>`+
-      `<div class="room-manager-actions"><button type="button" data-room-zone-create="${esc(rid)}">${hasZone?'Редактировать зону':'Создать зону'}</button>${hasZone?`<button type="button" data-room-zone-delete="${esc(rid)}" class="danger-button small-danger">Удалить зону</button>`:''}</div></div>`+
-      `<details class="standard-sensors-details"><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную.</p><button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button></details>`+
+      `<div class="room-manager-actions"><button type="button" data-room-zone-create="${esc(rid)}">${hasZone?'Редактировать зону':'Назначить / пересоздать зону'}</button>${hasZone?`<button type="button" data-room-zone-delete="${esc(rid)}" class="danger-button small-danger">Удалить зону</button>`:''}</div></div>`+
+      `<details class="standard-sensors-details" data-standard-details="${esc(rid)}" ${open?'open':''}><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную.</p><button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button></details>`+
       `</div>`;
   }).join('');
   qsa('button,input', box).forEach(ctrl=>ctrl.disabled=!admin);
+  qsa('[data-standard-details]', box).forEach(d=>d.addEventListener('toggle',()=>{
+    if(!(state.openStandardSensorRooms instanceof Set)) state.openStandardSensorRooms=new Set();
+    const rid=d.dataset.standardDetails;
+    if(d.open) state.openStandardSensorRooms.add(rid); else state.openStandardSensorRooms.delete(rid);
+  }));
 }
 function readStandardSensorInputs(roomId){
   const card=document.querySelector(`[data-room-manager="${CSS.escape(roomId)}"]`);
@@ -2697,16 +2736,58 @@ function renderRoomImagesSettings(){
       `</div>`;
   }).join('');
 }
+
+function imageFileDimensions(file){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{ const out={width:img.naturalWidth||img.width,height:img.naturalHeight||img.height,aspectRatio:(img.naturalWidth||img.width)/(img.naturalHeight||img.height)}; URL.revokeObjectURL(url); resolve(out); };
+    img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error('Не удалось прочитать размеры картинки')); };
+    img.src=url;
+  });
+}
+function showAspectDecision(kind, oldRatio, newRatio){
+  return new Promise(resolve=>{
+    const old=document.getElementById('aspect-warning-modal'); if(old) old.remove();
+    const modal=document.createElement('div');
+    modal.id='aspect-warning-modal';
+    modal.className='modal';
+    modal.innerHTML=`<div class="modal-card"><div class="modal-head"><h2>Изменилось соотношение сторон</h2></div><div class="info-content"><p>Новая картинка имеет другое соотношение сторон. Маркеры и зоны могут визуально сместиться.</p><p class="muted">Текущее: ${Number(oldRatio).toFixed(3)} · новое: ${Number(newRatio).toFixed(3)}</p></div><div class="modal-actions"><button type="button" data-aspect-choice="backup">Бэкап и продолжить</button><button type="button" data-aspect-choice="continue">Продолжить</button><button type="button" data-aspect-choice="cancel">Отмена</button></div></div>`;
+    document.body.appendChild(modal);
+    modal.addEventListener('click',e=>{
+      const btn=e.target.closest('[data-aspect-choice]');
+      if(!btn && e.target!==modal) return;
+      const choice=btn ? btn.dataset.aspectChoice : 'cancel';
+      modal.remove();
+      resolve(choice);
+    });
+  });
+}
+async function askImageBackupIfAspectChanged(kind, file, currentInfo){
+  if(!currentInfo || currentInfo.mode!=='custom' || !currentInfo.aspectRatio) return {cancel:false, backup:false};
+  try{
+    const dim=await imageFileDimensions(file);
+    if(dim.aspectRatio && Math.abs(Number(currentInfo.aspectRatio)-dim.aspectRatio)>0.01){
+      const choice=await showAspectDecision(kind, Number(currentInfo.aspectRatio), dim.aspectRatio);
+      if(choice==='cancel') return {cancel:true, backup:false};
+      return {cancel:false, backup:choice==='backup'};
+    }
+  }catch(e){}
+  return {cancel:false, backup:false};
+}
+
 async function uploadOverviewImage(file){
   if(!file) return;
   const typeOk = /^image\/(png|jpeg|webp)$/i.test(file.type || '');
   const nameOk = /\.(png|jpe?g|webp)$/i.test(file.name || '');
   if(!typeOk && !nameOk){ showToast('Поддерживаются PNG, JPG и WEBP'); return; }
   if(file.size > 25 * 1024 * 1024){ showToast('Файл слишком большой. Максимум 25 MB.'); return; }
+  const decision = await askImageBackupIfAspectChanged('overview', file, state.images?.overview);
+  if(decision.cancel){ showToast('Замена картинки отменена'); return; }
   const status = el('overview-image-status');
   if(status) status.textContent = 'Загрузка общего плана...';
   try{
-    const res = await fetch('api/images/overview', { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || 'overview') }, body:file });
+    const res = await fetch('api/images/overview'+(decision.backup?'?backup=1':''), { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || 'overview') }, body:file });
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.error || res.status);
     state.images = { ...(state.images||{}), ...data };
@@ -2715,14 +2796,14 @@ async function uploadOverviewImage(file){
     if(img) img.src = overviewImageSrc();
     fitStage('overview');
     render();
-    showToast(data.aspectChanged ? 'Общий план заменён. Aspect ratio изменился, backup создан.' : 'Общий план заменён. Backup создан.');
+    showToast(data.backup ? 'Общий план заменён. Backup создан.' : 'Общий план заменён.');
   }catch(e){
     if(status) status.textContent = 'Ошибка загрузки: ' + e.message;
     showToast('Ошибка загрузки общего плана: ' + e.message);
   }
 }
 async function resetOverviewImage(){
-  if(!confirm('Сбросить пользовательскую картинку общего плана к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-планом. Перед сбросом будет создан backup.')) return;
+  if(!confirm('Сбросить пользовательскую картинку общего плана к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-планом. Backup автоматически не создаётся.')) return;
   const status = el('overview-image-status');
   if(status) status.textContent = 'Сброс картинки общего плана...';
   try{
@@ -2733,7 +2814,7 @@ async function resetOverviewImage(){
     if(img) img.src = overviewImageSrc();
     fitStage('overview');
     render();
-    showToast('Общий план сброшен к fallback. Backup создан.');
+    showToast('Общий план сброшен к fallback.');
   }catch(e){
     if(status) status.textContent = 'Ошибка сброса: ' + e.message;
     showToast('Ошибка сброса картинки: ' + e.message);
@@ -2772,15 +2853,17 @@ function refreshRoomImageIfOpen(roomId){
 async function uploadRoomImage(roomId, file){
   const validationError = validateImageFileForUpload(file);
   if(validationError){ showToast(validationError); return; }
+  const decision = await askImageBackupIfAspectChanged('room', file, state.images?.rooms?.[roomId]);
+  if(decision.cancel){ showToast('Замена картинки отменена'); return; }
   const card = document.querySelector(`[data-room-image-card="${CSS.escape(roomId)}"] .muted`);
   if(card) card.textContent = `room_id: ${roomId} · загрузка...`;
   try{
-    const res = await fetch(`api/images/rooms/${encodeURIComponent(roomId)}`, { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || roomId) }, body:file });
+    const res = await fetch(`api/images/rooms/${encodeURIComponent(roomId)}${decision.backup?'?backup=1':''}`, { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || roomId) }, body:file });
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.error || res.status);
     await loadImagesInfo();
     refreshRoomImageIfOpen(roomId);
-    showToast(data.aspectChanged ? 'Картинка комнаты заменена. Aspect ratio изменился, backup создан.' : 'Картинка комнаты заменена. Backup создан.');
+    showToast(data.backup ? 'Картинка комнаты заменена. Backup создан.' : 'Картинка комнаты заменена.');
   }catch(e){
     await loadImagesInfo();
     showToast('Ошибка загрузки картинки комнаты: ' + e.message);
@@ -2788,15 +2871,49 @@ async function uploadRoomImage(roomId, file){
 }
 async function resetRoomImage(roomId){
   const r = room(roomId);
-  if(!confirm(`Сбросить пользовательскую картинку комнаты "${r?.label||roomId}" к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-картинкой. Перед сбросом будет создан backup.`)) return;
+  if(!confirm(`Сбросить пользовательскую картинку комнаты "${r?.label||roomId}" к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-картинкой. Backup автоматически не создаётся.`)) return;
   try{
     await apiJson(`api/images/rooms/${encodeURIComponent(roomId)}`, { method:'DELETE' });
     await loadImagesInfo();
     refreshRoomImageIfOpen(roomId);
-    showToast('Картинка комнаты сброшена к fallback. Backup создан.');
+    showToast('Картинка комнаты сброшена к fallback.');
   }catch(e){
     showToast('Ошибка сброса картинки комнаты: ' + e.message);
   }
+}
+
+
+async function loadBackupsInfo(){
+  try{ state.backups=await apiJson('api/backups'); renderBackupManager(); return state.backups; }
+  catch(e){ const box=el('backup-manager'); if(box) box.innerHTML='<p class="muted">Ошибка чтения backup-ов: '+esc(e.message)+'</p>'; }
+}
+function renderBackupManager(){
+  const box=el('backup-manager'); if(!box) return;
+  const data=state.backups?.backups || state.diagnostics?.backups || {items:[]};
+  const items=Array.isArray(data.items)?data.items:[];
+  box.innerHTML=`<div class="backup-summary"><strong>Backup-файлов:</strong> ${data.count||items.length} · <strong>Размер:</strong> ${formatBytes(data.totalSize||0)}<br><span class="muted">Старый: ${data.oldest?esc(new Date(data.oldest).toLocaleString()):'—'} · Новый: ${data.newest?esc(new Date(data.newest).toLocaleString()):'—'}</span></div>`+
+    `<div class="backup-actions"><button type="button" id="btn-create-manual-backup">Создать backup сейчас</button><button type="button" id="btn-delete-old-backups">Очистить старые backup-и</button><button type="button" id="btn-delete-all-backups" class="danger-button">Удалить все backup-и</button></div>`+
+    `<div class="backup-list">${items.slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div><button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('') || '<p class="muted">Backup пока нет.</p>'}</div>`;
+}
+async function createManualBackup(){
+  try{ state.backups=await apiJson('api/backups/create',{method:'POST',body:JSON.stringify({reason:'manual'})}); renderBackupManager(); showToast('Ручной backup создан'); }
+  catch(e){ showToast('Ошибка создания backup: '+e.message); }
+}
+async function deleteBackup(name){
+  if(!confirm('Удалить backup '+name+'? Активные данные не будут затронуты.')) return;
+  try{ state.backups=await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name})}); renderBackupManager(); showToast('Backup удалён'); }
+  catch(e){ showToast('Ошибка удаления backup: '+e.message); }
+}
+async function deleteOldBackups(){
+  if(!confirm('Удалить старые backup-и, оставив последние 10?')) return;
+  try{ state.backups=await apiJson('api/backups/delete-old',{method:'POST',body:JSON.stringify({keep:10})}); renderBackupManager(); showToast('Старые backup-и очищены'); }
+  catch(e){ showToast('Ошибка очистки backup: '+e.message); }
+}
+async function deleteAllBackups(){
+  const word=window.prompt('Для удаления всех backup-ов введите DELETE BACKUPS');
+  if(word!=='DELETE BACKUPS') return;
+  try{ state.backups=await apiJson('api/backups/delete-all',{method:'POST',body:JSON.stringify({confirm:word})}); renderBackupManager(); showToast('Все backup-и удалены'); }
+  catch(e){ showToast('Ошибка удаления backup-ов: '+e.message); }
 }
 
 async function clearLayoutMarkers(){
@@ -2888,7 +3005,7 @@ async function saveConfig(){
 }
 async function clearConfig(){
   const status=el('settings-status');
-  const message = 'Будут удалены все пользовательские настройки, комнаты, устройства, зоны, маркеры, картинки, источники Lovelace/панелей, данные импорта, Attention, dangerous-правила и пользовательский PIN. Перед сбросом будет создан backup. Продолжить?';
+  const message = 'Будут удалены все пользовательские настройки, комнаты, устройства, зоны, маркеры, картинки, источники Lovelace/панелей, данные импорта, Attention, dangerous-правила и пользовательский PIN. Backup автоматически не создаётся. Продолжить?';
   if(!confirm(message)) return;
   const word=window.prompt('Для полного сброса введите RESET');
   if(word !== 'RESET'){ status.textContent='Сброс отменён.'; return; }
@@ -2903,7 +3020,7 @@ async function clearConfig(){
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();setConnection(true,state.edit?'Редактор · live paused':'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();setConnection(true,state.edit?'Редактор · live paused':'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
 function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer); if(state.edit || state.livePaused) return; state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
 
 function defaultSourceConfig(){return{version:1,selectedCards:{},defaultInclude:true,excludedCards:{'Физические устройства::Системные':true,'Вирт.устройства::Вирт.устройства':true},includeUnknownFromApi:false}}
@@ -3061,7 +3178,7 @@ function renderInfoModal(){
     const btn=el('btn-normalize-layout');
     if(btn) btn.onclick=async()=>{ if(!confirm('Создать backup и нормализовать layout в проценты 0–100?')) return; const r=await apiJson('api/layout/normalize',{method:'POST'}); state.layout=r.diagnostics?.normalizedPreview || state.layout; await loadDiagnostics(); render(); showToast('Layout нормализован'); };
   } else if(state.infoTab==='backups'){
-    box.innerHTML=`<h3>Резервные копии layout</h3><p class="muted">Перед каждым сохранением создаётся backup. Хранятся последние 20 копий.</p><div class="backup-list">${(d.backups||[]).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div><button data-restore-backup="${esc(b.name)}">Восстановить</button><button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
+    const backups=d.backups||{items:[]}; box.innerHTML=`<h3>Backup / архивы</h3><p class="muted">Показываются все backup-и в /data/backups. Создание и удаление доступно в Настройки → Backup / архивы.</p><div class="backup-summary">Файлов: ${backups.count||0} · Размер: ${formatBytes(backups.totalSize||0)}</div><div class="backup-list">${(backups.items||[]).slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div>${/^layout-.*\.json$/.test(b.name)?`<button data-restore-backup="${esc(b.name)}">Восстановить layout</button>`:''}<button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
     qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущий layout будет сохранён в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Layout восстановлен'); });
     qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=async()=>{ await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name:btn.dataset.deleteBackup})}); await loadDiagnostics(); });
   } else if(state.infoTab==='allowlist'){
@@ -3088,13 +3205,14 @@ function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncM
 
 
 function openSettingsPanel(name){
-  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels'};
+  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels', backups:'settings-panel-backups'};
   const id=map[name]||name;
   qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));
   qsa('#settings-modal [data-settings-panel]').forEach(btn=>btn.classList.toggle('active', btn.dataset.settingsPanel===name));
   const panel=el(id);
   if(panel){
     panel.classList.remove('hidden');
+    if(name==='backups') loadBackupsInfo();
     const scroll=el('settings-modal')?.querySelector('.settings-scroll');
     setTimeout(()=>panel.scrollIntoView({block:'start', behavior:'smooth'}), 0);
     if(scroll) setTimeout(()=>{ scroll.scrollTop=Math.max(0, panel.offsetTop-10); }, 80);
@@ -3166,13 +3284,22 @@ function bindGlobal(){
     const dup=e.target.closest('[data-profile-duplicate]'); if(dup){ duplicateProfileFromSettings(dup.dataset.profileDuplicate); return; }
     const del=e.target.closest('[data-profile-delete]'); if(del){ deleteProfileFromSettings(del.dataset.profileDelete); return; }
   });
+  document.addEventListener('click', e=>{ const q=e.target.closest('[data-quick-level]'); if(q){ activateLevelQuick(q.dataset.quickLevel); } });
   const levelsManager=el('levels-manager');
   if(levelsManager) levelsManager.addEventListener('click', e=>{
     const create=e.target.closest('#btn-create-level'); if(create){ createLevelFromSettings(); return; }
     const act=e.target.closest('[data-level-activate]'); if(act){ activateLevelFromSettings(act.dataset.levelActivate); return; }
     const ren=e.target.closest('[data-level-rename]'); if(ren){ renameLevelFromSettings(ren.dataset.levelRename); return; }
+    const src=e.target.closest('[data-level-sources]'); if(src){ activateLevelFromSettings(src.dataset.levelSources); return; }
     const dup=e.target.closest('[data-level-duplicate]'); if(dup){ duplicateLevelFromSettings(dup.dataset.levelDuplicate); return; }
     const del=e.target.closest('[data-level-delete]'); if(del){ deleteLevelFromSettings(del.dataset.levelDelete); return; }
+  });
+  const backupManager=el('backup-manager');
+  if(backupManager) backupManager.addEventListener('click', e=>{
+    if(e.target.closest('#btn-create-manual-backup')){ createManualBackup(); return; }
+    if(e.target.closest('#btn-delete-old-backups')){ deleteOldBackups(); return; }
+    if(e.target.closest('#btn-delete-all-backups')){ deleteAllBackups(); return; }
+    const del=e.target.closest('[data-delete-backup]'); if(del){ deleteBackup(del.dataset.deleteBackup); return; }
   });
   const roomsManager=el('rooms-zones-manager');
   if(roomsManager) roomsManager.addEventListener('click', e=>{

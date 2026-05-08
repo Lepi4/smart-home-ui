@@ -39,7 +39,7 @@ let ROOMS_SETTINGS_PATH = path.join(ACTIVE_LEVEL_DIR, 'rooms.json');
 let DEVICES_PATH = path.join(ACTIVE_LEVEL_DIR, 'devices.js');
 let LOVELACE_PATH = path.join(ACTIVE_LEVEL_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.8';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.8.1';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -506,11 +506,6 @@ function createProfile(payload={}){
       baseLayout.overviewMetrics = current.overviewMetrics || {};
       baseLayout.roomMetrics = current.roomMetrics || {};
       baseLayout.customNames = current.customNames || {};
-      copyIfExists(SOURCE_CONFIG_PATH, pp.sourceConfig);
-      copyIfExists(DEVICES_PATH, pp.devicesJs);
-      copyIfExists(activeLevelPaths().devicesJson, pp.devicesJson);
-      copyIfExists(LOVELACE_PATH, pp.lovelaceJs);
-      copyIfExists(activeLevelPaths().lovelaceRaw, pp.lovelaceRaw);
     }
   }
   atomicWriteJson(pp.layout, baseLayout);
@@ -611,8 +606,8 @@ function ensureDataStore(){
   fs.mkdirSync(DATA_IMAGES_ORIGINALS_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_ORIGINALS_ROOMS_DIR, {recursive:true});
   if(!fs.existsSync(IMAGES_META_PATH)) atomicWriteJson(IMAGES_META_PATH, defaultImagesMeta());
-  safeCopyIfMissing(FALLBACK_DEVICES_PATH, DEVICES_PATH);
-  safeCopyIfMissing(path.join(__dirname, 'public', 'lovelace-source.js'), LOVELACE_PATH);
+  if(!fs.existsSync(DEVICES_PATH)) writeJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES', []);
+  if(!fs.existsSync(LOVELACE_PATH)) fs.writeFileSync(LOVELACE_PATH, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
   if(!fs.existsSync(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
   if(!fs.existsSync(SECURITY_RULES_PATH)) saveSecurityRules(securityRulesDefault());
   if(!fs.existsSync(ROOMS_SETTINGS_PATH)) saveRoomsSettings(defaultRoomsSettings());
@@ -699,6 +694,89 @@ function deleteLayoutBackup(name){
   if(!/^layout-.*\.json$/.test(String(name||''))) throw new Error('Некорректное имя backup');
   const file=path.join(LAYOUT_BACKUP_DIR,name);
   if(fs.existsSync(file)) fs.unlinkSync(file);
+}
+
+
+function pathInside(base, target){
+  const b = path.resolve(base);
+  const t = path.resolve(target);
+  return t === b || t.startsWith(b + path.sep);
+}
+function dirSizeBytes(dir){
+  let total = 0;
+  if(!fs.existsSync(dir)) return 0;
+  const st = fs.statSync(dir);
+  if(st.isFile()) return st.size;
+  for(const name of fs.readdirSync(dir)) total += dirSizeBytes(path.join(dir, name));
+  return total;
+}
+function walkBackupItems(){
+  if(!fs.existsSync(LAYOUT_BACKUP_DIR)) return [];
+  const items = [];
+  function walk(dir, rel=''){
+    for(const name of fs.readdirSync(dir)){
+      const full = path.join(dir, name);
+      const r = rel ? path.join(rel, name) : name;
+      const st = fs.statSync(full);
+      if(st.isDirectory()){
+        const hasNested = fs.readdirSync(full).some(x=>fs.statSync(path.join(full,x)).isDirectory());
+        const hasFiles = fs.readdirSync(full).some(x=>fs.statSync(path.join(full,x)).isFile());
+        if(hasFiles || !hasNested){
+          items.push({ name:r, type:'directory', size:dirSizeBytes(full), mtime:st.mtime.toISOString() });
+        } else walk(full, r);
+      } else {
+        items.push({ name:r, type:'file', size:st.size, mtime:st.mtime.toISOString() });
+      }
+    }
+  }
+  walk(LAYOUT_BACKUP_DIR);
+  return items.sort((a,b)=>new Date(b.mtime)-new Date(a.mtime));
+}
+function backupSummary(){
+  const items = walkBackupItems();
+  const totalSize = items.reduce((a,b)=>a+(Number(b.size)||0),0);
+  return {
+    count: items.length,
+    totalSize,
+    oldest: items.length ? items.reduce((a,b)=>new Date(a.mtime)<new Date(b.mtime)?a:b).mtime : null,
+    newest: items.length ? items[0].mtime : null,
+    items
+  };
+}
+function createManualBackup(reason='manual'){
+  ensureDataStore();
+  const stamp = timestampForFile();
+  const safeReason = String(reason||'manual').replace(/[^a-z0-9_-]/gi,'-').slice(0,40) || 'manual';
+  const dst = path.join(LAYOUT_BACKUP_DIR, `${safeReason}-backup-${stamp}`);
+  fs.mkdirSync(dst, {recursive:true});
+  const candidates = [
+    PROFILES_META_PATH, PROFILES_DIR, ADDON_CONFIG_PATH, ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH
+  ];
+  const copied=[];
+  for(const src of candidates){
+    try{ if(fs.existsSync(src) && copyPathRecursive(src, path.join(dst, path.basename(src)))) copied.push(path.basename(src)); }catch(e){}
+  }
+  return { name:path.basename(dst), type:'directory', copied, path:dst };
+}
+function deleteBackupItem(name){
+  const rel = String(name||'').replace(/\\/g,'/');
+  if(!rel || rel.includes('..') || path.isAbsolute(rel)) throw new Error('Некорректное имя backup');
+  const target = path.join(LAYOUT_BACKUP_DIR, rel);
+  if(!pathInside(LAYOUT_BACKUP_DIR, target)) throw new Error('Некорректный путь backup');
+  if(fs.existsSync(target)) fs.rmSync(target, {recursive:true, force:true});
+}
+function deleteAllBackups(confirmWord){
+  if(String(confirmWord||'') !== 'DELETE BACKUPS') throw new Error('Для удаления всех backup требуется DELETE BACKUPS');
+  if(fs.existsSync(LAYOUT_BACKUP_DIR)){
+    for(const name of fs.readdirSync(LAYOUT_BACKUP_DIR)) fs.rmSync(path.join(LAYOUT_BACKUP_DIR,name), {recursive:true, force:true});
+  }
+  fs.mkdirSync(LAYOUT_BACKUP_DIR, {recursive:true});
+  return backupSummary();
+}
+function deleteOldBackups(keep=10){
+  const items = walkBackupItems();
+  for(const item of items.slice(Math.max(0, Number(keep)||10))) deleteBackupItem(item.name);
+  return backupSummary();
 }
 
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -1117,10 +1195,19 @@ function imageInfo(kind, roomId){
   };
 }
 function listKnownRoomIds(){
+  const set = new Set();
   try{
-    const txt = fs.readFileSync(path.join(__dirname, 'public', 'config.js'), 'utf8');
-    return [...txt.matchAll(/id:\s*['"]([^'"]+)['"]/g)].map(m=>m[1]).filter(id=>id && id !== 'overview');
-  }catch(e){ return []; }
+    const devices = parseJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES');
+    for(const d of devices){
+      const rid = String(d?.room || d?.area || '').trim();
+      if(rid && rid !== 'overview' && rid !== 'unassigned') set.add(rid);
+    }
+  }catch(e){}
+  try{
+    const raw = readJsonSafe(ROOMS_SETTINGS_PATH, {rooms:{}});
+    for(const rid of Object.keys(raw.rooms || {})) if(rid && rid !== 'overview') set.add(rid);
+  }catch(e){}
+  return [...set].sort((a,b)=>a.localeCompare(b));
 }
 
 const STANDARD_SENSOR_KEYS = ['temperature','humidity','motion','noise','co2','illuminance'];
@@ -1169,7 +1256,16 @@ function saveRoomStandardSensors(roomId, sensors){
   return saveRoomsSettings(current);
 }
 function roomSourcesForApi(){
-  return listKnownRoomIds().map(id => ({ id, settings: loadRoomsSettings().rooms[id] || {} }));
+  const settings = loadRoomsSettings();
+  const labelByRoom = {};
+  try{
+    const devices = parseJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES');
+    for(const d of devices){
+      const rid = String(d?.room || '').trim();
+      if(rid && !labelByRoom[rid]) labelByRoom[rid] = d.roomLabel || d.room_name || rid;
+    }
+  }catch(e){}
+  return listKnownRoomIds().map(id => ({ id, label: settings.rooms[id]?.alias || labelByRoom[id] || id, source: settings.rooms[id]?.source || 'detected', settings: settings.rooms[id] || {} }));
 }
 function imagesDiagnostics(){
   const metaOk = (()=>{ try{ loadImagesMeta(); return true; }catch(e){ return false; } })();
@@ -1222,11 +1318,11 @@ async function buildDiagnostics(){
     haWsUrl: HA_WS_URL,
     hasSupervisorToken: !!HA_TOKEN,
     haError,
-    counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
+    counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: backupSummary().count },
     images: imagesDiagnostics(),
     profiles: profilesDiagnostics(),
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
-    backups: listBackups().slice(0,50),
+    backups: backupSummary(),
     storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, profilesPath: PROFILES_META_PATH, profilesDir: PROFILES_DIR, activeProfileId: ACTIVE_PROFILE_ID, activeProfileDir: ACTIVE_PROFILE_DIR, activeLevelId: ACTIVE_LEVEL_ID, activeLevelDir: ACTIVE_LEVEL_DIR, levelsMetaPath: levelsMetaPath(ACTIVE_PROFILE_ID), roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), roomsSettingsExists: fs.existsSync(ROOMS_SETTINGS_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
@@ -1268,7 +1364,8 @@ function defaultSourceConfig(){
       'Физические устройства::Системные': true,
       'Вирт.устройства::Вирт.устройства': true
     },
-    includeUnknownFromApi: false
+    includeUnknownFromApi: false,
+    dashboardPaths: []
   };
 }
 function loadSourceConfig(){
@@ -1277,7 +1374,7 @@ function loadSourceConfig(){
   catch(e){ return defaultSourceConfig(); }
 }
 function saveSourceConfig(cfg){
-  fs.mkdirSync(DATA_DIR,{recursive:true});
+  fs.mkdirSync(path.dirname(SOURCE_CONFIG_PATH),{recursive:true});
   fs.writeFileSync(SOURCE_CONFIG_PATH, JSON.stringify({ ...defaultSourceConfig(), ...(cfg || {}) }, null, 2), 'utf8');
 }
 
@@ -1921,9 +2018,8 @@ app.post('/api/images/overview', express.raw({type:['image/*','application/octet
     ensureDataStore();
     const info = validateUploadedImage(req, req.body, 'overview');
     const currentInfo = imageInfo('overview');
-    backupOverviewImage();
-    backupImagesMeta();
-    backupLayout();
+    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+    const preBackup = backupRequested ? createManualBackup('before-overview-image-replace') : null;
     const originalPath = path.join(DATA_IMAGES_ORIGINALS_DIR, `overview-original.${info.ext}`);
     fs.writeFileSync(originalPath, req.body);
     const processed = await processUploadedImage('overview', req.body, info, path.join(DATA_IMAGES_OVERVIEW_DIR, 'overview.webp'));
@@ -1948,16 +2044,15 @@ app.post('/api/images/overview', express.raw({type:['image/*','application/octet
     };
     saveImagesMeta(meta);
     const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
-    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:true, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
+    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
   }catch(e){ res.status(400).json({ok:false, error:e.message}); }
 });
 
 app.delete('/api/images/overview', (req,res)=>{
   try{
     ensureDataStore();
-    backupOverviewImage();
-    backupImagesMeta();
-    backupLayout();
+    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+    const preBackup = backupRequested ? createManualBackup('before-overview-image-replace') : null;
     for(const ext of ['webp','png','jpg','jpeg']){
       const f = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${ext}`);
       if(fs.existsSync(f)) fs.unlinkSync(f);
@@ -1965,7 +2060,7 @@ app.delete('/api/images/overview', (req,res)=>{
     const meta = loadImagesMeta();
     meta.overview = null;
     saveImagesMeta(meta);
-    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:true});
+    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:false});
   }catch(e){ res.status(500).json({ok:false, error:e.message}); }
 });
 
@@ -1975,9 +2070,8 @@ app.post('/api/images/rooms/:room_id', express.raw({type:['image/*','application
     const roomId = assertKnownRoomId(req.params.room_id);
     const info = validateUploadedImage(req, req.body, 'room');
     const currentInfo = imageInfo('room', roomId);
-    backupRoomImage(roomId);
-    backupImagesMeta();
-    backupLayout();
+    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+    const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
     const safe = String(roomId).replace(/[^a-zA-Z0-9_-]/g,'_');
     const originalPath = path.join(DATA_IMAGES_ORIGINALS_ROOMS_DIR, `${safe}-original.${info.ext}`);
     fs.writeFileSync(originalPath, req.body);
@@ -2004,7 +2098,7 @@ app.post('/api/images/rooms/:room_id', express.raw({type:['image/*','application
     };
     saveImagesMeta(meta);
     const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
-    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:true, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
+    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
   }catch(e){ res.status(400).json({ok:false, error:e.message}); }
 });
 
@@ -2012,9 +2106,8 @@ app.delete('/api/images/rooms/:room_id', (req,res)=>{
   try{
     ensureDataStore();
     const roomId = assertKnownRoomId(req.params.room_id);
-    backupRoomImage(roomId);
-    backupImagesMeta();
-    backupLayout();
+    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+    const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
     const safe = String(roomId).replace(/[^a-zA-Z0-9_-]/g,'_');
     for(const ext of ['webp','png','jpg','jpeg']){
       const f = path.join(DATA_IMAGES_ROOMS_DIR, `${safe}.${ext}`);
@@ -2024,7 +2117,7 @@ app.delete('/api/images/rooms/:room_id', (req,res)=>{
     meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
     delete meta.rooms[roomId];
     saveImagesMeta(meta);
-    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:true});
+    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:false});
   }catch(e){ res.status(500).json({ok:false, error:e.message}); }
 });
 
@@ -2043,7 +2136,13 @@ app.post('/api/layout', (req,res)=>{ try{const backup=saveLayout(req.body);res.j
 app.get('/api/config', (req,res)=> { try { res.json(publicConfig(loadAddonConfig())); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/config', (req,res)=> {
   try {
-    const cfg = saveAddonConfig(req.body || {});
+    const body = req.body || {};
+    if(body.dashboardPaths !== undefined || body.dashboardPathText !== undefined){
+      const sc = loadSourceConfig();
+      saveSourceConfig({ ...sc, dashboardPaths: normalizeDashboardPaths(body.dashboardPaths ?? body.dashboardPathText ?? '') });
+    }
+    const {dashboardPaths, dashboardPathText, ...globalBody} = body;
+    const cfg = saveAddonConfig(globalBody || {});
     res.json({ ok:true, config: publicConfig(cfg) });
   } catch(e){ res.status(500).json({error:e.message}); }
 });
@@ -2136,9 +2235,12 @@ app.post('/api/attention/clear', async (req,res)=> {
 
 app.post('/api/ui-state', (req,res)=> { try { res.json({ok:true, state: saveUiState(req.body || {})}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics()); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:listBackups()}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/backups/create', (req,res)=> { try { const item=createManualBackup(req.body?.reason||'manual'); res.json({ok:true, backup:item, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutBackup(req.body?.name); res.json({ok:true, layout}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/backups/delete', (req,res)=> { try { deleteLayoutBackup(req.body?.name); res.json({ok:true, backups:listBackups()}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/backups/delete', (req,res)=> { try { deleteBackupItem(req.body?.name); res.json({ok:true, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/backups/delete-old', (req,res)=> { try { res.json({ok:true, backups:deleteOldBackups(req.body?.keep||10)}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/backups/delete-all', (req,res)=> { try { res.json({ok:true, backups:deleteAllBackups(req.body?.confirm)}); } catch(e){ res.status(400).json({error:e.message}); } });
 
 app.post('/api/ha/dashboard-paths/normalize', (req,res)=>{
   try { res.json({ ok:true, dashboardPaths: normalizeDashboardPaths(req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? '') }); }
@@ -2147,7 +2249,7 @@ app.post('/api/ha/dashboard-paths/normalize', (req,res)=>{
 
 app.post('/api/ha/lovelace/raw', async (req,res)=>{
   try {
-    const cfg = loadAddonConfig();
+    const cfg = loadSourceConfig();
     const paths = req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? cfg.dashboardPaths ?? cfg.dashboardPathText ?? '';
     const data = await readLovelaceRawFromHa(paths);
     res.json({ ok:true, ...data });
@@ -2155,7 +2257,7 @@ app.post('/api/ha/lovelace/raw', async (req,res)=>{
 });
 app.post('/api/ha/lovelace/import', async (req,res)=>{
   try {
-    const cfg = loadAddonConfig();
+    const cfg = loadSourceConfig();
     const paths = req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? cfg.dashboardPaths ?? cfg.dashboardPathText ?? '';
     const data = await importLovelaceRaw(paths);
     res.json({ ok:true, ...data });
