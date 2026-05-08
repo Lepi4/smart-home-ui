@@ -14,26 +14,30 @@ const ADDON_CONFIG_PATH = path.join(DATA_DIR, 'addon_config.json');
 const HA_API_BASE = (process.env.HA_API_BASE || 'http://supervisor/core/api').replace(/\/$/, '');
 const HA_WS_URL = process.env.HA_WS_URL || HA_API_BASE.replace(/^http/i, 'ws').replace(/\/api$/, '/websocket');
 const HA_TOKEN = process.env.SUPERVISOR_TOKEN || process.env.HA_TOKEN || '';
-const LAYOUT_PATH = path.join(DATA_DIR, 'layout.json');
 const LAYOUT_BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const SOURCE_CONFIG_PATH = path.join(DATA_DIR, 'source_config.json');
-const UI_STATE_PATH = path.join(DATA_DIR, 'ui_state.json');
-const DATA_IMAGES_DIR = path.join(DATA_DIR, 'images');
-const DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview');
-const DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
-const DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
-const IMAGES_META_PATH = path.join(DATA_IMAGES_DIR, 'images_meta.json');
-const DATA_IMAGES_ORIGINALS_ROOMS_DIR = path.join(DATA_IMAGES_ORIGINALS_DIR, 'rooms');
+const PROFILES_DIR = path.join(DATA_DIR, 'profiles');
+const PROFILES_META_PATH = path.join(DATA_DIR, 'profiles.json');
+let ACTIVE_PROFILE_ID = 'profile-1';
+let ACTIVE_PROFILE_DIR = path.join(PROFILES_DIR, ACTIVE_PROFILE_ID);
+let LAYOUT_PATH = path.join(ACTIVE_PROFILE_DIR, 'layout.json');
+let SOURCE_CONFIG_PATH = path.join(ACTIVE_PROFILE_DIR, 'source_config.json');
+let UI_STATE_PATH = path.join(ACTIVE_PROFILE_DIR, 'ui_state.json');
+let DATA_IMAGES_DIR = path.join(ACTIVE_PROFILE_DIR, 'images');
+let DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview');
+let DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
+let DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
+let IMAGES_META_PATH = path.join(DATA_IMAGES_DIR, 'images_meta.json');
+let DATA_IMAGES_ORIGINALS_ROOMS_DIR = path.join(DATA_IMAGES_ORIGINALS_DIR, 'rooms');
 const DEFAULT_OVERVIEW_IMAGE = null;
 const DEFAULT_ROOM_IMAGE = null;
 const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
 const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
-const ROOMS_SETTINGS_PATH = path.join(DATA_DIR, 'rooms.json');
+let ROOMS_SETTINGS_PATH = path.join(ACTIVE_PROFILE_DIR, 'rooms.json');
 
-const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
-const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
+let DEVICES_PATH = path.join(ACTIVE_PROFILE_DIR, 'devices.js');
+let LOVELACE_PATH = path.join(ACTIVE_PROFILE_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.5.3';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.7';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -126,6 +130,240 @@ function evaluateAttentionRules(payload, states){
   };
 }
 
+
+function defaultProfilesMeta(){
+  return { version: 1, activeProfileId: 'profile-1', profiles: [ { id:'profile-1', name:'Основной', createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() } ] };
+}
+function sanitizeProfileId(id){
+  return String(id||'profile-1').replace(/[^a-z0-9_-]/gi,'-').toLowerCase() || 'profile-1';
+}
+function normalizeProfilesMeta(raw){
+  const def = defaultProfilesMeta();
+  const list = Array.isArray(raw?.profiles) ? raw.profiles : def.profiles;
+  const seen = new Set();
+  const profiles = [];
+  for(const p of list){
+    if(!p || typeof p !== 'object') continue;
+    const id = sanitizeProfileId(p.id);
+    if(!id || seen.has(id)) continue;
+    seen.add(id);
+    profiles.push({
+      id,
+      name: String(p.name || (id === 'profile-1' ? 'Основной' : id)),
+      createdAt: p.createdAt || new Date().toISOString(),
+      updatedAt: p.updatedAt || null
+    });
+    if(profiles.length >= 3) break;
+  }
+  if(!profiles.length) profiles.push(def.profiles[0]);
+  const active = sanitizeProfileId(raw?.activeProfileId || profiles[0].id);
+  const activeProfileId = profiles.some(p=>p.id===active) ? active : profiles[0].id;
+  return { version: Number(raw?.version)||1, activeProfileId, profiles };
+}
+function loadProfilesMeta(){
+  return normalizeProfilesMeta(readJsonSafe(PROFILES_META_PATH, defaultProfilesMeta()));
+}
+function saveProfilesMeta(meta){
+  const normalized = normalizeProfilesMeta(meta);
+  atomicWriteJson(PROFILES_META_PATH, normalized);
+  return normalized;
+}
+function updateActiveProfilePaths(){
+  const meta = loadProfilesMeta();
+  ACTIVE_PROFILE_ID = meta.activeProfileId || 'profile-1';
+  ACTIVE_PROFILE_DIR = path.join(PROFILES_DIR, ACTIVE_PROFILE_ID);
+  LAYOUT_PATH = path.join(ACTIVE_PROFILE_DIR, 'layout.json');
+  SOURCE_CONFIG_PATH = path.join(ACTIVE_PROFILE_DIR, 'source_config.json');
+  UI_STATE_PATH = path.join(ACTIVE_PROFILE_DIR, 'ui_state.json');
+  DATA_IMAGES_DIR = path.join(ACTIVE_PROFILE_DIR, 'images');
+  DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview');
+  DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
+  DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
+  DATA_IMAGES_ORIGINALS_ROOMS_DIR = path.join(DATA_IMAGES_ORIGINALS_DIR, 'rooms');
+  IMAGES_META_PATH = path.join(DATA_IMAGES_DIR, 'images_meta.json');
+  ROOMS_SETTINGS_PATH = path.join(ACTIVE_PROFILE_DIR, 'rooms.json');
+  DEVICES_PATH = path.join(ACTIVE_PROFILE_DIR, 'devices.js');
+  LOVELACE_PATH = path.join(ACTIVE_PROFILE_DIR, 'lovelace-source.js');
+  return { meta, paths: profilePaths(ACTIVE_PROFILE_ID) };
+}
+function profilePaths(id){
+  const profileId = sanitizeProfileId(id);
+  const dir = path.join(PROFILES_DIR, profileId);
+  const images = path.join(dir, 'images');
+  return {
+    id: profileId,
+    dir,
+    layout: path.join(dir, 'layout.json'),
+    rooms: path.join(dir, 'rooms.json'),
+    sourceConfig: path.join(dir, 'source_config.json'),
+    uiState: path.join(dir, 'ui_state.json'),
+    images,
+    imagesMeta: path.join(images, 'images_meta.json'),
+    devicesJs: path.join(dir, 'devices.js'),
+    devicesJson: path.join(dir, 'devices.json'),
+    lovelaceJs: path.join(dir, 'lovelace-source.js'),
+    lovelaceRaw: path.join(dir, 'lovelace_raw.json'),
+    deviceParseReportJson: path.join(dir, 'device_parse_report.json'),
+    deviceParseReportMd: path.join(dir, 'device_parse_report.md')
+  };
+}
+function ensureProfileDirs(id){
+  const pp = profilePaths(id);
+  fs.mkdirSync(pp.dir, {recursive:true});
+  fs.mkdirSync(pp.images, {recursive:true});
+  fs.mkdirSync(path.join(pp.images,'overview'), {recursive:true});
+  fs.mkdirSync(path.join(pp.images,'rooms'), {recursive:true});
+  fs.mkdirSync(path.join(pp.images,'originals'), {recursive:true});
+  fs.mkdirSync(path.join(pp.images,'originals','rooms'), {recursive:true});
+  return pp;
+}
+function copyIfExists(src, dst){
+  try{ if(fs.existsSync(src) && !fs.existsSync(dst)) copyPathRecursive(src, dst); }catch(e){ console.warn('[ALLHA-2D] profile migration copy failed:', src, e.message); }
+}
+function initializeProfilesStorage(){
+  fs.mkdirSync(DATA_DIR, {recursive:true});
+  fs.mkdirSync(PROFILES_DIR, {recursive:true});
+  let meta = fs.existsSync(PROFILES_META_PATH) ? loadProfilesMeta() : defaultProfilesMeta();
+  if(!fs.existsSync(PROFILES_META_PATH)) atomicWriteJson(PROFILES_META_PATH, meta);
+  for(const p of meta.profiles) ensureProfileDirs(p.id);
+  const p1 = profilePaths('profile-1');
+  ensureProfileDirs('profile-1');
+  copyIfExists(path.join(DATA_DIR,'layout.json'), p1.layout);
+  copyIfExists(path.join(DATA_DIR,'rooms.json'), p1.rooms);
+  copyIfExists(path.join(DATA_DIR,'source_config.json'), p1.sourceConfig);
+  copyIfExists(path.join(DATA_DIR,'ui_state.json'), p1.uiState);
+  copyIfExists(path.join(DATA_DIR,'images'), p1.images);
+  copyIfExists(path.join(DATA_DIR,'devices.js'), p1.devicesJs);
+  copyIfExists(path.join(DATA_DIR,'devices.json'), p1.devicesJson);
+  copyIfExists(path.join(DATA_DIR,'lovelace-source.js'), p1.lovelaceJs);
+  copyIfExists(path.join(DATA_DIR,'lovelace_raw.json'), p1.lovelaceRaw);
+  copyIfExists(path.join(DATA_DIR,'device_parse_report.json'), p1.deviceParseReportJson);
+  updateActiveProfilePaths();
+  return loadProfilesMeta();
+}
+function profilesDiagnostics(){
+  const meta = loadProfilesMeta();
+  return {
+    metaPath: PROFILES_META_PATH,
+    activeProfileId: meta.activeProfileId,
+    count: meta.profiles.length,
+    max: 3,
+    profiles: meta.profiles.map(p=>({
+      ...p,
+      dir: profilePaths(p.id).dir,
+      active: p.id === meta.activeProfileId,
+      exists: fs.existsSync(profilePaths(p.id).dir)
+    })),
+    activePaths: profilePaths(meta.activeProfileId)
+  };
+}
+function createProfile(payload={}){
+  const meta = loadProfilesMeta();
+  if(meta.profiles.length >= 3) throw new Error('Можно создать максимум 3 профиля');
+  let n = 1; let id;
+  do { id = 'profile-' + (++n); } while(meta.profiles.some(p=>p.id===id) && n < 20);
+  const now = new Date().toISOString();
+  const name = String(payload.name || `Профиль ${meta.profiles.length + 1}`).trim().slice(0,60) || `Профиль ${meta.profiles.length + 1}`;
+  const pp = ensureProfileDirs(id);
+  const baseLayout = emptyLayout();
+  const duplicateZones = !!payload.duplicateZones;
+  const duplicateMarkers = !!payload.duplicateMarkers;
+  if(duplicateZones || duplicateMarkers){
+    const current = normalizeLayoutPayload(loadLayout(), {strict:false}).layout;
+    if(duplicateZones) baseLayout.zones = current.zones || {};
+    if(duplicateMarkers){
+      baseLayout.overviewMarkers = current.overviewMarkers || {};
+      baseLayout.roomMarkers = current.roomMarkers || {};
+      baseLayout.overviewMetrics = current.overviewMetrics || {};
+      baseLayout.roomMetrics = current.roomMetrics || {};
+      baseLayout.customNames = current.customNames || {};
+      copyIfExists(SOURCE_CONFIG_PATH, pp.sourceConfig);
+      copyIfExists(DEVICES_PATH, pp.devicesJs);
+      copyIfExists(path.join(ACTIVE_PROFILE_DIR,'devices.json'), pp.devicesJson);
+      copyIfExists(LOVELACE_PATH, pp.lovelaceJs);
+      copyIfExists(path.join(ACTIVE_PROFILE_DIR,'lovelace_raw.json'), pp.lovelaceRaw);
+    }
+  }
+  atomicWriteJson(pp.layout, baseLayout);
+  if(!fs.existsSync(pp.rooms)) atomicWriteJson(pp.rooms, defaultRoomsSettings());
+  if(!fs.existsSync(pp.sourceConfig)) atomicWriteJson(pp.sourceConfig, defaultSourceConfig());
+  atomicWriteJson(pp.uiState, defaultUiState());
+  atomicWriteJson(pp.imagesMeta, defaultImagesMeta());
+  if(!fs.existsSync(pp.devicesJs)) writeJsAssignedArray(pp.devicesJs, 'ALL_DEVICES', []);
+  if(!fs.existsSync(pp.lovelaceJs)) fs.writeFileSync(pp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  meta.profiles.push({id, name, createdAt:now, updatedAt:now});
+  saveProfilesMeta(meta);
+  return profilesDiagnostics();
+}
+function duplicateProfile(id, payload={}){
+  const meta = loadProfilesMeta();
+  if(meta.profiles.length >= 3) throw new Error('Можно создать максимум 3 профиля');
+  const srcId = sanitizeProfileId(id || meta.activeProfileId);
+  const srcMeta = meta.profiles.find(p=>p.id===srcId);
+  if(!srcMeta) throw new Error('Исходный профиль не найден');
+  let n = 1; let newId;
+  do { newId = 'profile-' + (++n); } while(meta.profiles.some(p=>p.id===newId) && n < 20);
+  const now = new Date().toISOString();
+  const src = profilePaths(srcId); const dst = profilePaths(newId);
+  copyPathRecursive(src.dir, dst.dir);
+  const name = String(payload.name || `Копия ${srcMeta.name}`).trim().slice(0,60) || `Копия ${srcMeta.name}`;
+  meta.profiles.push({id:newId, name, createdAt:now, updatedAt:now});
+  saveProfilesMeta(meta);
+  return profilesDiagnostics();
+}
+
+function backupProfileDirectory(profileId, reason='profile-backup'){
+  const id = sanitizeProfileId(profileId);
+  const src = profilePaths(id).dir;
+  if(!fs.existsSync(src)) return null;
+  const stamp = timestampForFile();
+  const backupDir = path.join(LAYOUT_BACKUP_DIR, 'profiles', `${id}-${String(reason).replace(/[^a-z0-9_-]/gi,'-')}-${stamp}`);
+  copyPathRecursive(src, backupDir);
+  return backupDir;
+}
+function deleteProfile(id, payload={}){
+  const meta = loadProfilesMeta();
+  const profileId = sanitizeProfileId(id);
+  if(meta.profiles.length <= 1) throw new Error('Нельзя удалить последний профиль');
+  const idx = meta.profiles.findIndex(p=>p.id===profileId);
+  if(idx < 0) throw new Error('Профиль не найден');
+  const backup = backupProfileDirectory(profileId, 'before-delete');
+  meta.profiles.splice(idx, 1);
+  if(meta.activeProfileId === profileId){
+    const requested = sanitizeProfileId(payload.activateProfileId || '');
+    meta.activeProfileId = meta.profiles.some(p=>p.id===requested) ? requested : meta.profiles[0].id;
+  }
+  saveProfilesMeta(meta);
+  removePathSafe(profilePaths(profileId).dir);
+  updateActiveProfilePaths();
+  ensureDataStore();
+  const diag = profilesDiagnostics();
+  diag.backup = backup ? path.basename(backup) : null;
+  return diag;
+}
+
+function activateProfile(id){
+  const meta = loadProfilesMeta();
+  const profileId = sanitizeProfileId(id);
+  if(!meta.profiles.some(p=>p.id===profileId)) throw new Error('Профиль не найден');
+  meta.activeProfileId = profileId;
+  for(const p of meta.profiles) if(p.id===profileId) p.updatedAt = new Date().toISOString();
+  saveProfilesMeta(meta);
+  updateActiveProfilePaths();
+  ensureDataStore();
+  return profilesDiagnostics();
+}
+function patchProfile(id, payload={}){
+  const meta = loadProfilesMeta();
+  const profileId = sanitizeProfileId(id);
+  const p = meta.profiles.find(x=>x.id===profileId);
+  if(!p) throw new Error('Профиль не найден');
+  if(payload.name !== undefined) p.name = String(payload.name||p.name).trim().slice(0,60) || p.name;
+  p.updatedAt = new Date().toISOString();
+  saveProfilesMeta(meta);
+  return profilesDiagnostics();
+}
+
 function safeCopyIfMissing(src, dst){
   try{
     if(src && fs.existsSync(src) && !fs.existsSync(dst)){
@@ -136,6 +374,7 @@ function safeCopyIfMissing(src, dst){
 }
 function ensureDataStore(){
   fs.mkdirSync(DATA_DIR, {recursive:true});
+  initializeProfilesStorage();
   fs.mkdirSync(LAYOUT_BACKUP_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_OVERVIEW_DIR, {recursive:true});
@@ -756,9 +995,10 @@ async function buildDiagnostics(){
     haError,
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: listBackups().length },
     images: imagesDiagnostics(),
+    profiles: profilesDiagnostics(),
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), roomsSettingsExists: fs.existsSync(ROOMS_SETTINGS_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, profilesPath: PROFILES_META_PATH, profilesDir: PROFILES_DIR, activeProfileId: ACTIVE_PROFILE_ID, activeProfileDir: ACTIVE_PROFILE_DIR, roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), roomsSettingsExists: fs.existsSync(ROOMS_SETTINGS_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     safeServices: SAFE_SERVICES,
@@ -816,12 +1056,12 @@ function saveSourceConfig(cfg){
 ensureDataStore();
 app.use(express.json({limit:'1mb'}));
 app.get('/devices.js', (req,res)=>{
-  const generated = path.join(DATA_DIR, 'devices.js');
+  const generated = DEVICES_PATH;
   const fallback = path.join(__dirname, 'public', 'devices.js');
   res.type('application/javascript').sendFile(fs.existsSync(generated) ? generated : fallback);
 });
 app.get('/lovelace-source.js', (req,res)=>{
-  const generated = path.join(DATA_DIR, 'lovelace-source.js');
+  const generated = LOVELACE_PATH;
   const fallback = path.join(__dirname, 'public', 'lovelace-source.js');
   res.type('application/javascript').sendFile(fs.existsSync(generated) ? generated : fallback);
 });
@@ -1105,7 +1345,7 @@ async function readLovelaceRawFromHa(paths){
     }
   }
   fs.mkdirSync(DATA_DIR,{recursive:true});
-  fs.writeFileSync(path.join(DATA_DIR,'lovelace_raw.json'), JSON.stringify({ generatedAt:new Date().toISOString(), requested, results }, null, 2), 'utf8');
+  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).lovelaceRaw, JSON.stringify({ generatedAt:new Date().toISOString(), requested, results }, null, 2), 'utf8');
   return { requested, results };
 }
 
@@ -1362,10 +1602,10 @@ function writeDeviceOutputs(parsed){
   fs.mkdirSync(DATA_DIR,{recursive:true});
   const devicesJs = 'window.ALL_DEVICES = '+JSON.stringify(parsed.devices, null, 2)+';\nwindow.DEVICES = window.ALL_DEVICES;\n';
   const lovelaceJs = 'window.LOVELACE_SOURCE = '+JSON.stringify(parsed.source, null, 2)+';\n';
-  fs.writeFileSync(path.join(DATA_DIR,'devices.json'), JSON.stringify(parsed.devices, null, 2), 'utf8');
+  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).devicesJson, JSON.stringify(parsed.devices, null, 2), 'utf8');
   fs.writeFileSync(DEVICES_PATH, devicesJs, 'utf8');
   fs.writeFileSync(LOVELACE_PATH, lovelaceJs, 'utf8');
-  fs.writeFileSync(path.join(DATA_DIR,'device_parse_report.json'), JSON.stringify(parsed.stats, null, 2), 'utf8');
+  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).deviceParseReportJson, JSON.stringify(parsed.stats, null, 2), 'utf8');
   const md = [
     '# Device parse report v3.4.13',
     '',
@@ -1385,7 +1625,7 @@ function writeDeviceOutputs(parsed){
     '## Skipped views',
     ...(parsed.stats.skippedViews.length ? parsed.stats.skippedViews.map(x=>`- ${x}`) : ['- none'])
   ].join('\n');
-  fs.writeFileSync(path.join(DATA_DIR,'device_parse_report.md'), md+'\n', 'utf8');
+  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).deviceParseReportMd, md+'\n', 'utf8');
 }
 
 async function importLovelaceRaw(paths){
@@ -1396,7 +1636,7 @@ async function importLovelaceRaw(paths){
   return { ...rawBundle, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
 async function importStoredLovelaceRaw(){
-  const file = path.join(DATA_DIR,'lovelace_raw.json');
+  const file = profilePaths(ACTIVE_PROFILE_ID).lovelaceRaw;
   if(!fs.existsSync(file)) throw new Error('data/lovelace_raw.json не найден. Сначала перечитайте RAW панели из HA.');
   const rawBundle = JSON.parse(fs.readFileSync(file,'utf8'));
   const registry = await loadHaEntityAreaMap();
@@ -1422,6 +1662,14 @@ app.get(['/media/rooms/:room_id','/media/rooms/:room_id/:filename','/media/image
   sendImageFile(res, custom && fs.existsSync(custom) ? custom : null, 'room', roomId);
 });
 app.use('/media', express.static(DATA_IMAGES_DIR, {fallthrough:true}));
+
+
+app.get('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...profilesDiagnostics()});}catch(e){res.status(500).json({ok:false,error:e.message});} });
+app.post('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...createProfile(req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/profiles/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...duplicateProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/profiles/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateProfile(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.delete('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...deleteProfile(req.params.id, req.body||{}), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.patch('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...patchProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 
 app.get('/api/images', (req,res)=>{
   try{

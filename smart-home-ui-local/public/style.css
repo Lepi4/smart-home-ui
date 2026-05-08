@@ -1560,3 +1560,17 @@ body.invisible-zones:not(.editing) .room-zone{background:transparent!important;b
 .faq-content code,.faq-content pre{background:rgba(0,0,0,.07)!important;color:#111!important;border-radius:8px;}
 .faq-content pre{padding:12px!important;overflow:auto!important;}
 @media(max-width:720px){.faq-modal-card{width:calc(100vw - 12px)!important;height:calc(100dvh - 12px)!important;max-height:calc(100dvh - 12px)!important;}.faq-frame.faq-content{padding:18px 16px!important;border-radius:10px!important;}}
+
+/* v3.5.7 profiles UI */
+.profiles-manager{display:flex;flex-direction:column;gap:12px}
+.profile-summary,.profile-create-card,.profile-row{border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.035);padding:12px}
+.profile-create-card{display:flex;flex-direction:column;gap:8px}
+.profile-create-card h4{margin:0 0 4px}
+.profile-create-card label{display:flex;flex-direction:column;gap:5px}
+.profile-create-card .settings-check{flex-direction:row;align-items:center}
+.profiles-list{display:flex;flex-direction:column;gap:10px}
+.profile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center}
+.profile-row.active-profile{border-color:rgba(230,165,58,.75);box-shadow:0 0 0 1px rgba(230,165,58,.18) inset}
+.profile-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.profile-badge{display:inline-flex;align-items:center;margin-left:6px;padding:2px 7px;border-radius:999px;background:rgba(230,165,58,.22);color:#f5d08a;font-size:12px;font-weight:700}
+@media (max-width:760px){.profile-row{grid-template-columns:1fr}.profile-actions{justify-content:flex-start}.profile-actions button{flex:1 1 130px}}

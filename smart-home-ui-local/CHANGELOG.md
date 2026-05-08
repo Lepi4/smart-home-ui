@@ -1,12 +1,32 @@
 # Changelog
 
+## v3.5.7 — profile UI: create / duplicate / delete / switch
+
+- Добавлен UI управления профилями в настройках: `Настройки → Профили`.
+- Можно создать до 3 профилей, переименовать профиль, переключить активный профиль и удалить профиль с backup.
+- Добавлено дублирование текущего профиля целиком.
+- При создании нового профиля добавлены опции `Дублировать зоны` и `Дублировать значки/маркеры`, чтобы перенести координаты из текущего профиля.
+- Удаление профиля требует подтверждение `DELETE`; последний профиль удалить нельзя.
+- Security/PIN, dangerous rules и Attention Monitor остаются глобальными для всех профилей.
+- README/FAQ обновлены под управление профилями и будущую концепцию этажей/областей.
+
+## v3.5.6 — profiles foundation and migration
+
+- Добавлен фундамент профилей проекта: `/data/profiles.json` и `/data/profiles/profile-1/`.
+- При первом запуске существующие runtime-данные мигрируют в `profile-1`: layout, rooms, images, source_config, ui_state, devices и Lovelace source.
+- Активный профиль теперь имеет собственные layout/images/rooms/source_config/ui_state/devices.
+- Security/PIN, Attention Monitor и command log остаются глобальными.
+- Добавлены API профилей: `GET /api/profiles`, `POST /api/profiles`, duplicate, activate и rename.
+- В диагностике отображается активный профиль и путь к его данным.
+- Подготовлена база для следующего шага: UI управления профилями, создание/дублирование/удаление/переключение.
+
 ## v3.5.5.6 — FAQ scroll hotfix
 
 - Исправлен FAQ modal: содержимое FAQ теперь загружается в собственный scrollable-блок вместо iframe.
 - Исправлена прокрутка FAQ в Home Assistant Ingress/iOS, где iframe мог не скроллиться.
 - Версия обновлена до 3.5.5.6.
 
-## v3.5.5.6 — rebrand ALLHA-3D → ALLHA-2D
+## v3.5.5.5 — rebrand ALLHA-3D → ALLHA-2D
 
 - Проект переименован в `ALLHA-2D`, потому что интерфейс работает с плоскими планами, зонами и маркерами, а не с настоящей 3D-сценой.
 - Обновлены названия в UI, add-on config, panel title, README, FAQ, About/diagnostics и brand assets.

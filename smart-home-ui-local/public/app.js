@@ -14,7 +14,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -2376,6 +2376,111 @@ function migrateLayout(){
 async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
 async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
 
+
+async function loadProfilesInfo(){
+  try{
+    state.profiles = await apiJson('api/profiles');
+    renderProfilesManager();
+    return state.profiles;
+  }catch(e){
+    state.profiles = null;
+    const box=el('profiles-manager');
+    if(box) box.innerHTML='<p class="muted">Ошибка чтения профилей: '+esc(e.message)+'</p>';
+    return null;
+  }
+}
+function renderProfilesManager(){
+  const box=el('profiles-manager');
+  if(!box) return;
+  const admin=canEditLayout();
+  const data=state.profiles;
+  if(!data){ box.innerHTML='<p class="muted">Профили ещё не загружены.</p>'; return; }
+  const profiles=Array.isArray(data.profiles) ? data.profiles : [];
+  const activeId=data.activeProfileId || profiles.find(p=>p.active)?.id || 'profile-1';
+  const canCreate=profiles.length < (data.max || 3);
+  const rows=profiles.map(p=>{
+    const active=p.id===activeId || p.active;
+    return `<div class="profile-row${active?' active-profile':''}" data-profile-row="${esc(p.id)}">`+
+      `<div><strong>${esc(p.name||p.id)}</strong>${active?' <span class="profile-badge">активный</span>':''}<br>`+
+      `<span class="muted">${esc(p.id)} · ${p.exists?'папка есть':'папка не найдена'}${p.updatedAt?' · '+esc(new Date(p.updatedAt).toLocaleString()):''}</span></div>`+
+      `<div class="profile-actions">`+
+      `<button type="button" data-profile-activate="${esc(p.id)}" ${active?'disabled':''}>Переключить</button>`+
+      `<button type="button" data-profile-rename="${esc(p.id)}">Переименовать</button>`+
+      `<button type="button" data-profile-duplicate="${esc(p.id)}" ${canCreate?'':'disabled'}>Дублировать</button>`+
+      `<button type="button" class="danger-button small-danger" data-profile-delete="${esc(p.id)}" ${profiles.length<=1?'disabled':''}>Удалить</button>`+
+      `</div></div>`;
+  }).join('');
+  box.innerHTML=`<div class="profile-summary"><strong>Активный профиль:</strong> ${esc(activeId)} · ${profiles.length}/${data.max||3}</div>`+
+    `<div class="profile-create-card"><h4>Создать новый профиль</h4>`+
+    `<label>Название профиля <input id="new-profile-name" type="text" placeholder="Например: Этаж 2 / Двор / Тест"></label>`+
+    `<label class="settings-check"><input type="checkbox" id="new-profile-copy-zones"> Дублировать зоны из текущего профиля</label>`+
+    `<label class="settings-check"><input type="checkbox" id="new-profile-copy-markers"> Дублировать значки/маркеры из текущего профиля</label>`+
+    `<p class="muted">Название профиля вводится вручную. Для будущих этажей/мансарды/двора это будет отдельная область с собственными источниками Lovelace.</p>`+
+    `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 3 профиля'}</button></div>`+
+    `<div class="profiles-list">${rows}</div>`+
+    `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей. После переключения профиль лучше перезагрузить страницу.</p>`;
+  qsa('button,input', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
+}
+async function createProfileFromSettings(){
+  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  const name=el('new-profile-name')?.value?.trim() || '';
+  const duplicateZones=!!el('new-profile-copy-zones')?.checked;
+  const duplicateMarkers=!!el('new-profile-copy-markers')?.checked;
+  try{
+    state.profiles=await apiJson('api/profiles',{method:'POST',body:JSON.stringify({name,duplicateZones,duplicateMarkers})});
+    renderProfilesManager();
+    showToast('Профиль создан');
+  }catch(e){ showToast('Ошибка создания профиля: '+e.message); }
+}
+async function duplicateProfileFromSettings(profileId){
+  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  const current=state.profiles?.profiles?.find(p=>p.id===profileId);
+  const name=window.prompt('Название копии профиля', current ? `Копия ${current.name}` : 'Копия профиля');
+  if(name===null) return;
+  try{
+    state.profiles=await apiJson(`api/profiles/${encodeURIComponent(profileId)}/duplicate`,{method:'POST',body:JSON.stringify({name})});
+    renderProfilesManager();
+    showToast('Профиль продублирован');
+  }catch(e){ showToast('Ошибка дублирования профиля: '+e.message); }
+}
+async function activateProfileFromSettings(profileId){
+  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  if(!confirm('Переключить активный профиль? Несохранённые изменения текущей формы настроек будут потеряны. После переключения страница будет перезагружена.')) return;
+  try{
+    await apiJson(`api/profiles/${encodeURIComponent(profileId)}/activate`,{method:'POST'});
+    showToast('Профиль переключён. Перезагрузка...');
+    setTimeout(()=>location.reload(), 700);
+  }catch(e){ showToast('Ошибка переключения профиля: '+e.message); }
+}
+async function renameProfileFromSettings(profileId){
+  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  const current=state.profiles?.profiles?.find(p=>p.id===profileId);
+  const name=window.prompt('Новое название профиля', current?.name || profileId);
+  if(name===null) return;
+  try{
+    state.profiles=await apiJson(`api/profiles/${encodeURIComponent(profileId)}`,{method:'PATCH',body:JSON.stringify({name})});
+    renderProfilesManager();
+    showToast('Профиль переименован');
+  }catch(e){ showToast('Ошибка переименования профиля: '+e.message); }
+}
+async function deleteProfileFromSettings(profileId){
+  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  const list=state.profiles?.profiles || [];
+  if(list.length<=1){ showToast('Нельзя удалить последний профиль'); return; }
+  const current=list.find(p=>p.id===profileId);
+  if(!confirm(`Удалить профиль "${current?.name||profileId}"? Перед удалением будет создан backup профиля.`)) return;
+  const word=window.prompt('Для удаления введите DELETE');
+  if(word !== 'DELETE'){ showToast('Удаление отменено'); return; }
+  try{
+    const wasActive = profileId === (state.profiles?.activeProfileId || 'profile-1');
+    const res=await apiJson(`api/profiles/${encodeURIComponent(profileId)}`,{method:'DELETE',body:JSON.stringify({})});
+    state.profiles=res;
+    renderProfilesManager();
+    showToast('Профиль удалён. Backup: '+(res.backup||'—'));
+    if(wasActive) setTimeout(()=>location.reload(),700);
+  }catch(e){ showToast('Ошибка удаления профиля: '+e.message); }
+}
+
 async function loadImagesInfo(){
   try{
     state.images = await apiJson('api/images');
@@ -2806,6 +2911,10 @@ function renderInfoModal(){
       infoRow('rooms.json в /data',d.storage?.roomsSettingsExists?'есть':'нет'),
       infoRow('devices.js в /data',d.storage?.devicesInData?'есть':'fallback'),
       infoRow('lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'),
+      infoSection('Profiles'),
+      infoRow('active profile', d.profiles?.activeProfileId || 'profile-1'),
+      infoRow('profiles count', ((d.profiles?.count ?? 1)+' / '+(d.profiles?.max ?? 3))),
+      infoRow('active profile dir', d.profiles?.activePaths?.dir || '—'),
       infoSection('Images storage'),
       infoRow('/data/images',d.images?.exists?'есть':'нет'),
       infoRow('/data/images/overview',d.images?.overviewDirExists?'есть':'нет'),
@@ -2880,7 +2989,7 @@ function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncM
 
 
 function openSettingsPanel(name){
-  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources'};
+  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles'};
   const id=map[name]||name;
   qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));
   qsa('#settings-modal [data-settings-panel]').forEach(btn=>btn.classList.toggle('active', btn.dataset.settingsPanel===name));
@@ -2950,6 +3059,14 @@ function bindGlobal(){
   const clearZonesBtn=el('btn-clear-zones'); if(clearZonesBtn) clearZonesBtn.onclick=clearLayoutZones;
   const createZoneBtn=el('btn-create-zone'); if(createZoneBtn) createZoneBtn.onclick=createZoneFromSettings;
   const openPlacementBtn=el('btn-open-device-placement'); if(openPlacementBtn) openPlacementBtn.onclick=openMarkerPlacementFromSettings;
+  const profilesManager=el('profiles-manager');
+  if(profilesManager) profilesManager.addEventListener('click', e=>{
+    const create=e.target.closest('#btn-create-profile'); if(create){ createProfileFromSettings(); return; }
+    const act=e.target.closest('[data-profile-activate]'); if(act){ activateProfileFromSettings(act.dataset.profileActivate); return; }
+    const ren=e.target.closest('[data-profile-rename]'); if(ren){ renameProfileFromSettings(ren.dataset.profileRename); return; }
+    const dup=e.target.closest('[data-profile-duplicate]'); if(dup){ duplicateProfileFromSettings(dup.dataset.profileDuplicate); return; }
+    const del=e.target.closest('[data-profile-delete]'); if(del){ deleteProfileFromSettings(del.dataset.profileDelete); return; }
+  });
   const roomsManager=el('rooms-zones-manager');
   if(roomsManager) roomsManager.addEventListener('click', e=>{
     const zoneBtn=e.target.closest('[data-room-zone-create]');
@@ -3090,6 +3207,7 @@ async function initialHaSync(){
   await loadAttention();
   await loadImagesInfo();
   await loadRoomsSettings();
+  await loadProfilesInfo();
   loadKioskLockLocal();
   bindGlobal();
   startClock();
@@ -3099,6 +3217,7 @@ async function initialHaSync(){
     await loadConfig();
     await loadSecurityRules();
     applyConfigToInputs();
+    renderProfilesManager();
   }catch(e){
     console.error('config load failed', e);
   }
