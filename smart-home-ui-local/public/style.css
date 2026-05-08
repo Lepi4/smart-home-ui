@@ -1854,3 +1854,33 @@ body.kiosk-tiles-active .kiosk-view-switcher button{padding:6px 11px!important;f
   .kiosk-tile-page.active{grid-template-columns:repeat(var(--kt-cols,3),minmax(0,1fr))!important;}
   .kiosk-tile-room{height:17px!important;min-height:17px!important;font-size:10px!important;}
 }
+
+
+/* v3.5.9.9 — kiosk tiles grouping/pager/clock fixes */
+body.kiosk-tiles-active #kiosk-widget{
+  position:fixed!important;
+  left:18px!important;
+  top:18px!important;
+  z-index:1950!important;
+  visibility:visible!important;
+  display:block!important;
+}
+body.kiosk-tiles-active #level-switcher,
+body.kiosk-tiles-active #kiosk-level-switcher{
+  display:none!important;
+  visibility:hidden!important;
+  pointer-events:none!important;
+}
+body.kiosk-tiles-active .kiosk-tile-view{
+  padding-top:64px!important;
+}
+body.kiosk-tiles-active .kiosk-tile-head h2{
+  margin-top:4px!important;
+}
+body.kiosk-tiles-active .kiosk-tile-page.active{
+  align-content:start!important;
+}
+@media(max-width:760px){
+  body.kiosk-tiles-active #kiosk-widget{left:10px!important;top:10px!important;transform:scale(.82);transform-origin:left top;}
+  body.kiosk-tiles-active .kiosk-tile-view{padding-top:72px!important;}
+}

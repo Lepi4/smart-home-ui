@@ -949,13 +949,48 @@ function cancelEditChanges(){
 }
 
 
+function pointInPolyPct(point, points){
+  const pts=sanitizeZonePoints(points);
+  if(!point || pts.length<3) return false;
+  const x=Number(point.x), y=Number(point.y);
+  if(!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const xi=pts[i].x, yi=pts[i].y, xj=pts[j].x, yj=pts[j].y;
+    const intersect=((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/((yj-yi)||1e-9)+xi);
+    if(intersect) inside=!inside;
+  }
+  return inside;
+}
+function polygonAreaPct(points){
+  const pts=sanitizeZonePoints(points);
+  if(pts.length<3) return 999999;
+  let a=0;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++) a += (pts[j].x*pts[i].y - pts[i].x*pts[j].y);
+  return Math.abs(a/2);
+}
+function roomIdFromOverviewMarkerPoint(point){
+  const hits=[];
+  (ROOMS||[]).filter(r=>r.id!=='overview').forEach(r0=>{
+    const rid=normalizedRoomId(r0.id);
+    const r=roomWithLayout(rid);
+    if(!hasZoneShape(r)) return;
+    const pts=zonePoints(r);
+    if(pointInPolyPct(point, pts)) hits.push({rid, area:polygonAreaPct(pts)});
+  });
+  hits.sort((a,b)=>a.area-b.area);
+  return hits[0]?.rid || '';
+}
+function kioskTileRoomIdForDevice(d){
+  return normalizedRoomId(d?.__kioskTileRoom || effectiveDeviceRoomId(d) || d?.room || inferRoomIdFromDevice(d) || '__noroom') || '__noroom';
+}
 function groupDevicesByRoomForKioskTile(list){
   const byRoom=new Map();
   const seen=new Set();
   (list||[]).forEach(d=>{
     if(!d || seen.has(d.entity_id)) return;
     seen.add(d.entity_id);
-    const rid=normalizedRoomId(d.room || inferRoomIdFromDevice(d) || '__noroom') || '__noroom';
+    const rid=kioskTileRoomIdForDevice(d);
     if(!byRoom.has(rid)) byRoom.set(rid,[]);
     byRoom.get(rid).push(d);
   });
@@ -983,14 +1018,17 @@ function placedKioskTileDevices(){
     const d=devices().find(x=>x.entity_id===entity);
     if(!d || !IMPORTANT_DOMAINS.has(d.domain)) return;
     seen.add(entity);
-    list.push(d);
+    const point=overviewMarkers[entity] || {};
+    const zoneRoom=roomIdFromOverviewMarkerPoint(point);
+    list.push({...d, __kioskTileRoom: zoneRoom || effectiveDeviceRoomId(d) || d.room || inferRoomIdFromDevice(d) || '__noroom'});
   });
   return groupDevicesByRoomForKioskTile(list);
 }
 function kioskTileDeviceHtml(d){
   const st=stateText(d);
   const value=markerValueLabel(d)||st;
-  return `<button type="button" class="kiosk-tile-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}"><span class="kiosk-tile-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-text"><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-room-name">${esc(roomGroupLabel(d.room || inferRoomIdFromDevice(d) || '__noroom'))}</span></span><span class="kiosk-tile-state state">${esc(value)}</span></button>`;
+  const rid=kioskTileRoomIdForDevice(d);
+  return `<button type="button" class="kiosk-tile-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}"><span class="kiosk-tile-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-text"><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-room-name">${esc(roomGroupLabel(rid))}</span></span><span class="kiosk-tile-state state">${esc(value)}</span></button>`;
 }
 function buildKioskTilePages(groups, cols, maxRows){
   const pages=[];
@@ -2718,7 +2756,13 @@ function renderLevelSwitcher(){
   const levelHtml = levels.length > 1 ? others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
   const overviewHtml = (state.ui.kioskMode && !state.ui.kioskTileMode && state.selectedRoom!=='overview') ? '<button type="button" class="level-switch-btn overview-switch-btn" data-kiosk-overview-home="1">Общий план</button>' : '';
   const html = overviewHtml + levelHtml;
-  ['level-switcher','kiosk-level-switcher'].forEach(id=>{ const box=el(id); if(box){ box.innerHTML=html; box.classList.toggle('hidden', !html); } });
+  ['level-switcher','kiosk-level-switcher'].forEach(id=>{
+    const box=el(id);
+    if(!box) return;
+    const useHtml = (state.ui.kioskMode && state.ui.kioskTileMode) ? '' : html;
+    box.innerHTML=useHtml;
+    box.classList.toggle('hidden', !useHtml);
+  });
 }
 async function loadRuntimeScripts(){
   const token=Date.now();
