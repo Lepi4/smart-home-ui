@@ -992,27 +992,41 @@ function kioskTileDeviceHtml(d){
   const value=markerValueLabel(d)||st;
   return `<button type="button" class="kiosk-tile-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}"><span class="kiosk-tile-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-text"><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-room-name">${esc(roomGroupLabel(d.room || inferRoomIdFromDevice(d) || '__noroom'))}</span></span><span class="kiosk-tile-state state">${esc(value)}</span></button>`;
 }
-function buildKioskTilePages(groups, cols, maxUnits){
+function buildKioskTilePages(groups, cols, maxRows){
   const pages=[];
   let html='';
-  let units=0;
-  const headerUnits=0.42;
-  const deviceUnit=1;
-  const flush=()=>{ if(html.trim()){ pages.push(html); html=''; units=0; } };
-  groups.forEach(g=>{
-    const header=`<h3 class="kiosk-tile-room">${esc(g.label)}</h3>`;
-    if(units + headerUnits + deviceUnit > maxUnits) flush();
-    html += header;
-    units += headerUnits;
-    g.items.forEach(d=>{
-      if(units + deviceUnit > maxUnits && html.trim()){
-        flush();
-        html += header;
-        units += headerUnits;
-      }
-      html += kioskTileDeviceHtml(d);
-      units += deviceUnit;
-    });
+  let rows=0;
+  const safeCols=Math.max(1, Number(cols)||1);
+  const safeRows=Math.max(2, Number(maxRows)||6);
+  const flush=()=>{
+    if(html.trim()) pages.push(html);
+    html='';
+    rows=0;
+  };
+  const addHeader=(g)=>{
+    if(rows >= safeRows) flush();
+    html += `<h3 class="kiosk-tile-room">${esc(g.label)}</h3>`;
+    rows += 1;
+  };
+  (groups||[]).forEach(g=>{
+    const items=(g.items||[]);
+    let idx=0;
+    while(idx < items.length){
+      if(!html.trim()) addHeader(g);
+      // If there is no space for at least one device row after the header,
+      // start a new page and repeat the room header there.
+      if(rows >= safeRows){ flush(); addHeader(g); }
+      const freeRows=Math.max(1, safeRows - rows);
+      const canTake=Math.max(1, freeRows * safeCols);
+      const chunk=items.slice(idx, idx + canTake);
+      chunk.forEach(d=>{ html += kioskTileDeviceHtml(d); });
+      rows += Math.ceil(chunk.length / safeCols);
+      idx += chunk.length;
+      if(idx < items.length) flush();
+    }
+    if(!items.length){
+      if(!html.trim()) addHeader(g);
+    }
   });
   flush();
   return pages.length ? pages : [''];
@@ -1044,28 +1058,36 @@ function renderKioskTiles(){
   const totalDevices=groups.reduce((sum,g)=>sum+g.items.length,0);
   const vw=Math.max(320, window.innerWidth || 1280);
   const vh=Math.max(320, window.innerHeight || 720);
-  const headerReserve = vw < 720 ? 104 : 86;
-  const footerReserve = 36;
-  const availableH=Math.max(260, vh - headerReserve - footerReserve);
-  const availableW=Math.max(300, vw - 28);
-  let cols=clamp(Math.floor(availableW / 168), vw<760?2:4, vw>1700?11:9);
-  if(totalDevices>36 && vw>1500) cols=Math.min(12, cols+1);
-  let tileH=clamp(Math.floor(availableH / 9.2), 42, 78);
-  if(totalDevices>30) tileH=Math.min(tileH,58);
-  if(totalDevices>45) tileH=Math.min(tileH,48);
-  const compact = tileH < 62 || totalDevices > 28;
-  const ultra = tileH < 52 || totalDevices > 42;
+  const roomCount=groups.length;
+  // The tile screen is a fixed kiosk dashboard. Keep it inside one viewport and
+  // paginate by real grid rows instead of allowing browser scroll.
+  const headerReserve = vw < 720 ? 94 : 82;
+  const footerReserve = 26;
+  const availableH=Math.max(220, vh - headerReserve - footerReserve);
+  const availableW=Math.max(300, vw - 24);
+  let cols=clamp(Math.floor(availableW / (vw < 720 ? 126 : 154)), vw<760?2:5, vw>1700?13:11);
+  if(totalDevices>32 && vw>1200) cols=Math.min(vw>1700?14:12, cols+1);
+  if(totalDevices>48 && vw>1400) cols=Math.min(15, cols+1);
+  const gap = totalDevices>42 ? 3 : totalDevices>28 ? 4 : 5;
+  const maxRowsByHeight=Math.max(2, Math.floor(availableH / (totalDevices>42 ? 46 : totalDevices>28 ? 52 : 60)));
+  let maxRows=clamp(maxRowsByHeight, 3, 10);
+  // Headers are real grid rows. If many rooms exist, force pagination sooner so
+  // lower room sections do not disappear behind kiosk controls.
+  if(roomCount > 7 && vh < 850) maxRows=Math.min(maxRows, 7);
+  if(vh < 650) maxRows=Math.min(maxRows, 6);
+  let tileH=Math.floor((availableH - ((maxRows-1)*gap)) / maxRows);
+  tileH=clamp(tileH, 36, totalDevices>34 ? 54 : 66);
+  const compact = tileH < 58 || totalDevices > 28 || roomCount > 5;
+  const ultra = tileH < 46 || totalDevices > 44 || (roomCount > 8 && vh < 850);
   if(view){
     view.style.setProperty('--kt-cols', String(cols));
     view.style.setProperty('--kt-tile-h', `${tileH}px`);
-    view.style.setProperty('--kt-gap', ultra ? '4px' : compact ? '5px' : '7px');
+    view.style.setProperty('--kt-gap', `${gap}px`);
     view.classList.toggle('kiosk-tiles-compact', compact);
     view.classList.toggle('kiosk-tiles-ultra', ultra);
     view.classList.toggle('kiosk-tiles-room-filter', !!(roomFilter && roomFilter!=='overview'));
   }
-  const maxRows=Math.max(3, Math.floor((availableH - 12) / (tileH + (ultra?4:compact?5:7))));
-  const maxUnits=Math.max(cols*2, cols * maxRows);
-  const pageHtml=buildKioskTilePages(groups, cols, maxUnits);
+  const pageHtml=buildKioskTilePages(groups, cols, maxRows);
   state.kioskTilePage=clamp(Number(state.kioskTilePage||0),0,pageHtml.length-1);
   pages.innerHTML=pageHtml.map((h,i)=>`<div class="kiosk-tile-page ${i===state.kioskTilePage?'active':''}">${h}</div>`).join('');
   if(pager){

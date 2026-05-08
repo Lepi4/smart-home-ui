@@ -1823,3 +1823,34 @@ body.kiosk-tiles-active .kiosk-level-switcher{display:none!important;}
 .kiosk-tile-pager button{font-size:18px!important;min-width:34px!important;min-height:30px!important;}
 .kiosk-tile-pager span{font-weight:900;color:#e2e8f0;}
 @media (max-width:720px){.kiosk-tile-view{padding-top:78px!important}.kiosk-tile-pages{height:calc(100vh - 132px)!important}.kiosk-tile-page.active{grid-template-columns:repeat(var(--kt-cols,3),minmax(0,1fr))!important}.kiosk-tile-head p{display:none!important}}
+
+
+/* v3.5.9.8: kiosk tile dashboard must fit without scroll and paginate by rows. */
+body.kiosk-tiles-active{overflow:hidden!important;}
+body.kiosk-tiles-active .kiosk-level-switcher{display:none!important;}
+body.kiosk-tiles-active .kiosk-view-switcher{top:8px!important;z-index:1900!important;}
+body.kiosk-tiles-active .kiosk-view-switcher button{padding:6px 11px!important;font-size:14px!important;}
+.kiosk-tile-view{overflow:hidden!important;padding:48px 12px 12px!important;}
+.kiosk-tile-head{margin:0 auto 4px!important;max-width:980px!important;}
+.kiosk-tile-head h2{font-size:clamp(18px,2.4vw,30px)!important;line-height:1!important;margin:0!important;}
+.kiosk-tile-head p{display:none!important;}
+.kiosk-tile-pages{height:calc(100vh - 92px)!important;overflow:hidden!important;}
+.kiosk-tile-page.active{display:grid!important;grid-template-columns:repeat(var(--kt-cols,8),minmax(0,1fr))!important;gap:var(--kt-gap,4px)!important;align-content:start!important;grid-auto-flow:row!important;}
+.kiosk-tile-room{grid-column:1/-1!important;height:18px!important;min-height:18px!important;margin:0!important;padding:1px 8px!important;border-radius:8px!important;font-size:clamp(10px,.95vw,14px)!important;line-height:1!important;display:flex!important;align-items:center!important;}
+.kiosk-tile-device{height:var(--kt-tile-h,46px)!important;min-height:var(--kt-tile-h,46px)!important;padding:4px 6px!important;border-radius:10px!important;grid-template-columns:minmax(24px,32px) minmax(0,1fr)!important;grid-template-rows:1fr auto!important;gap:1px 5px!important;}
+.kiosk-tile-icon{width:calc(var(--kt-tile-h,46px) * .58)!important;height:calc(var(--kt-tile-h,46px) * .58)!important;min-width:22px!important;min-height:22px!important;border-radius:8px!important;font-size:clamp(13px,1.1vw,18px)!important;}
+.kiosk-tile-icon .icon-svg{width:clamp(13px,1.1vw,18px)!important;height:clamp(13px,1.1vw,18px)!important;}
+.kiosk-tile-name{font-size:clamp(9px,.9vw,13px)!important;line-height:1!important;}
+.kiosk-tile-room-name{display:none!important;}
+.kiosk-tile-state{grid-column:2/3!important;font-size:clamp(7px,.72vw,10px)!important;padding:1px 4px!important;line-height:1!important;}
+.kiosk-tile-pager{bottom:8px!important;z-index:1901!important;padding:4px 9px!important;gap:7px!important;}
+.kiosk-tile-pager button{font-size:17px!important;min-width:30px!important;min-height:28px!important;padding:2px 8px!important;}
+.kiosk-tile-pager span{font-weight:900;color:#e2e8f0;font-size:13px!important;}
+@media (max-width:720px){
+  body.kiosk-tiles-active .kiosk-view-switcher{top:8px!important;}
+  .kiosk-tile-view{padding-top:48px!important;}
+  .kiosk-tile-head h2{font-size:20px!important;}
+  .kiosk-tile-pages{height:calc(100vh - 92px)!important;}
+  .kiosk-tile-page.active{grid-template-columns:repeat(var(--kt-cols,3),minmax(0,1fr))!important;}
+  .kiosk-tile-room{height:17px!important;min-height:17px!important;font-size:10px!important;}
+}
