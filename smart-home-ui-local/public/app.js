@@ -2914,7 +2914,21 @@ function bindGlobal(){
   el('device-modal').addEventListener('click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
   el('btn-close-info').onclick=()=>el('info-modal').classList.add('hidden');
   el('info-modal').addEventListener('click',e=>{if(e.target.id==='info-modal')el('info-modal').classList.add('hidden')});
-  el('btn-faq-settings').onclick=()=>openModal('faq-modal');
+  async function loadFaqContent(){
+    const box=el('faq-content');
+    if(!box || box.dataset.loaded==='1') return;
+    try{
+      const res=await fetch('FAQ.html?ts='+Date.now(), {cache:'no-store'});
+      const html=await res.text();
+      const doc=new DOMParser().parseFromString(html, 'text/html');
+      box.innerHTML=doc.body ? doc.body.innerHTML : html;
+      box.dataset.loaded='1';
+      box.scrollTop=0;
+    }catch(e){
+      box.innerHTML='<h1>FAQ / Помощь</h1><p>Не удалось загрузить FAQ. Откройте README или FAQ.md из дистрибутива.</p>';
+    }
+  }
+  el('btn-faq-settings').onclick=async()=>{ await loadFaqContent(); openModal('faq-modal'); setTimeout(()=>{ const b=el('faq-content'); if(b) b.scrollTop=0; }, 50); };
   el('btn-close-faq').onclick=()=>closeModal('faq-modal');
   el('faq-modal').addEventListener('click',e=>{if(e.target.id==='faq-modal')closeModal('faq-modal')});
   el('btn-refresh-info').onclick=loadDiagnostics;

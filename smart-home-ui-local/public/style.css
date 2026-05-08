@@ -1505,7 +1505,7 @@ body.invisible-zones:not(.editing) .room-zone{background:transparent!important;b
 .metric-co2 .metric-icon{font-size:.92em;letter-spacing:-.04em;}
 .factory-reset-warning{margin:12px 0 4px;padding:10px 12px;border:1px solid rgba(255,160,64,.45);border-radius:12px;background:rgba(255,160,64,.10);color:var(--text,#eef4ff);font-size:13px;line-height:1.4;}
 
-/* v3.5.5.5 settings structure: service menus instead of huge inline blocks */
+/* v3.5.5.6 settings structure: service menus instead of huge inline blocks */
 #settings-modal .settings-service-menu{
   padding:0 16px 12px!important;
   display:grid!important;
@@ -1546,7 +1546,17 @@ body.invisible-zones:not(.editing) .room-zone{background:transparent!important;b
   #settings-modal .settings-section-panel{margin:0 10px 8px!important;padding:9px!important;border-radius:12px!important}
 }
 
-/* v3.5.5.5 FAQ scroll fix: scroll the modal body, not only iframe */
+/* v3.5.5.6 FAQ scroll fix: scroll the modal body, not only iframe */
 .faq-modal-card{height:min(840px,94dvh)!important;max-height:94dvh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}
 .faq-modal-card .modal-head{flex:0 0 auto!important;}
 .faq-frame{display:block!important;width:100%!important;flex:1 1 auto!important;min-height:0!important;height:100%!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;touch-action:auto!important;overscroll-behavior:contain!important;}
+
+
+/* v3.5.5.6 — FAQ modal uses inline scrollable content instead of iframe; fixes iOS/Ingress scroll */
+.faq-modal-card{width:min(1100px,96vw)!important;height:min(840px,94dvh)!important;max-height:94dvh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}
+.faq-modal-card .modal-head{flex:0 0 auto!important;}
+.faq-frame.faq-content{display:block!important;flex:1 1 auto!important;min-height:0!important;height:auto!important;overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior:contain!important;touch-action:pan-y!important;background:#eee9df!important;color:#252a32!important;border:1px solid rgba(255,255,255,.14)!important;border-radius:14px!important;padding:42px 70px!important;line-height:1.5!important;}
+.faq-content h1,.faq-content h2,.faq-content h3{color:#252a32!important;}
+.faq-content code,.faq-content pre{background:rgba(0,0,0,.07)!important;color:#111!important;border-radius:8px;}
+.faq-content pre{padding:12px!important;overflow:auto!important;}
+@media(max-width:720px){.faq-modal-card{width:calc(100vw - 12px)!important;height:calc(100dvh - 12px)!important;max-height:calc(100dvh - 12px)!important;}.faq-frame.faq-content{padding:18px 16px!important;border-radius:10px!important;}}

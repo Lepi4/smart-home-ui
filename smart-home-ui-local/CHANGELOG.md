@@ -1,6 +1,12 @@
 # Changelog
 
-## v3.5.5.5 — rebrand ALLHA-3D → ALLHA-2D
+## v3.5.5.6 — FAQ scroll hotfix
+
+- Исправлен FAQ modal: содержимое FAQ теперь загружается в собственный scrollable-блок вместо iframe.
+- Исправлена прокрутка FAQ в Home Assistant Ingress/iOS, где iframe мог не скроллиться.
+- Версия обновлена до 3.5.5.6.
+
+## v3.5.5.6 — rebrand ALLHA-3D → ALLHA-2D
 
 - Проект переименован в `ALLHA-2D`, потому что интерфейс работает с плоскими планами, зонами и маркерами, а не с настоящей 3D-сценой.
 - Обновлены названия в UI, add-on config, panel title, README, FAQ, About/diagnostics и brand assets.
