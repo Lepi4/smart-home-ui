@@ -2421,6 +2421,8 @@ async function reloadActiveLevelRuntime(){
   await loadLayout();
   await loadSourceConfig();
   await loadImagesInfo();
+  const overviewImg=el('overview-image');
+  if(overviewImg) overviewImg.src = overviewImageSrc();
   await loadRoomsSettings();
   state.selectedRoom='overview';
   applySourceConfig();
@@ -2429,6 +2431,7 @@ async function reloadActiveLevelRuntime(){
   renderRoomsZonesManager();
   renderLayoutMaintenanceTools();
   render();
+  requestAnimationFrame(()=>fitStage('overview'));
 }
 async function activateLevelSmooth(levelId, opts={}){
   if(!levelId || state.levelSwitching) return;
@@ -2471,7 +2474,7 @@ function renderProfilesManager(){
   if(!data){ box.innerHTML='<p class="muted">Профили ещё не загружены.</p>'; return; }
   const profiles=Array.isArray(data.profiles) ? data.profiles : [];
   const activeId=data.activeProfileId || profiles.find(p=>p.active)?.id || 'profile-1';
-  const canCreate=profiles.length < (data.max || 3);
+  const canCreate=profiles.length < (data.max || 5);
   const rows=profiles.map(p=>{
     const active=p.id===activeId || p.active;
     return `<div class="profile-row${active?' active-profile':''}" data-profile-row="${esc(p.id)}">`+
@@ -2490,7 +2493,7 @@ function renderProfilesManager(){
     `<label class="settings-check"><input type="checkbox" id="new-profile-copy-zones"> Дублировать зоны из текущего профиля</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-profile-copy-markers"> Дублировать значки/маркеры из текущего профиля</label>`+
     `<p class="muted">Создать профиль с нуля = пустой профиль без комнат/устройств/источников. Дублирование профиля = полная копия. Галочки копируют только зоны/значки, без автопарсинга старых карт.</p>`+
-    `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 3 профиля'}</button></div>`+
+    `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 5 профилей'}</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
     `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей. После переключения профиль лучше перезагрузить страницу.</p>`;
   qsa('button,input', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
@@ -3200,7 +3203,7 @@ function renderInfoModal(){
       infoRow('lovelace-source.js в /data',d.storage?.lovelaceInData?'есть':'fallback'),
       infoSection('Profiles'),
       infoRow('active profile', d.profiles?.activeProfileId || 'profile-1'),
-      infoRow('profiles count', ((d.profiles?.count ?? 1)+' / '+(d.profiles?.max ?? 3))),
+      infoRow('profiles count', ((d.profiles?.count ?? 1)+' / '+(d.profiles?.max ?? 5))),
       infoRow('active profile dir', d.profiles?.activePaths?.dir || '—'),
       infoSection('Levels / areas'),
       infoRow('active level', d.levels?.activeLevelId || 'level-1'),

@@ -155,7 +155,7 @@ function normalizeProfilesMeta(raw){
       createdAt: p.createdAt || new Date().toISOString(),
       updatedAt: p.updatedAt || null
     });
-    if(profiles.length >= 3) break;
+    if(profiles.length >= 5) break;
   }
   if(!profiles.length) profiles.push(def.profiles[0]);
   const active = sanitizeProfileId(raw?.activeProfileId || profiles[0].id);
@@ -345,7 +345,7 @@ function profilesDiagnostics(){
     metaPath: PROFILES_META_PATH,
     activeProfileId: meta.activeProfileId,
     count: meta.profiles.length,
-    max: 3,
+    max: 5,
     profiles: meta.profiles.map(p=>({
       ...p,
       dir: profilePaths(p.id).dir,
@@ -490,7 +490,7 @@ function deleteLevel(levelId){
 
 function createProfile(payload={}){
   const meta = loadProfilesMeta();
-  if(meta.profiles.length >= 3) throw new Error('Можно создать максимум 3 профиля');
+  if(meta.profiles.length >= 5) throw new Error('Можно создать максимум 5 профилей');
   let n = 1; let id;
   do { id = 'profile-' + (++n); } while(meta.profiles.some(p=>p.id===id) && n < 20);
   const now = new Date().toISOString();
@@ -527,7 +527,7 @@ function createProfile(payload={}){
 }
 function duplicateProfile(id, payload={}){
   const meta = loadProfilesMeta();
-  if(meta.profiles.length >= 3) throw new Error('Можно создать максимум 3 профиля');
+  if(meta.profiles.length >= 5) throw new Error('Можно создать максимум 5 профилей');
   const srcId = sanitizeProfileId(id || meta.activeProfileId);
   const srcMeta = meta.profiles.find(p=>p.id===srcId);
   if(!srcMeta) throw new Error('Исходный профиль не найден');
@@ -1392,7 +1392,15 @@ function loadSourceConfigForLevel(profileId, levelId){
 function saveSourceConfigForLevel(profileId, levelId, cfg){
   const lp = ensureLevelDirs(profileId || ACTIVE_PROFILE_ID, levelId || ACTIVE_LEVEL_ID);
   fs.mkdirSync(path.dirname(lp.sourceConfig), {recursive:true});
-  const normalized = { ...defaultSourceConfig(), ...(cfg || {}), dashboardPaths: normalizeDashboardPaths(cfg?.dashboardPaths ?? cfg?.dashboardPathText ?? '') };
+  const hasDashboardPathText = Object.prototype.hasOwnProperty.call(cfg || {}, 'dashboardPathText');
+  const sourceInput = hasDashboardPathText ? cfg.dashboardPathText : (cfg?.dashboardPaths ?? '');
+  const dashboardPaths = normalizeDashboardPaths(sourceInput);
+  const normalized = {
+    ...defaultSourceConfig(),
+    ...(cfg || {}),
+    dashboardPaths,
+    dashboardPathText: dashboardPaths.join('\n')
+  };
   fs.writeFileSync(lp.sourceConfig, JSON.stringify(normalized, null, 2), 'utf8');
   if(sanitizeProfileId(profileId || ACTIVE_PROFILE_ID) === ACTIVE_PROFILE_ID && sanitizeLevelId(levelId || ACTIVE_LEVEL_ID) === ACTIVE_LEVEL_ID){
     SOURCE_CONFIG_PATH = lp.sourceConfig;
