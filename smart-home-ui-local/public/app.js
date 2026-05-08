@@ -1013,6 +1013,7 @@ function render(){
   renderDevices();
   renderEditSheet();
   renderKioskWidget();
+  renderKioskTiles();
   renderProjectSetupEmptyPrompt();
   updateZoomControls();
   requestAnimationFrame(updateLiveCoordinateDebug);
@@ -1792,6 +1793,13 @@ function renderPlacementEditorExisting(){
 function svgPointsAttr(points){ return sanitizeZonePoints(points).map(p=>{const q=pctToPlacementSvgPoint(p.x,p.y); return `${q.x.toFixed(2)},${q.y.toFixed(2)}`;}).join(' '); }
 function renderPlacementEditorExistingZones(){
   const layer=el('placement-editor-existing-zones'); if(!layer || !state.placementEditor) return;
+  // v3.5.9.4: existing room zones are an overlay only for the zone editor.
+  // When placing/moving a device inside a room, showing all overview zones makes the
+  // room placement grid unreadable and can be mistaken for editable room geometry.
+  if(state.placementEditor.targetType !== 'zone'){
+    layer.innerHTML='';
+    return;
+  }
   const current=normalizedRoomId(state.placementEditor.zoneRoomId||'');
   const rows=[];
   for(const r0 of ROOMS.filter(r=>r.id!=='overview')){
@@ -4044,8 +4052,8 @@ async function initialHaSync(){
   await initialHaSync();
 })();
 
-window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
-window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});
+window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); renderKioskTiles(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
+window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); renderKioskTiles(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});
 window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
 document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content,.faq-frame,.faq-modal-card')) return; e.preventDefault(); }, {passive:false});
 
