@@ -18,6 +18,14 @@ const state = {
 };
 
 const STATIC_ROOMS = window.PLAN_CONFIG.rooms || [];
+
+const ROOM_LABELS = {
+  living:'Гостиная', kitchen:'Кухня', bedroom1:'Спальня левая', bedroom2:'Спальня правая',
+  office:'Кабинет', wardrobe:'Гардероб', laundry:'Постирочная / котельная', mainbath:'Основной санузел',
+  guestbath:'Гостевой санузел', entrance:'Прихожая', corridor:'Коридор', media:'media', plumbing:'plumbing', system:'system', misc:'misc'
+};
+function friendlyRoomLabel(roomId){ return ROOM_LABELS[String(roomId||'').trim()] || String(roomId||'').trim(); }
+
 let ROOMS = [];
 let ROOM_MAP = {};
 function rebuildRoomMap(){ ROOM_MAP = Object.fromEntries(ROOMS.map(r => [r.id, r])); }
@@ -27,11 +35,11 @@ function refreshRuntimeRooms(){
   // Zones, metrics and room sensors must appear only after user/imported runtime data exists in /data.
   for(const item of (state.roomsSettings?.knownRooms || [])){
     const id=normalizedRoomId(item.id); if(!id || id==='overview') continue;
-    byId.set(id, { id, label:item.label || item.settings?.alias || id, image:`media/images/rooms/${encodeURIComponent(id)}.webp` });
+    byId.set(id, { id, label:item.settings?.alias || item.label || friendlyRoomLabel(id), image:`media/images/rooms/${encodeURIComponent(id)}.webp` });
   }
   for(const d of allDevices()){
     const id=normalizedRoomId(d.room); if(!id || id==='overview' || id==='unassigned') continue;
-    if(!byId.has(id)) byId.set(id,{id,label:d.roomLabel||id,image:`media/images/rooms/${encodeURIComponent(id)}.webp`});
+    if(!byId.has(id)) byId.set(id,{id,label:d.roomLabel || friendlyRoomLabel(id),image:`media/images/rooms/${encodeURIComponent(id)}.webp`});
   }
   ROOMS=[{id:'overview',label:'Общий план'}, ...[...byId.values()].sort((a,b)=>(a.label||a.id).localeCompare(b.label||b.id,'ru'))];
   rebuildRoomMap();
@@ -80,6 +88,33 @@ function midpoint(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}}
 function room(id){return ROOM_MAP[id]}
 function roomWithLayout(id){const r=room(id); return {...r,...(state.layout.zones?.[id]||{})}}
 function hasZoneRect(r){ return Number.isFinite(Number(r?.x)) && Number.isFinite(Number(r?.y)) && Number.isFinite(Number(r?.w)) && Number.isFinite(Number(r?.h)) && Number(r.w)>0 && Number(r.h)>0; }
+function sanitizeZonePoints(points){
+  return (Array.isArray(points)?points:[])
+    .map(p=>({x:clamp(Number(p?.x),0,100), y:clamp(Number(p?.y),0,100)}))
+    .filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+}
+function hasZonePolygon(r){ return sanitizeZonePoints(r?.points).length>=3; }
+function hasZoneShape(r){ return hasZonePolygon(r) || hasZoneRect(r); }
+function rectZonePoints(r){
+  const x=clamp(Number(r?.x)||50,0,100), y=clamp(Number(r?.y)||50,0,100), w=clamp(Number(r?.w)||10,1,100), h=clamp(Number(r?.h)||10,1,100);
+  const a=(Number(r?.a ?? r?.angle ?? r?.rotate ?? 0)||0)*Math.PI/180;
+  const hw=w/2, hh=h/2;
+  return [[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]].map(([dx,dy])=>({x:clamp(x+dx*Math.cos(a)-dy*Math.sin(a),0,100), y:clamp(y+dx*Math.sin(a)+dy*Math.cos(a),0,100)}));
+}
+function zonePoints(r){ return hasZonePolygon(r) ? sanitizeZonePoints(r.points) : rectZonePoints(r); }
+function zoneCentroid(points){
+  const pts=sanitizeZonePoints(points);
+  if(!pts.length) return {x:50,y:50};
+  let sx=0, sy=0; pts.forEach(p=>{sx+=p.x; sy+=p.y;});
+  return {x:sx/pts.length, y:sy/pts.length};
+}
+function zoneBounds(points){
+  const pts=sanitizeZonePoints(points); if(!pts.length) return {x:50,y:50,w:10,h:10};
+  const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+  return {x:(minX+maxX)/2, y:(minY+maxY)/2, w:Math.max(1,maxX-minX), h:Math.max(1,maxY-minY)};
+}
+function zoneClipPath(points){ return `polygon(${sanitizeZonePoints(points).map(p=>`${p.x.toFixed(2)}% ${p.y.toFixed(2)}%`).join(',')})`; }
 function roomContentBox(roomId){
   const r = room(normalizedRoomId(roomId));
   const box = r?.contentBox || {};
@@ -115,13 +150,13 @@ function loadUiPrefs(){
     ));
     // Global display settings intentionally are NOT loaded from localStorage/ui_state.
     // They are applied from /api/config so PC and mobile share scale/opacity/clock/theme.
-    state.ui = { ...state.ui, ...serverUi, ...saved, mobileMode:true, hideSidebar:true };
-    // v3.5.8.8: ALLHA-2D uses the bottom navigation workflow as the current UI, even on wide screens.
-    // The old left sidebar is only an overlay opened from the bottom Rooms button.
-    if(autoMobile){
+    state.ui = { ...state.ui, ...serverUi, ...saved, hideSidebar:true };
+    // v3.5.8.9: mobile version is a normal user switch again.
+    // Default/reset enables it, but the user can turn it off in settings.
+    // The old left sidebar still stays hidden until the Rooms button opens it.
+    if(autoMobile && state.ui.mobileMode){
       state.ui.hideDevicePanel = true;
     }
-    state.ui.mobileMode = true;
     state.ui.hideSidebar = true;
     if(last.selectedRoom || server.selectedRoom) state.selectedRoom = last.selectedRoom || server.selectedRoom || state.selectedRoom;
     if(state.selectedRoom !== 'overview' && !ROOM_MAP[state.selectedRoom]) state.selectedRoom='overview';
@@ -228,9 +263,10 @@ function shouldUseMobileMode(){
   return narrow || touchLandscape || touchShort;
 }
 function syncAutoMobileMode(){
-  if(!shouldUseMobileMode()) return;
-  const changed = !state.ui.mobileMode || !state.ui.hideSidebar || !state.ui.hideDevicePanel;
-  state.ui.mobileMode = true;
+  // v3.5.8.9: do not force mobile mode anymore.
+  // Only keep overlay panels closed on small/touch screens when mobile mode is enabled.
+  if(!shouldUseMobileMode() || !state.ui.mobileMode) return;
+  const changed = !state.ui.hideSidebar || !state.ui.hideDevicePanel;
   state.ui.hideSidebar = true;
   state.ui.hideDevicePanel = true;
   if(changed){ applyUiPrefs(); persistUiStateSoon(); }
@@ -367,7 +403,7 @@ function applyUiPrefs(){
   const hs=el('btn-hide-sidebar'); if(hs) hs.textContent=state.ui.hideSidebar?'Показать':'Скрыть';
   const td=el('btn-toggle-devices-panel'); if(td) td.textContent=state.ui.hideDevicePanel?'Показать список':'Скрыть список';
   const tt=el('btn-toggle-toolbar'); if(tt) tt.textContent=state.ui.hideToolbar?'Показать верх':'Скрыть верх';
-  const pm=el('pref-mobile-mode'); if(pm){ pm.checked=true; pm.disabled=true; pm.closest('label')?.classList.add('muted'); }
+  const pm=el('pref-mobile-mode'); if(pm){ pm.checked=!!state.ui.mobileMode; pm.disabled=false; pm.closest('label')?.classList.remove('muted'); }
   const pa=el('pref-auto-hide'); if(pa) pa.checked=!!state.ui.autoHide;
   const pc=el('pref-compact-mode'); if(pc) pc.checked=!!state.ui.compact;
   const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
@@ -940,12 +976,21 @@ function renderOverviewZones(){
   if(state.ui.showZones===false)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id);
-    if(!hasZoneRect(r)) return;
+    if(!hasZoneShape(r)) return;
+    const pts=zonePoints(r);
+    const c=zoneCentroid(pts);
     const z=document.createElement('button');
-    z.className='room-zone'+(isSelectedEdit('zone', r.id, 'overview')?' edit-selected':''); z.dataset.room=r.id;
-    const angle=Number(r.a ?? r.angle ?? r.rotate ?? 0) || 0;
-    Object.assign(z.style,{left:r.x+'%',top:r.y+'%',width:r.w+'%',height:r.h+'%',transform:`translate(-50%,-50%) rotate(${angle}deg)`});
-    z.style.setProperty('--zone-label-rotation', `${-angle}deg`);
+    z.className='room-zone'+(hasZonePolygon(r)?' zone-polygon':'')+(isSelectedEdit('zone', r.id, 'overview')?' edit-selected':''); z.dataset.room=r.id;
+    if(hasZonePolygon(r)){
+      Object.assign(z.style,{left:'0%',top:'0%',width:'100%',height:'100%',transform:'none',clipPath:zoneClipPath(pts),borderRadius:'0'});
+      z.style.setProperty('--zone-label-left', `${c.x}%`);
+      z.style.setProperty('--zone-label-top', `${c.y}%`);
+      z.style.setProperty('--zone-label-rotation', '0deg');
+    } else {
+      const angle=Number(r.a ?? r.angle ?? r.rotate ?? 0) || 0;
+      Object.assign(z.style,{left:r.x+'%',top:r.y+'%',width:r.w+'%',height:r.h+'%',transform:`translate(-50%,-50%) rotate(${angle}deg)`});
+      z.style.setProperty('--zone-label-rotation', `${-angle}deg`);
+    }
     z.innerHTML=`<span class="zone-label">${esc(r.label)}</span>`;
     z.addEventListener('pointerdown', zoneDown);
     z.onclick=e=>{if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(state.edit||state.suppressClick){state.suppressClick=false;return} selectRoom(r.id)};
@@ -1673,6 +1718,50 @@ function renderPlacementEditorExisting(){
   layer.innerHTML=existingMarkerEntriesForPlacement(state.placementEditor.kind)
     .filter(x=>x.id!==current)
     .map(x=>{ const p=pctToPlacementSvgPoint(x.p?.x, x.p?.y); return `<circle cx="${p.x}" cy="${p.y}" r="${r}"><title>${esc(x.id)}</title></circle>`; }).join('');
+  renderPlacementEditorExistingZones();
+}
+function svgPointsAttr(points){ return sanitizeZonePoints(points).map(p=>{const q=pctToPlacementSvgPoint(p.x,p.y); return `${q.x.toFixed(2)},${q.y.toFixed(2)}`;}).join(' '); }
+function renderPlacementEditorExistingZones(){
+  const layer=el('placement-editor-existing-zones'); if(!layer || !state.placementEditor) return;
+  const current=normalizedRoomId(state.placementEditor.zoneRoomId||'');
+  const rows=[];
+  for(const r0 of ROOMS.filter(r=>r.id!=='overview')){
+    const rid=normalizedRoomId(r0.id);
+    const r=roomWithLayout(rid);
+    if(!hasZoneShape(r)) continue;
+    const pts=zonePoints(r);
+    const c=pctToPlacementSvgPoint(zoneCentroid(pts).x, zoneCentroid(pts).y);
+    const cls=rid===current?'current':'';
+    rows.push(`<polygon class="${cls}" points="${svgPointsAttr(pts)}"><title>${esc(r.label||rid)}</title></polygon><text class="${cls}" x="${c.x.toFixed(2)}" y="${c.y.toFixed(2)}">${esc(r.label||rid)}</text>`);
+  }
+  layer.innerHTML=rows.join('');
+}
+function renderZoneDrawPath(){
+  const path=el('placement-editor-zone-draw'); if(!path || !state.placementEditor) return;
+  const pts=sanitizeZonePoints(state.placementEditor.points);
+  if(!pts.length){ path.setAttribute('points',''); path.classList.add('hidden'); return; }
+  path.setAttribute('points', svgPointsAttr(pts));
+  path.classList.remove('hidden');
+  path.classList.toggle('closed', pts.length>=3 && !state.placementEditor.drawing);
+}
+function addZoneDrawPoint(p, force=false){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  const pts=state.placementEditor.points || [];
+  const last=pts[pts.length-1];
+  if(!force && last && dist(last,p)<0.65) return;
+  pts.push({x:clamp(p.x,0,100), y:clamp(p.y,0,100)});
+  state.placementEditor.points=pts;
+  const b=zoneBounds(pts.length>=3?pts:[...pts,{x:p.x+1,y:p.y+1}]);
+  state.placementEditor.x=b.x; state.placementEditor.y=b.y; state.placementEditor.wPct=b.w; state.placementEditor.hPct=b.h;
+  renderZoneDrawPath();
+  renderPlacementEditorZoneRect();
+  updatePlacementDebug();
+}
+function clearZoneDraw(){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  state.placementEditor.points=[];
+  renderZoneDrawPath();
+  showToast('Обводка очищена');
 }
 function setPlacementEditorPoint(x,y){
   if(!state.placementEditor) return;
@@ -1714,7 +1803,7 @@ function renderPlacementEditorZoneRect(){
   const m=el('placement-editor-marker'), hl=el('placement-editor-hline'), vl=el('placement-editor-vline');
   if(!z || !state.placementEditor) return;
   const isZone=state.placementEditor.targetType==='zone';
-  z.classList.toggle('hidden', !isZone);
+  z.classList.toggle('hidden', !isZone || sanitizeZonePoints(state.placementEditor.points).length>=3);
   if(m) m.classList.toggle('hidden', isZone);
   if(hl) hl.classList.toggle('hidden', false);
   if(vl) vl.classList.toggle('hidden', false);
@@ -1916,6 +2005,7 @@ function openPlacementEditor(entityId){
   const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
   const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  ['btn-clear-zone-draw','btn-delete-placement-zone'].forEach(id=>{const b=el(id); if(b) b.classList.add('hidden');});
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(initial.x,initial.y);
   refitPlacementEditorSoon();
@@ -1931,9 +2021,12 @@ function applyPlacementEditor(){
   const kind=pe.kind, p={x:pe.x,y:pe.y};
   if(pe.targetType==='zone'){
     const rid=normalizedRoomId(pe.zoneRoomId);
+    const pts=sanitizeZonePoints(pe.points);
+    if(pts.length<3){ showToast('Обведите зону: нужно минимум 3 точки'); return; }
     if(!state.layout.zones) state.layout.zones={};
     const base=state.layout.zones[rid] || {};
-    state.layout.zones[rid]={...base,x:clamp(Number(pe.x)||0,0,100),y:clamp(Number(pe.y)||0,0,100),w:clamp(Number(pe.wPct)||1,1,100),h:clamp(Number(pe.hPct)||1,1,100),a:Number(pe.angleDeg)||0};
+    const b=zoneBounds(pts);
+    state.layout.zones[rid]={...base,x:clamp(Number(b.x)||0,0,100),y:clamp(Number(b.y)||0,0,100),w:clamp(Number(b.w)||1,1,100),h:clamp(Number(b.h)||1,1,100),a:0,points:pts};
     closePlacementEditor();
     setLayoutDirty(true);
     renderOverviewZones();
@@ -1982,18 +2075,30 @@ function applyPlacementEditor(){
 
 function openDeviceLayoutEditor(entityId){ openPlacementEditor(entityId); }
 
+
+function deletePlacementEditorZone(){
+  if(!state.edit || !state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  const rid=normalizedRoomId(state.placementEditor.zoneRoomId);
+  if(!rid) return;
+  if(!confirm('Удалить выбранную зону?')) return;
+  if(state.layout.zones) delete state.layout.zones[rid];
+  closePlacementEditor();
+  setLayoutDirty(true);
+  renderOverviewZones();
+  state.selectedEdit=null;
+  renderEditSheet();
+  showToast('Зона удалена');
+}
+
 function openZoneLayoutEditor(roomId){
   if(!state.edit) return;
   const rid=normalizedRoomId(roomId);
   const r=roomWithLayout(rid);
   if(!r){ showToast('Комната не найдена'); return; }
   closeDevicePicker();
-  const x=clamp(Number(r.x)||0,0,100);
-  const y=clamp(Number(r.y)||0,0,100);
-  const w=clamp(Number(r.w)||12,1,100);
-  const h=clamp(Number(r.h)||12,1,100);
-  const angle=Number(r.a ?? r.angle ?? r.rotate ?? 0) || 0;
-  state.placementEditor={targetType:'zone', zoneRoomId:rid, kind:'overview', x, y, wPct:w, hPct:h, angleDeg:angle};
+  const pts=hasZoneShape(r) ? zonePoints(r) : [];
+  const b=pts.length ? zoneBounds(pts) : {x:50,y:50,w:18,h:14};
+  state.placementEditor={targetType:'zone', zoneRoomId:rid, kind:'overview', x:b.x, y:b.y, wPct:b.w, hPct:b.h, angleDeg:0, points:pts, drawing:false};
   const src=placementImageSrc('overview');
   const img=el('placement-editor-image'); if(img) img.setAttribute('href',src);
   updatePlacementEditorAspect(src);
@@ -2001,13 +2106,14 @@ function openZoneLayoutEditor(roomId){
   renderPlacementEditorExisting();
   const title=el('placement-editor-title'); if(title) title.textContent='Редактирование зоны комнаты';
   const dev=el('placement-editor-device'); if(dev) dev.textContent=`Зона: ${room(rid)?.label||rid}`;
-  const scope=el('placement-editor-scope'); if(scope) scope.textContent='Общий план · прямоугольная зона';
-  const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.remove('hidden');
+  const scope=el('placement-editor-scope'); if(scope) scope.textContent='Общий план · свободная обводка зоны';
+  const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  ['btn-clear-zone-draw','btn-delete-placement-zone'].forEach(id=>{const b=el(id); if(b) b.classList.remove('hidden');});
   document.body.classList.add('placement-editor-open');
-  setPlacementEditorPoint(x,y);
-  setZoneEditorSize(w,h);
-  setZoneEditorAngle(angle);
+  setPlacementEditorPoint(b.x,b.y);
+  renderZoneDrawPath();
+  renderPlacementEditorExistingZones();
   refitPlacementEditorSoon();
 }
 
@@ -2037,6 +2143,7 @@ function openMetricLayoutEditor(metricKind, roomId){
   const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
   const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  ['btn-clear-zone-draw','btn-delete-placement-zone'].forEach(id=>{const b=el(id); if(b) b.classList.add('hidden');});
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(initial.x,initial.y);
   refitPlacementEditorSoon();
@@ -3090,7 +3197,7 @@ function applyFactoryResetClientState(res={}){
   state.levels = res.levels || null;
   state.serverUiState = res.uiState || null;
   state.ui = { ...state.ui, hideSidebar:true, hideDevicePanel:true, hideToolbar:false, kioskMode:false, mobileMode:true, autoHide:false, compact:false, showZones:true, invisibleZones:false, showMarkers:true, showSensors:true };
-  if(res.uiState && res.uiState.ui){ state.ui = { ...state.ui, ...pickKeys(res.uiState.ui, DEVICE_UI_KEYS), hideSidebar:true, hideDevicePanel:true, mobileMode:true }; }
+  if(res.uiState && res.uiState.ui){ state.ui = { ...state.ui, ...pickKeys(res.uiState.ui, DEVICE_UI_KEYS), hideSidebar:true, hideDevicePanel:true }; }
   try{
     ['ui_prefs','last_view','viewport_prefs','kiosk_locked','card_font_size'].forEach(k=>localStorage.removeItem(k));
     sessionStorage.clear();
@@ -3450,7 +3557,33 @@ function bindGlobal(){
   const pickerShowAll=el('device-picker-show-all'); if(pickerShowAll) pickerShowAll.onchange=e=>{ state.devicePickerShowAll=e.target.checked; renderDevicePicker(); };
 
   const placementModal=el('placement-editor-modal'); if(placementModal) placementModal.addEventListener('click',e=>{ if(e.target.id==='placement-editor-modal') closePlacementEditor(); });
-  const placementSvg=el('placement-editor-svg'); if(placementSvg) placementSvg.addEventListener('pointerdown',e=>{ const p=placementSvgPointFromEvent(e); if(p){ setPlacementEditorPoint(p.x,p.y); } });
+  const placementSvg=el('placement-editor-svg'); if(placementSvg){
+    placementSvg.addEventListener('pointerdown',e=>{
+      const p=placementSvgPointFromEvent(e); if(!p) return;
+      if(state.placementEditor?.targetType==='zone'){
+        e.preventDefault();
+        state.placementEditor.drawing=true;
+        state.placementEditor.points=[];
+        placementSvg.setPointerCapture?.(e.pointerId);
+        addZoneDrawPoint(p,true);
+        return;
+      }
+      setPlacementEditorPoint(p.x,p.y);
+    });
+    placementSvg.addEventListener('pointermove',e=>{
+      if(!state.placementEditor?.drawing || state.placementEditor?.targetType!=='zone') return;
+      const p=placementSvgPointFromEvent(e); if(p) addZoneDrawPoint(p,false);
+    });
+    const finishZoneDraw=e=>{
+      if(!state.placementEditor?.drawing || state.placementEditor?.targetType!=='zone') return;
+      state.placementEditor.drawing=false;
+      placementSvg.releasePointerCapture?.(e.pointerId);
+      renderZoneDrawPath();
+      if(sanitizeZonePoints(state.placementEditor.points).length<3) showToast('Слишком короткая обводка. Обведите область минимум тремя точками.');
+    };
+    placementSvg.addEventListener('pointerup',finishZoneDraw);
+    placementSvg.addEventListener('pointercancel',finishZoneDraw);
+  }
   const px=el('placement-editor-x'); if(px) px.onchange=()=>setPlacementEditorPoint(px.value, state.placementEditor?.y ?? 50);
   const py=el('placement-editor-y'); if(py) py.onchange=()=>setPlacementEditorPoint(state.placementEditor?.x ?? 50, py.value);
   const pw=el('placement-editor-w'); if(pw) pw.onchange=()=>setZoneEditorSize(pw.value, state.placementEditor?.hPct ?? 10);
@@ -3469,6 +3602,8 @@ function bindGlobal(){
   const bpr=el('btn-place-right'); if(bpr) bpr.onclick=()=>nudgePlacementEditor(1,0);
   const bpa=el('btn-apply-placement-editor'); if(bpa) bpa.onclick=applyPlacementEditor;
   const bpc=el('btn-cancel-placement-editor'); if(bpc) bpc.onclick=closePlacementEditor;
+  const bpclr=el('btn-clear-zone-draw'); if(bpclr) bpclr.onclick=clearZoneDraw;
+  const bpdelz=el('btn-delete-placement-zone'); if(bpdelz) bpdelz.onclick=deletePlacementEditorZone;
   const bpx=el('btn-close-placement-editor'); if(bpx) bpx.onclick=closePlacementEditor;
   const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); resetKioskAutoLock(); showToast('Режим киоска включён'); };
   el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
@@ -3484,7 +3619,7 @@ function bindGlobal(){
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
   const closeKioskRooms=el('btn-close-kiosk-rooms'); if(closeKioskRooms) closeKioskRooms.onclick=hideKioskRooms;
   const kioskOverview=el('btn-kiosk-overview'); if(kioskOverview) kioskOverview.onclick=()=>{ selectRoom('overview'); hideKioskRooms(); };
-  el('pref-mobile-mode').onchange=e=>{state.ui.mobileMode=true; e.target.checked=true; saveUiPrefs();};
+  el('pref-mobile-mode').onchange=e=>{ state.ui.mobileMode=!!e.target.checked; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; applyUiPrefs(); saveUiPrefs(); };
   el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
   el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();};

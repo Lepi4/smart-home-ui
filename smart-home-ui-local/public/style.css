@@ -1611,3 +1611,78 @@ body:not(.kiosk-mode):not(.hide-device-panel) .device-panel{position:fixed!impor
 body:not(.kiosk-mode) #btn-show-sidebar.floating-menu-btn,
 body:not(.kiosk-mode) #btn-show-device-panel.floating-menu-btn,
 body:not(.kiosk-mode) #btn-show-toolbar.floating-menu-btn{display:none!important;}
+
+
+/* v3.5.8.10: bottom-navigation panels are sheets, not legacy sidebars. */
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar{
+  left:8px!important;right:8px!important;top:auto!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;
+  width:auto!important;height:min(52dvh,520px)!important;max-height:calc(100dvh - 96px)!important;
+  z-index:1450!important;border-radius:18px 18px 0 0!important;padding:10px!important;
+  box-shadow:0 -14px 36px rgba(0,0,0,.42)!important;overflow:auto!important;
+}
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .room-nav{
+  display:grid!important;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))!important;gap:8px!important;
+}
+body:not(.kiosk-mode):not(.hide-device-panel) .device-panel{
+  left:8px!important;right:8px!important;top:auto!important;bottom:calc(62px + env(safe-area-inset-bottom,0px))!important;
+  width:auto!important;height:min(56dvh,560px)!important;max-height:calc(100dvh - 96px)!important;
+  z-index:1450!important;border-radius:18px 18px 0 0!important;padding:10px!important;
+  box-shadow:0 -14px 36px rgba(0,0,0,.42)!important;
+}
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions{display:flex!important;margin:0 0 8px!important;min-height:34px!important}
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .brand,
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .connection{display:none!important}
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions .ha-back-link,
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions #btn-settings,
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions #btn-refresh,
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions a[href*="FAQ"]{display:none!important}
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions #btn-hide-sidebar{display:inline-flex!important;margin-left:auto!important;border-radius:999px!important}
+
+/* v3.5.8.11 — Freehand polygon zone editor */
+.room-zone.zone-polygon{
+  border:1.5px dashed rgba(192,143,55,.70)!important;
+  background:rgba(232,207,154,.08)!important;
+}
+.room-zone.zone-polygon .zone-label{
+  left:var(--zone-label-left,50%)!important;
+  top:var(--zone-label-top,50%)!important;
+  transform:translate(-50%,-50%) scale(var(--room-label-scale,1))!important;
+}
+.placement-editor-existing-zones polygon{
+  fill:rgba(90,150,255,.10);
+  stroke:rgba(130,180,255,.55);
+  stroke-width:.45;
+  stroke-dasharray:1.1 .9;
+  vector-effect:non-scaling-stroke;
+  pointer-events:none;
+}
+.placement-editor-existing-zones polygon.current{
+  fill:rgba(240,179,75,.16);
+  stroke:#f0b34b;
+  stroke-width:.70;
+}
+.placement-editor-existing-zones text{
+  fill:rgba(238,244,252,.86);
+  font-size:2.5px;
+  font-weight:900;
+  paint-order:stroke;
+  stroke:rgba(0,0,0,.65);
+  stroke-width:.7px;
+  text-anchor:middle;
+  dominant-baseline:middle;
+  pointer-events:none;
+}
+.placement-editor-existing-zones text.current{fill:#ffe1a2;}
+.placement-editor-zone-draw{
+  fill:rgba(240,179,75,.18);
+  stroke:#f0b34b;
+  stroke-width:.80;
+  stroke-linejoin:round;
+  stroke-linecap:round;
+  vector-effect:non-scaling-stroke;
+  pointer-events:none;
+}
+.placement-editor-zone-draw:not(.closed){fill:none;}
+.placement-editor-zone-draw.hidden{display:none!important;}
+#btn-delete-placement-zone.danger{background:#5b1d1d;color:#fff;}
+#btn-clear-zone-draw{background:#263243;}

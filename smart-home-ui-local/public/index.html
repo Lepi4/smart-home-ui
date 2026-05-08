@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-2D HA Add-on v3.5.8.8</title>
+  <title>ALLHA-2D HA Add-on v3.5.8.10</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -383,8 +383,10 @@
           <svg id="placement-editor-svg" class="placement-editor-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Координатный редактор размещения">
             <image id="placement-editor-image" x="0" y="0" width="100" height="100" preserveAspectRatio="none" href="" />
             <g id="placement-editor-grid" class="placement-editor-grid"></g>
+            <g id="placement-editor-existing-zones" class="placement-editor-existing-zones"></g>
             <g id="placement-editor-existing" class="placement-editor-existing"></g>
             <rect id="placement-editor-zone-rect" class="placement-editor-zone-rect hidden" x="10" y="10" width="20" height="20" />
+            <polyline id="placement-editor-zone-draw" class="placement-editor-zone-draw hidden" points="" />
             <circle id="placement-editor-marker" class="placement-editor-marker" cx="50" cy="50" r="1.8" />
             <line id="placement-editor-hline" class="placement-editor-cross" x1="0" x2="100" y1="50" y2="50" />
             <line id="placement-editor-vline" class="placement-editor-cross" y1="0" y2="100" x1="50" x2="50" />
@@ -436,7 +438,9 @@
         </div>
       </div>
       <div class="modal-actions placement-editor-actions">
-        <button type="button" id="btn-apply-placement-editor" class="sheet-save">Применить</button>
+        <button type="button" id="btn-apply-placement-editor" class="sheet-save">Сохранить</button>
+        <button type="button" id="btn-clear-zone-draw">Очистить обводку</button>
+        <button type="button" id="btn-delete-placement-zone" class="danger">Удалить выбранную</button>
         <button type="button" id="btn-cancel-placement-editor" class="sheet-cancel">Отмена</button>
       </div>
     </div>

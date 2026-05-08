@@ -1320,7 +1320,7 @@ function roomSourcesForApi(){
       if(rid && !labelByRoom[rid]) labelByRoom[rid] = d.roomLabel || d.room_name || rid;
     }
   }catch(e){}
-  return listKnownRoomIds().map(id => ({ id, label: settings.rooms[id]?.alias || labelByRoom[id] || id, source: settings.rooms[id]?.source || 'detected', settings: settings.rooms[id] || {} }));
+  return listKnownRoomIds().map(id => ({ id, label: settings.rooms[id]?.alias || labelByRoom[id] || friendlyRoomLabel(id), source: settings.rooms[id]?.source || 'detected', settings: settings.rooms[id] || {} }));
 }
 function imagesDiagnostics(){
   const metaOk = (()=>{ try{ loadImagesMeta(); return true; }catch(e){ return false; } })();
@@ -1813,6 +1813,14 @@ const ROOM_PATTERNS = [
   [/систем|system/i, 'system'],
   [/хрень|misc/i, 'misc']
 ];
+
+const ROOM_LABELS = {
+  living:'Гостиная', kitchen:'Кухня', bedroom1:'Спальня левая', bedroom2:'Спальня правая',
+  office:'Кабинет', wardrobe:'Гардероб', laundry:'Постирочная / котельная', mainbath:'Основной санузел',
+  guestbath:'Гостевой санузел', entrance:'Прихожая', corridor:'Коридор', media:'media', plumbing:'plumbing', system:'system', misc:'misc'
+};
+function friendlyRoomLabel(roomId){ return ROOM_LABELS[String(roomId||'').trim()] || String(roomId||'').trim(); }
+
 const DOMAIN_EMOJI = { light:'💡', switch:'🔌', cover:'▤', climate:'❄️', media_player:'▶️', humidifier:'💧', sensor:'📟', binary_sensor:'●', valve:'🚰', lock:'🔒', scene:'✨', fan:'💨', input_boolean:'✅', input_number:'🔢', input_select:'▾', button:'⏺', script:'▶', automation:'⚙', person:'👤' };
 function domainOf(entityId){ return String(entityId||'').split('.')[0] || ''; }
 function isEntityId(value){ const d=domainOf(value); return ENTITY_DOMAINS.has(d) && /^[a-z_][a-z0-9_]*\.[A-Za-z0-9_]+$/.test(String(value||'')); }
