@@ -627,15 +627,15 @@ function atomicWriteJson(file, payload){
 }
 function defaultUiState(){
   return {
-    version: 2,
+    version: 3,
     selectedRoom: 'overview',
     ui: {
-      hideSidebar:true, hideDevicePanel:false, hideToolbar:false,
-      mobileMode:false, autoHide:false, compact:false, darkTheme:true,
+      hideSidebar:true, hideDevicePanel:true, hideToolbar:false,
+      mobileMode:true, autoHide:false, compact:false, darkTheme:true,
       kioskWidget:false, kioskMode:false, weatherEntity:'',
       haloScale:0.50, hardwareScale:1.00,
       markerScale:1.00, sensorScale:1.00, markerOpacity:0.00, sensorOpacity:0.00,
-      showAllDevicesInRoom:false
+      showAllDevicesInRoom:false, showZones:true, invisibleZones:false, showMarkers:true, showSensors:true
     },
     viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
     updatedAt: null
@@ -1491,19 +1491,21 @@ ensureDataStore();
 app.use(express.json({limit:'1mb'}));
 app.get('/devices.js', (req,res)=>{
   const generated = DEVICES_PATH;
-  const fallback = path.join(__dirname, 'public', 'devices.js');
   res.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma','no-cache');
   res.set('Expires','0');
-  res.type('application/javascript').sendFile(fs.existsSync(generated) ? generated : fallback);
+  res.type('application/javascript');
+  if(fs.existsSync(generated)) return res.sendFile(generated);
+  return res.send('window.ALL_DEVICES = [];\nwindow.DEVICES = [];\n');
 });
 app.get('/lovelace-source.js', (req,res)=>{
   const generated = LOVELACE_PATH;
-  const fallback = path.join(__dirname, 'public', 'lovelace-source.js');
   res.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma','no-cache');
   res.set('Expires','0');
-  res.type('application/javascript').sendFile(fs.existsSync(generated) ? generated : fallback);
+  res.type('application/javascript');
+  if(fs.existsSync(generated)) return res.sendFile(generated);
+  return res.send('window.LOVELACE_SOURCE = {"version":1,"views":[]};\n');
 });
 app.use(express.static(path.join(__dirname, 'public')));
 

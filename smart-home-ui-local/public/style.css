@@ -1597,3 +1597,17 @@ body.level-switching .plan-content, body.level-switching .room-content{transitio
 .level-source-details textarea{width:100%;min-height:74px;resize:vertical}
 .level-source-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 @media(max-width:760px){.level-current{font-size:12px;padding:6px 8px}.level-row-top{display:block}.level-source-actions button{flex:1 1 auto}}
+
+
+/* v3.5.8.8: current ALLHA-2D workflow is bottom navigation. Do not revive legacy desktop sidebar after reset/settings. */
+body:not(.kiosk-mode){display:block!important;grid-template-columns:1fr!important;}
+body:not(.kiosk-mode) .mobile-menu-bar{display:flex!important;}
+body:not(.kiosk-mode).hide-sidebar .sidebar{display:none!important;}
+body:not(.kiosk-mode):not(.hide-sidebar) .sidebar{position:fixed!important;left:8px!important;top:52px!important;bottom:70px!important;width:min(78vw,300px)!important;z-index:1450!important;border-radius:18px!important;padding:10px!important;box-shadow:14px 0 36px rgba(0,0,0,.42)!important;}
+body:not(.kiosk-mode) .main{height:100dvh!important;min-height:0!important;overflow:hidden!important;display:flex!important;flex-direction:column!important;}
+body:not(.kiosk-mode) .workspace{flex:1 1 auto!important;min-height:0!important;height:0!important;grid-template-columns:1fr!important;padding-bottom:calc(56px + env(safe-area-inset-bottom,0px))!important;overflow:hidden!important;}
+body:not(.kiosk-mode).hide-device-panel .device-panel{display:none!important;}
+body:not(.kiosk-mode):not(.hide-device-panel) .device-panel{position:fixed!important;right:8px!important;top:52px!important;bottom:70px!important;width:min(78vw,360px)!important;z-index:1450!important;border-radius:18px!important;padding:10px!important;box-shadow:-14px 0 36px rgba(0,0,0,.42)!important;}
+body:not(.kiosk-mode) #btn-show-sidebar.floating-menu-btn,
+body:not(.kiosk-mode) #btn-show-device-panel.floating-menu-btn,
+body:not(.kiosk-mode) #btn-show-toolbar.floating-menu-btn{display:none!important;}

@@ -12,7 +12,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:true, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set()
 };
@@ -23,14 +23,15 @@ let ROOM_MAP = {};
 function rebuildRoomMap(){ ROOM_MAP = Object.fromEntries(ROOMS.map(r => [r.id, r])); }
 function refreshRuntimeRooms(){
   const byId = new Map();
+  // v3.5.8.8: do not merge hardcoded/static room geometry into imported rooms.
+  // Zones, metrics and room sensors must appear only after user/imported runtime data exists in /data.
   for(const item of (state.roomsSettings?.knownRooms || [])){
     const id=normalizedRoomId(item.id); if(!id || id==='overview') continue;
-    const staticRoom = STATIC_ROOMS.find(r=>normalizedRoomId(r.id)===id) || {};
-    byId.set(id, { ...staticRoom, id, label:item.label || item.settings?.alias || staticRoom.label || id, image:staticRoom.image || `media/images/rooms/${encodeURIComponent(id)}.webp` });
+    byId.set(id, { id, label:item.label || item.settings?.alias || id, image:`media/images/rooms/${encodeURIComponent(id)}.webp` });
   }
   for(const d of allDevices()){
     const id=normalizedRoomId(d.room); if(!id || id==='overview' || id==='unassigned') continue;
-    if(!byId.has(id)){ const staticRoom=STATIC_ROOMS.find(r=>normalizedRoomId(r.id)===id)||{}; byId.set(id,{...staticRoom,id,label:staticRoom.label||d.roomLabel||id,image:staticRoom.image||`media/images/rooms/${encodeURIComponent(id)}.webp`}); }
+    if(!byId.has(id)) byId.set(id,{id,label:d.roomLabel||id,image:`media/images/rooms/${encodeURIComponent(id)}.webp`});
   }
   ROOMS=[{id:'overview',label:'Общий план'}, ...[...byId.values()].sort((a,b)=>(a.label||a.id).localeCompare(b.label||b.id,'ru'))];
   rebuildRoomMap();
@@ -78,6 +79,7 @@ function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
 function midpoint(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}}
 function room(id){return ROOM_MAP[id]}
 function roomWithLayout(id){const r=room(id); return {...r,...(state.layout.zones?.[id]||{})}}
+function hasZoneRect(r){ return Number.isFinite(Number(r?.x)) && Number.isFinite(Number(r?.y)) && Number.isFinite(Number(r?.w)) && Number.isFinite(Number(r?.h)) && Number(r.w)>0 && Number(r.h)>0; }
 function roomContentBox(roomId){
   const r = room(normalizedRoomId(roomId));
   const box = r?.contentBox || {};
@@ -113,12 +115,14 @@ function loadUiPrefs(){
     ));
     // Global display settings intentionally are NOT loaded from localStorage/ui_state.
     // They are applied from /api/config so PC and mobile share scale/opacity/clock/theme.
-    state.ui = { ...state.ui, ...serverUi, ...saved };
+    state.ui = { ...state.ui, ...serverUi, ...saved, mobileMode:true, hideSidebar:true };
+    // v3.5.8.8: ALLHA-2D uses the bottom navigation workflow as the current UI, even on wide screens.
+    // The old left sidebar is only an overlay opened from the bottom Rooms button.
     if(autoMobile){
-      state.ui.mobileMode = true;
-      state.ui.hideSidebar = true;
       state.ui.hideDevicePanel = true;
     }
+    state.ui.mobileMode = true;
+    state.ui.hideSidebar = true;
     if(last.selectedRoom || server.selectedRoom) state.selectedRoom = last.selectedRoom || server.selectedRoom || state.selectedRoom;
     if(state.selectedRoom !== 'overview' && !ROOM_MAP[state.selectedRoom]) state.selectedRoom='overview';
     loadViewportPrefs();
@@ -363,7 +367,7 @@ function applyUiPrefs(){
   const hs=el('btn-hide-sidebar'); if(hs) hs.textContent=state.ui.hideSidebar?'Показать':'Скрыть';
   const td=el('btn-toggle-devices-panel'); if(td) td.textContent=state.ui.hideDevicePanel?'Показать список':'Скрыть список';
   const tt=el('btn-toggle-toolbar'); if(tt) tt.textContent=state.ui.hideToolbar?'Показать верх':'Скрыть верх';
-  const pm=el('pref-mobile-mode'); if(pm) pm.checked=!!state.ui.mobileMode;
+  const pm=el('pref-mobile-mode'); if(pm){ pm.checked=true; pm.disabled=true; pm.closest('label')?.classList.add('muted'); }
   const pa=el('pref-auto-hide'); if(pa) pa.checked=!!state.ui.autoHide;
   const pc=el('pref-compact-mode'); if(pc) pc.checked=!!state.ui.compact;
   const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
@@ -749,12 +753,7 @@ function standardSensorsForRoom(roomId){
 function findClimateEntity(r, kind){
   const configured = standardSensorsForRoom(r.id);
   if(configured) return String(configured[kind] || '').trim();
-  const explicit = kind==='temperature' ? r.temp : r.humidity;
-  if(explicit && getState(explicit)) return explicit;
-  const names = kind==='temperature' ? ['температура','temperature','external_sensor'] : ['влажность','humidity'];
-  const list = allDevices().filter(d=>normalizedRoomId(d.room)===normalizedRoomId(r.id) && d.domain==='sensor');
-  const exact = list.find(d=>names.some(n=>(`${d.label} ${d.name} ${d.entity_id}`).toLowerCase().includes(n)) && getState(d.entity_id));
-  return exact?.entity_id || explicit || '';
+  return '';
 }
 function standardSensorDisplayValue(key, entityId){
   const id=String(entityId||'').trim();
@@ -784,17 +783,11 @@ function standardSensorDisplayValue(key, entityId){
 }
 function standardMetricItems(r){
   const configured = standardSensorsForRoom(r.id);
-  if(configured){
-    return STANDARD_SENSOR_DEFS.map(def=>({def, entityId:String(configured[def.key]||'').trim()}))
-      .filter(x=>x.entityId)
-      .map(x=>({...x, value:standardSensorDisplayValue(x.def.key, x.entityId)}))
-      .filter(x=>x.value);
-  }
-  return ['temperature','humidity'].map(key=>{
-    const def=STANDARD_SENSOR_DEFS.find(d=>d.key===key);
-    const entityId=findClimateEntity(r,key);
-    return {def, entityId, value:standardSensorDisplayValue(key, entityId)};
-  }).filter(x=>x.entityId && x.value);
+  if(!configured) return [];
+  return STANDARD_SENSOR_DEFS.map(def=>({def, entityId:String(configured[def.key]||'').trim()}))
+    .filter(x=>x.entityId)
+    .map(x=>({...x, value:standardSensorDisplayValue(x.def.key, x.entityId)}))
+    .filter(x=>x.value);
 }
 function showToast(msg){
   let t=el('toast');
@@ -947,6 +940,7 @@ function renderOverviewZones(){
   if(state.ui.showZones===false)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id);
+    if(!hasZoneRect(r)) return;
     const z=document.createElement('button');
     z.className='room-zone'+(isSelectedEdit('zone', r.id, 'overview')?' edit-selected':''); z.dataset.room=r.id;
     const angle=Number(r.a ?? r.angle ?? r.rotate ?? 0) || 0;
@@ -967,7 +961,7 @@ function metricContent(r){
     return `<span class="metric-item metric-${esc(def.key)} compact-metric-item" title="${esc(aria)}" aria-label="${esc(aria)}"><span class="metric-icon" aria-hidden="true">${esc(icon)}</span><span class="metric-value">${esc(value)}</span></span>`;
   }).join(' ');
 }
-function defaultMetricPos(r){return {x:clamp(r.x-r.w/4,2,98),y:clamp(r.y-r.h/4,2,98)}}
+function defaultMetricPos(r){ if(!hasZoneRect(r)) return null; return {x:clamp(Number(r.x)-Number(r.w)/4,2,98),y:clamp(Number(r.y)-Number(r.h)/4,2,98)} }
 function safeMetricPoint(stored, fallback){
   const x=Number(stored?.x), y=Number(stored?.y);
   if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||x>100||y<0.5||y>100) return fallback;
@@ -977,7 +971,8 @@ function renderOverviewMetrics(){
   const layer=el('overview-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
-    const p=safeMetricPoint(state.layout.overviewMetrics?.[r.id], defaultMetricPos(r));
+    const fallback=defaultMetricPos(r); if(!fallback) return;
+    const p=safeMetricPoint(state.layout.overviewMetrics?.[r.id], fallback);
     const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('overviewMetric', r.id, 'overview')?' edit-selected':''); b.dataset.kind='overviewMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
     b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
   })
@@ -3094,7 +3089,8 @@ function applyFactoryResetClientState(res={}){
   state.profiles = res.profiles || null;
   state.levels = res.levels || null;
   state.serverUiState = res.uiState || null;
-  state.ui = { ...state.ui, hideSidebar:true, hideDevicePanel:false, hideToolbar:false, kioskMode:false, mobileMode:false, autoHide:false, compact:false, showZones:true, invisibleZones:false, showMarkers:true, showSensors:true };
+  state.ui = { ...state.ui, hideSidebar:true, hideDevicePanel:true, hideToolbar:false, kioskMode:false, mobileMode:true, autoHide:false, compact:false, showZones:true, invisibleZones:false, showMarkers:true, showSensors:true };
+  if(res.uiState && res.uiState.ui){ state.ui = { ...state.ui, ...pickKeys(res.uiState.ui, DEVICE_UI_KEYS), hideSidebar:true, hideDevicePanel:true, mobileMode:true }; }
   try{
     ['ui_prefs','last_view','viewport_prefs','kiosk_locked','card_font_size'].forEach(k=>localStorage.removeItem(k));
     sessionStorage.clear();
@@ -3488,7 +3484,7 @@ function bindGlobal(){
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
   const closeKioskRooms=el('btn-close-kiosk-rooms'); if(closeKioskRooms) closeKioskRooms.onclick=hideKioskRooms;
   const kioskOverview=el('btn-kiosk-overview'); if(kioskOverview) kioskOverview.onclick=()=>{ selectRoom('overview'); hideKioskRooms(); };
-  el('pref-mobile-mode').onchange=e=>{state.ui.mobileMode=e.target.checked; saveUiPrefs();};
+  el('pref-mobile-mode').onchange=e=>{state.ui.mobileMode=true; e.target.checked=true; saveUiPrefs();};
   el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
   el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();};

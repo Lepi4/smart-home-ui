@@ -1,11 +1,27 @@
-## v3.5.8.6 — factory reset UI defaults hotfix
+## v3.5.8.8 — remove legacy UI/default hardcode after reset
+
+- Исправлено появление старого sidebar/floating интерфейса при открытии настроек и после reset: текущий workflow теперь всегда bottom navigation, кнопки `← HA`, `Комнаты`, `Устройства`, `Настройки` остаются снизу.
+- Удалён проектный hardcode комнат/зон/датчиков из `public/config.js`: после полного сброса не должны появляться старые комнаты, координаты зон и системные датчики из прежнего проекта.
+- Стандартные датчики комнат на карте теперь отображаются только если они явно заданы в настройках комнаты; автоматический подбор temperature/humidity по entity_id отключён.
+- Зоны на общем плане не рисуются без сохранённой пользовательской геометрии в `/data/layout.json`.
+- `/devices.js` и `/lovelace-source.js` больше не возвращают bundled demo/fallback данные при отсутствии runtime-файлов в `/data`; возвращается пустой набор до нового импорта Lovelace.
+- README/FAQ обновлены под v3.5.8.8.
+
+## v3.5.8.8 — factory reset bottom navigation hotfix
+
+- Исправлен дефолтный UI после полного сброса: reset больше не должен оставлять правую панель устройств открытой и не должен показывать плавающую кнопку “☰ Комнаты” вместо нижней панели.
+- Дефолт после “Сбросить всё к дефолту” переведён в актуальный bottom navigation workflow: нижние кнопки “← HA”, “Комнаты”, “Устройства”, “Настройки”.
+- Factory reset теперь возвращает `mobileMode: true`, `hideSidebar: true`, `hideDevicePanel: true`, чтобы панели открывались только через нижние кнопки.
+- README/FAQ обновлены под v3.5.8.8.
+
+## v3.5.8.8 — factory reset UI defaults hotfix
 
 - Исправлен случай, когда после полного сброса данных появлялось старое левое меню `ALLHA-2D LOCAL`.
 - `defaultUiState()` обновлён до `version: 2`; актуальный дефолт скрывает legacy sidebar.
 - `loadUiState()` теперь очищает старые/лишние UI-ключи и не переносит неподдерживаемые legacy-поля.
 - Frontend после factory reset очищает `ui_prefs`, `last_view`, `viewport_prefs`, `kiosk_locked`, `card_font_size` и `sessionStorage`.
 - Factory reset API возвращает актуальный `uiState`, чтобы клиент применял новый UI сразу до перезагрузки страницы.
-- README/FAQ обновлены под v3.5.8.6.
+- README/FAQ обновлены под v3.5.8.8.
 
 # Changelog
 
