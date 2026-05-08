@@ -1,6 +1,6 @@
 {
-  "name": "allha-3d-ha-addon",
-  "version": "3.5.5.3",
+  "name": "allha-2d-ha-addon",
+  "version": "3.5.5.5",
   "private": true,
   "type": "commonjs",
   "scripts": {

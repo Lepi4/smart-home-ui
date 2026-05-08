@@ -2791,7 +2791,7 @@ function renderInfoModal(){
     const ld=d.layoutDiagnostics||{};
     box.innerHTML=`<table class="info-table">${[
       infoSection('Система'),
-      infoRow('Название',d.brand?.name||'ALLHA-3D'),
+      infoRow('Название',d.brand?.name||'ALLHA-2D'),
       infoRow('Версия add-on',d.version),
       infoRow('Разработчик',d.brand?.developer||'Lepi4'),
       infoRow('HA API',d.ok?'OK':'Ошибка'),
@@ -2860,16 +2860,16 @@ function renderInfoModal(){
     box.innerHTML=`<h3>Команды Home Assistant</h3><p class="muted">viewer — просмотр. control panel — управление, dangerous через подтверждение/PIN. admin — полный доступ.</p><div class="info-list"><b>Режим панели</b>: ${esc(d.security?.panelMode||'admin')}<br><b>PIN установлен</b>: ${d.security?.pinEnabled?'да':'нет'}<br><b>Dangerous через PIN</b>: ${d.security?.dangerousRequirePin?'да':'нет'}<br><b>Подтверждение</b>: ${d.security?.confirmDangerousServices!==false?'включено':'выключено'}</div><h4>Safe</h4><div class="info-list">${Object.entries(d.safeServices||d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div><h4>Dangerous</h4><div class="info-list">${Object.entries(d.dangerousServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>') || '—'}</div><h4>Последние команды</h4><div class="info-list">${(d.commandLog||[]).slice(0,30).map(x=>`${esc(x.time)} — <b>${esc(x.domain)}.${esc(x.service)}</b> ${esc(x.entity_id||'')} — ${esc(x.result||'')}`).join('<br>') || '—'}</div>`;
   } else if(state.infoTab==='about'){
     const brand=d.brand||{};
-    box.innerHTML=`<div class="about-brand-card"><div class="about-brand-logo"><img src="brand-logo.svg" alt="ALLHA-3D"></div><div><h3>ALLHA-3D</h3><p class="muted">Local 3D floor-plan Smart Home UI for Home Assistant.</p></div></div>`+
+    box.innerHTML=`<div class="about-brand-card"><div class="about-brand-logo"><img src="brand-logo.svg" alt="ALLHA-2D"></div><div><h3>ALLHA-2D</h3><p class="muted">Local 2D floor-plan Smart Home UI for Home Assistant.</p></div></div>`+
       `<table class="info-table">${[
-        ['Название', brand.name || 'ALLHA-3D'],
+        ['Название', brand.name || 'ALLHA-2D'],
         ['Версия', d.version || '—'],
         ['Разработчик', brand.developer || 'Lepi4'],
         ['GitHub', brand.github || 'https://github.com/Lepi4/smart-home-ui'],
         ['Copyright', brand.copyright || '© Lepi4'],
         ['Режим', d.mode || 'home-assistant-addon']
       ].map(x=>infoRow(x[0],x[1])).join('')}</table>`+
-      `<p class="muted">ALLHA-3D шифрует инициалы автора, Home Assistant и 3D/floor-plan подход. Репозиторий остаётся прежним: <code>https://github.com/Lepi4/smart-home-ui</code>.</p>`;
+      `<p class="muted">ALLHA-2D шифрует инициалы автора, Home Assistant и 2D/floor-plan подход. Репозиторий остаётся прежним: <code>https://github.com/Lepi4/smart-home-ui</code>.</p>`;
   }
 }
 
@@ -2877,6 +2877,32 @@ function renderInfoModal(){
 /* v3.4.12: settings modal performance helpers */
 function openModal(id){ const m=el(id); if(m){ m.classList.remove('hidden'); syncModalOpenClass(); } }
 function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncModalOpenClass(); } }
+
+
+function openSettingsPanel(name){
+  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources'};
+  const id=map[name]||name;
+  qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));
+  qsa('#settings-modal [data-settings-panel]').forEach(btn=>btn.classList.toggle('active', btn.dataset.settingsPanel===name));
+  const panel=el(id);
+  if(panel){
+    panel.classList.remove('hidden');
+    const scroll=el('settings-modal')?.querySelector('.settings-scroll');
+    setTimeout(()=>panel.scrollIntoView({block:'start', behavior:'smooth'}), 0);
+    if(scroll) setTimeout(()=>{ scroll.scrollTop=Math.max(0, panel.offsetTop-10); }, 80);
+  }
+}
+async function cancelSettingsChanges(){
+  try{
+    await loadConfig();
+    await loadImagesInfo();
+    await loadRoomsSettings();
+    closeModal('settings-modal');
+    showToast('Несохранённые настройки отменены');
+  }catch(e){
+    closeModal('settings-modal');
+  }
+}
 
 function bindGlobal(){
   loadUiPrefs();
@@ -2924,7 +2950,7 @@ function bindGlobal(){
     if(clearSensor && roomId){ clearStandardSensorInput(roomId, clearSensor.dataset.clearStandardSensor); }
   });
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
-  el('btn-save-config').onclick=()=>saveConfig(); el('btn-clear-config').onclick=()=>clearConfig(); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
+  el('btn-save-config').onclick=()=>saveConfig(); const clearConfigBtn=el('btn-clear-config'); if(clearConfigBtn) clearConfigBtn.onclick=()=>clearConfig(); const cancelSettingsBtn=el('btn-cancel-settings'); if(cancelSettingsBtn) cancelSettingsBtn.onclick=()=>cancelSettingsChanges(); qsa('[data-settings-panel]').forEach(b=>b.onclick=()=>openSettingsPanel(b.dataset.settingsPanel)); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
   el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
   const editBtn=el('btn-edit');
   const startEditHold=()=>{ if(state.edit) return; if(!canEditLayout()){ showToast('Редактирование доступно только в admin mode'); updateEditButtons(); return; } editBtn.classList.add('holding'); showToast('Удерживайте 2 секунды для входа в редактор'); state.editHoldTimer=setTimeout(()=>{ editBtn.classList.remove('holding'); state.editHoldTimer=null; enterEditMode(); },2000); };

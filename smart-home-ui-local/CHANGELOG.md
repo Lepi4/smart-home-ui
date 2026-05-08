@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.5.5.5 — rebrand ALLHA-3D → ALLHA-2D
+
+- Проект переименован в `ALLHA-2D`, потому что интерфейс работает с плоскими планами, зонами и маркерами, а не с настоящей 3D-сценой.
+- Обновлены названия в UI, add-on config, panel title, README, FAQ, About/diagnostics и brand assets.
+- Обновлены `brand-logo.svg`, `brand-label.svg`, `icon.png`, `logo.png` и favicon.
+- Репозиторий и slug сохранены прежними: `Lepi4/smart-home-ui` и `smart_home_ui_local`, чтобы не ломать установку и обновления.
+- `CHANGELOG.md` оставлен накопительным.
+
+## v3.5.5.4 — settings structure + safer factory reset placement
+
+- Полный сброс перенесён из нижней панели настроек в `Layout / Обслуживание` → опасные действия.
+- Вместо опасного сброса рядом с сохранением добавлена кнопка `Отменить настройки`.
+- Крупные разделы настроек вынесены в отдельные подменю: картинки/карты, layout, комнаты/зоны/датчики, источники.
+- Исправлена прокрутка FAQ modal и структура FAQ.html.
+
 ## v3.5.5.3 — factory reset + compact standard sensors
 
 - Добавлена кнопка полного сброса проекта: `Сбросить всё к дефолту`.

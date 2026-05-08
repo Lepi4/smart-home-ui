@@ -1,17 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ALLHA-3D logo">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ALLHA-2D logo">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00d6ff"/><stop offset="0.55" stop-color="#2f7bff"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient>
     <linearGradient id="p" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#10243a"/><stop offset="1" stop-color="#07101a"/></linearGradient>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000" flood-opacity="0.45"/></filter>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000" flood-opacity="0.42"/></filter>
   </defs>
   <rect width="512" height="512" rx="96" fill="#06111f"/>
   <rect x="36" y="36" width="440" height="440" rx="82" fill="url(#p)" stroke="rgba(112,220,255,.35)" stroke-width="4"/>
   <g filter="url(#shadow)">
-    <path d="M256 96 394 176 256 256 118 176Z" fill="#1dd7ff" opacity=".88"/>
-    <path d="M118 176v160l138 80V256Z" fill="#2563eb" opacity=".92"/>
-    <path d="M394 176v160l-138 80V256Z" fill="#7c3aed" opacity=".92"/>
-    <path d="M164 204 256 151l92 53M164 260l92 53 92-53M210 231v109M302 231v109" stroke="#e9fbff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>
+    <rect x="112" y="92" width="288" height="260" rx="28" fill="rgba(20,36,58,.96)" stroke="url(#g)" stroke-width="12"/>
+    <path d="M112 190h118v-98M230 190v162M230 258h170M312 92v98h88M112 258h118" fill="none" stroke="#e9fbff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" opacity=".88"/>
+    <circle cx="166" cy="142" r="13" fill="#42e8ff"/>
+    <circle cx="324" cy="142" r="13" fill="#42e8ff"/>
+    <circle cx="324" cy="304" r="13" fill="#42e8ff"/>
   </g>
   <path d="M132 374h248" stroke="url(#g)" stroke-width="12" stroke-linecap="round" opacity=".9"/>
-  <text x="256" y="454" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="900" fill="#f7fcff" letter-spacing="2">ALLHA-3D</text>
+  <text x="256" y="454" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="900" fill="#f7fcff" letter-spacing="2">ALLHA-2D</text>
 </svg>

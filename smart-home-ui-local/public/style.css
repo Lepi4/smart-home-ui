@@ -1356,7 +1356,7 @@ body.kiosk-mode .kiosk-attention-btn{display:block!important}
 .attention-card{width:min(760px,96vw)}.attention-body{padding:14px 18px;max-height:62vh;overflow:auto}.attention-body h3{margin:14px 0 8px}.attention-list{display:grid;gap:8px}.attention-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;background:#111820;border:1px solid #283241;border-radius:14px;padding:10px}.attention-row.alert{border-color:rgba(255,174,66,.6);background:rgba(82,42,16,.34)}.attention-row b{display:block}.attention-row span{display:block;color:#aeb8c6;font-size:12px}.attention-row.holding,.danger-hold.holding{outline:3px solid rgba(255,199,105,.7)}.device-attention-section{margin-top:14px;border-top:1px solid #293241;padding-top:12px}.device-attention-section h3{margin:0 0 8px}.attention-mini{display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-radius:12px;padding:8px 10px;margin:8px 0;background:#101821;border:1px solid #263241}.attention-mini.alert{background:rgba(82,42,16,.34);border-color:rgba(255,174,66,.55)}.attention-mini.ok{border-color:rgba(80,180,120,.35)}
 @media(max-width:760px){.kiosk-attention-btn{bottom:56px;left:50%;font-size:12px;min-height:36px}.attention-row{grid-template-columns:1fr}.attention-body{max-height:56vh}}
 
-/* ALLHA-3D branding */
+/* ALLHA-2D branding */
 .about-brand-card{display:flex;align-items:center;gap:14px;padding:14px;border:1px solid rgba(78,210,255,.28);border-radius:18px;background:linear-gradient(135deg,rgba(18,27,42,.98),rgba(15,50,69,.78));box-shadow:0 14px 42px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);margin-bottom:14px}
 .about-brand-logo{width:84px;height:84px;border-radius:20px;background:#07101a;display:grid;place-items:center;box-shadow:inset 0 0 22px rgba(78,210,255,.16)}
 .about-brand-logo img{width:76px;height:76px;object-fit:contain}
@@ -1504,3 +1504,49 @@ body.invisible-zones:not(.editing) .room-zone{background:transparent!important;b
 .metric-icon{font-weight:800;line-height:1;opacity:.95;}
 .metric-co2 .metric-icon{font-size:.92em;letter-spacing:-.04em;}
 .factory-reset-warning{margin:12px 0 4px;padding:10px 12px;border:1px solid rgba(255,160,64,.45);border-radius:12px;background:rgba(255,160,64,.10);color:var(--text,#eef4ff);font-size:13px;line-height:1.4;}
+
+/* v3.5.5.5 settings structure: service menus instead of huge inline blocks */
+#settings-modal .settings-service-menu{
+  padding:0 16px 12px!important;
+  display:grid!important;
+  grid-template-columns:repeat(auto-fit,minmax(190px,1fr))!important;
+  gap:10px!important;
+}
+#settings-modal .settings-service-menu button{
+  min-height:44px!important;
+  text-align:left!important;
+  border:1px solid #303846!important;
+  background:#171d25!important;
+}
+#settings-modal .settings-service-menu button.active{
+  background:#8a6221!important;
+  border-color:#d0993a!important;
+  color:#fff!important;
+}
+#settings-modal .settings-section-panel.hidden{display:none!important;}
+#settings-modal .settings-section-panel{
+  margin:0 16px 12px!important;
+  padding:12px!important;
+  border:1px solid #293340!important;
+  border-radius:16px!important;
+  background:rgba(255,255,255,.025)!important;
+}
+#settings-modal .image-tools,
+#settings-modal .layout-tools,
+#settings-modal .rooms-zones-tools,
+#settings-modal .source-tools{padding:12px!important;}
+#settings-modal .factory-reset-card{
+  border-color:rgba(190,74,65,.45)!important;
+  background:rgba(190,74,65,.08)!important;
+}
+#settings-modal #btn-cancel-settings{background:#202733!important;}
+@media(max-width:760px), (orientation: landscape) and (max-height:920px){
+  #settings-modal .settings-service-menu{padding:0 10px 8px!important;grid-template-columns:1fr 1fr!important;gap:7px!important}
+  #settings-modal .settings-service-menu button{font-size:12px!important;min-height:36px!important;padding:7px 8px!important}
+  #settings-modal .settings-section-panel{margin:0 10px 8px!important;padding:9px!important;border-radius:12px!important}
+}
+
+/* v3.5.5.5 FAQ scroll fix: scroll the modal body, not only iframe */
+.faq-modal-card{height:min(840px,94dvh)!important;max-height:94dvh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}
+.faq-modal-card .modal-head{flex:0 0 auto!important;}
+.faq-frame{display:block!important;width:100%!important;flex:1 1 auto!important;min-height:0!important;height:100%!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;touch-action:auto!important;overscroll-behavior:contain!important;}

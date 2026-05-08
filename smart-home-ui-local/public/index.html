@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-3D HA Add-on v3.5.2</title>
+  <title>ALLHA-2D HA Add-on v3.5.5.5</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -22,7 +22,7 @@
   <button type="button" id="btn-show-device-panel" class="floating-menu-btn right hidden">Устройства</button>
   <button type="button" id="btn-show-toolbar" class="floating-menu-btn top hidden">Панель</button>
   <aside class="sidebar">
-    <div class="brand">SMART HOME LOCAL</div>
+    <div class="brand">ALLHA-2D LOCAL</div>
     <div class="top-actions">
       <a class="button-link ha-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← HA</a>
       <button type="button" id="btn-settings">Настройки</button>
@@ -38,7 +38,7 @@
     <header class="toolbar">
       <div>
         <h1 id="page-title">Общий план</h1>
-        <p id="page-subtitle">Обзор квартиры и отдельные 3D-карты помещений</p>
+        <p id="page-subtitle">Обзор квартиры и отдельные 2D-карты помещений</p>
       </div>
       <div class="toolbar-actions">
         <a class="button-link ha-back-link toolbar-back" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← Назад в HA</a>
@@ -192,7 +192,13 @@
         <label>Прозрачность фона датчиков <input id="pref-sensor-opacity" type="range" min="0" max="100" value="0"><span id="pref-sensor-opacity-value">0%</span></label>
         <p class="muted">Масштаб карты меняется двумя пальцами или кнопками +/−. Аппаратный масштаб задаёт базовый размер плана для конкретной панели/экрана. Вид, масштаб, скрытые панели и kiosk mode сохраняются в /data/ui_state.json и восстанавливаются после переустановки add-on, если данные не удалить.</p>
       </div>
-      <div class="image-tools">
+      <div class="settings-service-menu">
+        <button type="button" data-settings-panel="images">Настройка картинок / карт</button>
+        <button type="button" data-settings-panel="layout">Layout / обслуживание</button>
+        <button type="button" data-settings-panel="rooms">Комнаты / зоны / датчики</button>
+        <button type="button" data-settings-panel="sources">Источники устройств</button>
+      </div>
+      <div class="image-tools settings-section-panel hidden" id="settings-panel-images">
         <h3>Картинки / План</h3>
         <div class="image-card">
           <div>
@@ -215,7 +221,7 @@
           <div id="room-images-list" class="room-images-list"><p class="muted">Загрузка списка комнат...</p></div>
         </div>
       </div>
-      <div class="layout-tools" id="layout-maintenance-tools">
+      <div class="layout-tools settings-section-panel hidden" id="layout-maintenance-tools">
         <h3>Layout / Обслуживание</h3>
         <div class="layout-service-card">
           <div>
@@ -249,13 +255,20 @@
           <button type="button" id="btn-open-device-placement">Открыть размещение устройств</button>
         </div>
         <p id="layout-maintenance-status" class="muted">Доступно только в admin mode. Перед очисткой создаётся backup layout.json.</p>
+        <div class="layout-service-card factory-reset-card">
+          <div>
+            <strong>Полный сброс к дефолту</strong>
+            <p class="muted">Опасное действие: удаляет пользовательские данные проекта и возвращает приложение к чистому состоянию. Перед выполнением создаётся backup; пользовательский PIN удаляется, встроенный резервный механизм восстановления остаётся.</p>
+          </div>
+          <button type="button" id="btn-clear-config" class="danger-button">Сбросить всё к дефолту</button>
+        </div>
       </div>
-      <div class="rooms-zones-tools" id="rooms-zones-tools">
+      <div class="rooms-zones-tools settings-section-panel hidden" id="settings-panel-rooms">
         <h3>Комнаты / зоны / стандартные датчики</h3>
         <p class="muted">Комнаты не создаются вручную: список берётся из найденных комнат Lovelace / HA Areas / entity names. Для каждой найденной комнаты можно создать или редактировать зону и задать стандартные датчики. Если все entity датчиков очищены, строка стандартных датчиков комнаты не отображается.</p>
         <div id="rooms-zones-manager" class="rooms-zones-manager"><p class="muted">Загрузка комнат...</p></div>
       </div>
-      <div class="source-tools">
+      <div class="source-tools settings-section-panel hidden" id="settings-panel-sources">
         <h3>Источники устройств из панели</h3>
         <p class="muted">Структура и названия берутся из RAW Lovelace / device.txt, состояние — из Home Assistant API. Адрес панели можно указывать как dashboard-unknown или dashboard-unknown/0.</p>
         <div class="source-buttons">
@@ -266,14 +279,13 @@
         </div>
         <div id="source-settings" class="source-settings"></div>
       </div>
-      <div class="factory-reset-warning"><strong>Полный сброс:</strong> удаляет пользовательские данные проекта и возвращает приложение к чистому состоянию. Перед выполнением создаётся backup; пользовательский PIN удаляется, встроенный резервный механизм восстановления остаётся.</div>
       <div id="settings-status" class="status"></div>
       </div>
       <div class="modal-actions">
         <button type="button" id="btn-faq-settings">FAQ / Помощь</button>
         <button type="button" id="btn-info-settings">Информация / диагностика</button>
         <button type="button" id="btn-save-config">Сохранить настройки</button>
-        <button type="button" id="btn-clear-config" class="danger-button">Сбросить всё к дефолту</button>
+        <button type="button" id="btn-cancel-settings">Отменить настройки</button>
       </div>
     </div>
   </div>

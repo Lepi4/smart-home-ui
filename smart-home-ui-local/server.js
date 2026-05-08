@@ -34,7 +34,7 @@ const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
 const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.5.3';
-const APP_BRAND = 'ALLHA-3D';
+const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
 const APP_COPYRIGHT = '© Lepi4';
@@ -365,7 +365,7 @@ function copyPathRecursive(src, dst){
 }
 function removePathSafe(target){
   if(!target || !target.startsWith(DATA_DIR)) return;
-  try{ if(fs.existsSync(target)) fs.rmSync(target, {recursive:true, force:true}); }catch(e){ console.warn('[ALLHA-3D] factory reset remove failed:', target, e.message); }
+  try{ if(fs.existsSync(target)) fs.rmSync(target, {recursive:true, force:true}); }catch(e){ console.warn('[ALLHA-2D] factory reset remove failed:', target, e.message); }
 }
 function writeJsAssignedArray(file, name, arr){
   fs.mkdirSync(path.dirname(file), {recursive:true});
@@ -393,7 +393,7 @@ function factoryResetProject(confirmWord){
         const dst = path.join(backupDir, path.basename(src));
         if(copyPathRecursive(src, dst)) backedUp.push(path.basename(src));
       }
-    }catch(e){ console.warn('[ALLHA-3D] factory reset backup failed:', src, e.message); }
+    }catch(e){ console.warn('[ALLHA-2D] factory reset backup failed:', src, e.message); }
   }
   const removeTargets = [
     ADDON_CONFIG_PATH, SOURCE_CONFIG_PATH, UI_STATE_PATH, LAYOUT_PATH, ROOMS_SETTINGS_PATH,
@@ -480,7 +480,7 @@ function activeCustomRoomImagePath(roomId){
   return customRoomImagePath(roomId);
 }
 function placeholderSvg(kind='overview', roomId=''){
-  const title = kind === 'overview' ? 'ALLHA-3D overview' : `ALLHA-3D room ${String(roomId||'')}`;
+  const title = kind === 'overview' ? 'ALLHA-2D overview' : `ALLHA-2D room ${String(roomId||'')}`;
   const subtitle = kind === 'overview' ? 'Загрузите общий план в настройках' : 'Загрузите картинку комнаты в настройках';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
     <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#101824"/><stop offset="1" stop-color="#1f2f44"/></linearGradient></defs>
