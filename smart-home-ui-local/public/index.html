@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-2D HA Add-on v3.5.8.1</title>
+  <title>ALLHA-2D HA Add-on v3.5.8.2</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -162,7 +162,7 @@
         <div class="addon-note">Home Assistant подключается автоматически через Supervisor API. URL и long-lived token вводить не нужно.</div>
         <input id="ha-url" type="hidden">
         <textarea id="ha-token" class="hidden" rows="1"></textarea>
-        <label>Адрес панели относительно Home Assistant<textarea id="ha-dashboard-paths" rows="3" placeholder="dashboard-unknown/0&#10;dashboard-unknown/1&#10;dashboard-unknown/media"></textarea></label>
+        <div class="addon-note">Адреса Lovelace/карточек теперь задаются отдельно для каждого уровня: Настройки → Уровни / области → Источники Lovelace этого уровня.</div>
         <label>Интервал опроса, сек<input id="poll-interval" type="number" value="6" min="2"></label>
         <label class="settings-check"><input type="checkbox" id="pref-mobile-mode"> Мобильная версия</label>
         <label class="settings-check"><input type="checkbox" id="pref-auto-hide"> Автоскрытие меню в мобильной версии</label>

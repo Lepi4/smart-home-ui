@@ -366,12 +366,18 @@ function levelsDiagnostics(profileId=ACTIVE_PROFILE_ID){
     activeLevelId: meta.activeLevelId,
     count: meta.levels.length,
     max: 12,
-    levels: meta.levels.map(l=>({
-      ...l,
-      active: l.id === meta.activeLevelId,
-      dir: levelPaths(pid, l.id).dir,
-      exists: fs.existsSync(levelPaths(pid, l.id).dir)
-    })),
+    levels: meta.levels.map(l=>{
+      const lp = levelPaths(pid, l.id);
+      const sc = loadSourceConfigForLevel(pid, l.id);
+      const dashboardPaths = normalizeDashboardPaths(sc.dashboardPaths ?? sc.dashboardPathText ?? '');
+      return {
+        ...l,
+        active: l.id === meta.activeLevelId,
+        dir: lp.dir,
+        exists: fs.existsSync(lp.dir),
+        sourceConfig: { ...sc, dashboardPaths, dashboardPathText: dashboardPaths.join('\n') }
+      };
+    }),
     activePaths: levelPaths(pid, meta.activeLevelId)
   };
 }
@@ -1377,6 +1383,51 @@ function saveSourceConfig(cfg){
   fs.mkdirSync(path.dirname(SOURCE_CONFIG_PATH),{recursive:true});
   fs.writeFileSync(SOURCE_CONFIG_PATH, JSON.stringify({ ...defaultSourceConfig(), ...(cfg || {}) }, null, 2), 'utf8');
 }
+function loadSourceConfigForLevel(profileId, levelId){
+  const lp = ensureLevelDirs(profileId || ACTIVE_PROFILE_ID, levelId || ACTIVE_LEVEL_ID);
+  if(!fs.existsSync(lp.sourceConfig)) return defaultSourceConfig();
+  try { return { ...defaultSourceConfig(), ...JSON.parse(fs.readFileSync(lp.sourceConfig,'utf8')) }; }
+  catch(e){ return defaultSourceConfig(); }
+}
+function saveSourceConfigForLevel(profileId, levelId, cfg){
+  const lp = ensureLevelDirs(profileId || ACTIVE_PROFILE_ID, levelId || ACTIVE_LEVEL_ID);
+  fs.mkdirSync(path.dirname(lp.sourceConfig), {recursive:true});
+  const normalized = { ...defaultSourceConfig(), ...(cfg || {}), dashboardPaths: normalizeDashboardPaths(cfg?.dashboardPaths ?? cfg?.dashboardPathText ?? '') };
+  fs.writeFileSync(lp.sourceConfig, JSON.stringify(normalized, null, 2), 'utf8');
+  if(sanitizeProfileId(profileId || ACTIVE_PROFILE_ID) === ACTIVE_PROFILE_ID && sanitizeLevelId(levelId || ACTIVE_LEVEL_ID) === ACTIVE_LEVEL_ID){
+    SOURCE_CONFIG_PATH = lp.sourceConfig;
+  }
+  return normalized;
+}
+async function withTemporaryLevel(profileId, levelId, fn){
+  const prev = { ACTIVE_PROFILE_ID, ACTIVE_PROFILE_DIR, ACTIVE_LEVEL_ID, ACTIVE_LEVEL_DIR, LAYOUT_PATH, SOURCE_CONFIG_PATH, UI_STATE_PATH, DATA_IMAGES_DIR, DATA_IMAGES_OVERVIEW_DIR, DATA_IMAGES_ROOMS_DIR, DATA_IMAGES_ORIGINALS_DIR, DATA_IMAGES_ORIGINALS_ROOMS_DIR, IMAGES_META_PATH, ROOMS_SETTINGS_PATH, DEVICES_PATH, LOVELACE_PATH };
+  try{
+    const pid = sanitizeProfileId(profileId || ACTIVE_PROFILE_ID);
+    const lid = sanitizeLevelId(levelId || ACTIVE_LEVEL_ID);
+    const pp = profilePaths(pid);
+    const lp = ensureLevelDirs(pid, lid);
+    ACTIVE_PROFILE_ID = pid; ACTIVE_PROFILE_DIR = pp.dir; ACTIVE_LEVEL_ID = lid; ACTIVE_LEVEL_DIR = lp.dir;
+    LAYOUT_PATH = lp.layout; SOURCE_CONFIG_PATH = lp.sourceConfig; UI_STATE_PATH = lp.uiState;
+    DATA_IMAGES_DIR = lp.images; DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview'); DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
+    DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals'); DATA_IMAGES_ORIGINALS_ROOMS_DIR = path.join(DATA_IMAGES_ORIGINALS_DIR, 'rooms');
+    IMAGES_META_PATH = lp.imagesMeta; ROOMS_SETTINGS_PATH = lp.rooms; DEVICES_PATH = lp.devicesJs; LOVELACE_PATH = lp.lovelaceJs;
+    return await fn(lp);
+  } finally {
+    Object.assign(globalThis, {});
+    ACTIVE_PROFILE_ID = prev.ACTIVE_PROFILE_ID; ACTIVE_PROFILE_DIR = prev.ACTIVE_PROFILE_DIR; ACTIVE_LEVEL_ID = prev.ACTIVE_LEVEL_ID; ACTIVE_LEVEL_DIR = prev.ACTIVE_LEVEL_DIR;
+    LAYOUT_PATH = prev.LAYOUT_PATH; SOURCE_CONFIG_PATH = prev.SOURCE_CONFIG_PATH; UI_STATE_PATH = prev.UI_STATE_PATH; DATA_IMAGES_DIR = prev.DATA_IMAGES_DIR;
+    DATA_IMAGES_OVERVIEW_DIR = prev.DATA_IMAGES_OVERVIEW_DIR; DATA_IMAGES_ROOMS_DIR = prev.DATA_IMAGES_ROOMS_DIR; DATA_IMAGES_ORIGINALS_DIR = prev.DATA_IMAGES_ORIGINALS_DIR; DATA_IMAGES_ORIGINALS_ROOMS_DIR = prev.DATA_IMAGES_ORIGINALS_ROOMS_DIR;
+    IMAGES_META_PATH = prev.IMAGES_META_PATH; ROOMS_SETTINGS_PATH = prev.ROOMS_SETTINGS_PATH; DEVICES_PATH = prev.DEVICES_PATH; LOVELACE_PATH = prev.LOVELACE_PATH;
+  }
+}
+async function importLovelaceRawForLevel(profileId, levelId, paths){
+  return await withTemporaryLevel(profileId || ACTIVE_PROFILE_ID, levelId || ACTIVE_LEVEL_ID, async()=>{
+    const cfg = loadSourceConfig();
+    const sourcePaths = paths ?? cfg.dashboardPaths ?? cfg.dashboardPathText ?? '';
+    const result = await importLovelaceRaw(sourcePaths);
+    return result;
+  });
+}
 
 
 ensureDataStore();
@@ -2003,6 +2054,30 @@ app.post('/api/levels/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...dup
 app.post('/api/levels/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateLevel(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.delete('/api/levels/:id', (req,res)=>{ try{res.json({ok:true, ...deleteLevel(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.patch('/api/levels/:id', (req,res)=>{ try{res.json({ok:true, ...patchLevel(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.get('/api/levels/:id/source-config', (req,res)=>{
+  try{
+    const cfg = loadSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id);
+    const dashboardPaths = normalizeDashboardPaths(cfg.dashboardPaths ?? cfg.dashboardPathText ?? '');
+    res.json({ok:true, levelId:sanitizeLevelId(req.params.id), config:{...cfg, dashboardPaths, dashboardPathText:dashboardPaths.join('\n')}});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.patch('/api/levels/:id/source-config', (req,res)=>{
+  try{
+    const current = loadSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id);
+    const cfg = saveSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id, {...current, ...(req.body||{})});
+    const dashboardPaths = normalizeDashboardPaths(cfg.dashboardPaths ?? cfg.dashboardPathText ?? '');
+    res.json({ok:true, levelId:sanitizeLevelId(req.params.id), config:{...cfg, dashboardPaths, dashboardPathText:dashboardPaths.join('\n')}, levels:levelsDiagnostics()});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.post('/api/levels/:id/lovelace/import', async (req,res)=>{
+  try{
+    const current = loadSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id);
+    const dashboardPaths = normalizeDashboardPaths(req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? current.dashboardPaths ?? '');
+    saveSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id, {...current, dashboardPaths});
+    const data = await importLovelaceRawForLevel(ACTIVE_PROFILE_ID, req.params.id, dashboardPaths);
+    res.json({ok:true, levelId:sanitizeLevelId(req.params.id), ...data, levels:levelsDiagnostics()});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
 
 app.get('/api/images', (req,res)=>{
   try{
@@ -2137,10 +2212,7 @@ app.get('/api/config', (req,res)=> { try { res.json(publicConfig(loadAddonConfig
 app.post('/api/config', (req,res)=> {
   try {
     const body = req.body || {};
-    if(body.dashboardPaths !== undefined || body.dashboardPathText !== undefined){
-      const sc = loadSourceConfig();
-      saveSourceConfig({ ...sc, dashboardPaths: normalizeDashboardPaths(body.dashboardPaths ?? body.dashboardPathText ?? '') });
-    }
+    // v3.5.8.2: Lovelace/dashboard paths are configured per level, not in global settings.
     const {dashboardPaths, dashboardPathText, ...globalBody} = body;
     const cfg = saveAddonConfig(globalBody || {});
     res.json({ ok:true, config: publicConfig(cfg) });

@@ -2390,21 +2390,66 @@ function migrateLayout(){
   state.layout.overviewRoomSync=false;
 }
 async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
-async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const dp=el('ha-dashboard-paths'); if(dp) dp.value=cfg.dashboardPathText||((cfg.dashboardPaths||[]).join('\n'));el('poll-interval').value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
+async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const pi=el('poll-interval'); if(pi) pi.value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
 
 
 
 function currentLevelList(){ return Array.isArray(state.levels?.levels) ? state.levels.levels : []; }
+function activeLevelMeta(){
+  const levels=currentLevelList();
+  const activeId=state.levels?.activeLevelId || levels.find(l=>l.active)?.id || '';
+  return levels.find(l=>l.id===activeId || l.active) || {id:activeId, name:activeId || 'Уровень'};
+}
 function renderLevelSwitcher(){
   const levels=currentLevelList();
-  const active=state.levels?.activeLevelId || levels.find(l=>l.active)?.id || '';
-  const html = levels.length > 1 ? levels.map(l=>`<button type="button" class="level-switch-btn${l.id===active?' active':''}" data-quick-level="${esc(l.id)}" ${l.id===active?'disabled':''}>${esc(l.name||l.id)}</button>`).join('') : '';
+  const active=activeLevelMeta();
+  const others=levels.filter(l=>l.id !== active.id);
+  const html = levels.length > 1 ? `<span class="level-current">${esc(active.name||active.id||'Уровень')}</span>` + others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
   ['level-switcher','kiosk-level-switcher'].forEach(id=>{ const box=el(id); if(box){ box.innerHTML=html; box.classList.toggle('hidden', !html); } });
 }
-async function activateLevelQuick(levelId){
-  try{ await apiJson(`api/levels/${encodeURIComponent(levelId)}/activate`,{method:'POST'}); showToast('Уровень переключён'); setTimeout(()=>location.reload(),450); }
-  catch(e){ showToast('Ошибка переключения уровня: '+e.message); }
+async function loadRuntimeScripts(){
+  const token=Date.now();
+  const [devicesJs, lovelaceJs] = await Promise.all([
+    fetch(`devices.js?t=${token}`, {cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('devices.js '+r.status); return r.text(); }),
+    fetch(`lovelace-source.js?t=${token}`, {cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('lovelace-source.js '+r.status); return r.text(); })
+  ]);
+  Function(devicesJs)();
+  Function(lovelaceJs)();
 }
+async function reloadActiveLevelRuntime(){
+  await loadRuntimeScripts();
+  await loadLayout();
+  await loadSourceConfig();
+  await loadImagesInfo();
+  await loadRoomsSettings();
+  state.selectedRoom='overview';
+  applySourceConfig();
+  refreshRuntimeRooms();
+  renderSourceSettings();
+  renderRoomsZonesManager();
+  renderLayoutMaintenanceTools();
+  render();
+}
+async function activateLevelSmooth(levelId, opts={}){
+  if(!levelId || state.levelSwitching) return;
+  if(state.edit){ showToast('Сначала сохраните или отмените редактирование'); return; }
+  state.levelSwitching=true;
+  document.body.classList.add('level-switching');
+  try{
+    const res=await apiJson(`api/levels/${encodeURIComponent(levelId)}/activate`,{method:'POST'});
+    state.levels=res;
+    renderLevelSwitcher();
+    renderLevelsManager();
+    await reloadActiveLevelRuntime();
+    showToast('Уровень переключён');
+  }catch(e){
+    showToast('Ошибка переключения уровня: '+e.message);
+  }finally{
+    setTimeout(()=>document.body.classList.remove('level-switching'), 160);
+    state.levelSwitching=false;
+  }
+}
+async function activateLevelQuick(levelId){ return activateLevelSmooth(levelId); }
 
 async function loadProfilesInfo(){
   try{
@@ -2533,29 +2578,35 @@ function renderLevelsManager(){
   const activeId=data.activeLevelId || levels.find(l=>l.active)?.id || 'level-1';
   const rows=levels.map(l=>{
     const active=l.id===activeId || l.active;
-    return `<div class="profile-row${active?' active-profile':''}" data-level-row="${esc(l.id)}">`+
-      `<div><strong>${esc(l.name||l.id)}</strong>${active?' <span class="profile-badge">текущий</span>':''}<br>`+
+    const sc=l.sourceConfig || {};
+    const sourceText=String(sc.dashboardPathText || (Array.isArray(sc.dashboardPaths)?sc.dashboardPaths.join('\n'):'') || '');
+    return `<div class="profile-row level-row${active?' active-profile':''}" data-level-row="${esc(l.id)}">`+
+      `<div class="level-row-top"><div><strong>${esc(l.name||l.id)}</strong>${active?' <span class="profile-badge">текущий</span>':''}<br>`+
       `<small class="muted">${esc(l.id)} · ${l.exists?'папка есть':'папка не найдена'}</small></div>`+
       `<div class="profile-actions">`+
       `<button type="button" data-level-activate="${esc(l.id)}" ${active?'disabled':''}>Переключить</button>`+
       `<button type="button" data-level-rename="${esc(l.id)}">Переименовать</button>`+
-      `<button type="button" data-level-sources="${esc(l.id)}">Источники</button>`+
       `<button type="button" data-level-duplicate="${esc(l.id)}">Дублировать</button>`+
       `<button type="button" class="danger-button small-danger" data-level-delete="${esc(l.id)}" ${levels.length<=1?'disabled':''}>Удалить</button>`+
-      `</div></div>`;
+      `</div></div>`+
+      `<details class="level-source-details" ${active?'open':''}><summary>Источники Lovelace этого уровня</summary>`+
+      `<label>Адреса панелей / карточек для парсинга уровня<textarea rows="3" data-level-source-paths="${esc(l.id)}" placeholder="dashboard-unknown/0\ndashboard-unknown/1\ndashboard-unknown/media">${esc(sourceText)}</textarea></label>`+
+      `<div class="level-source-actions"><button type="button" data-level-source-save="${esc(l.id)}">Сохранить источники</button><button type="button" data-level-source-import="${esc(l.id)}">Перечитать этот уровень</button></div>`+
+      `<p class="muted">Источники хранятся отдельно для каждого уровня. Новый уровень с нуля не перечитывает старые карты без явного выбора.</p>`+
+      `</details></div>`;
   }).join('');
-  box.innerHTML=`<div class="profile-summary"><strong>Текущий уровень/область:</strong> ${esc(activeId)} · ${levels.length}/${data.max||12}</div>`+
+  box.innerHTML=`<div class="profile-summary"><strong>Текущий уровень/область:</strong> ${esc((levels.find(l=>l.id===activeId)||{}).name||activeId)} · ${levels.length}/${data.max||12}</div>`+
     `<div class="profile-create-card"><h4>Создать уровень / область</h4>`+
     `<label>Название уровня <input id="new-level-name" type="text" placeholder="Например: Этаж 2 / Мансарда / Двор"></label>`+
     `<label class="settings-check"><input type="checkbox" id="new-level-copy-zones"> Дублировать зоны из текущего уровня</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-level-copy-markers"> Дублировать значки/маркеры из текущего уровня</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-level-copy-images"> Дублировать картинки</label>`+
     `<label class="settings-check"><input type="checkbox" id="new-level-copy-sources"> Дублировать Lovelace-источники и устройства</label>`+
-    `<p class="muted">Создать уровень с нуля = пустой уровень без комнат/устройств/зон/источников. Источники Lovelace настраиваются отдельно для каждого уровня. Галочки копирования применяются только явно.</p>`+
+    `<p class="muted">Создать уровень с нуля = пустой уровень без комнат/устройств/зон/источников. Источники Lovelace задаются в карточке каждого уровня отдельно.</p>`+
     `<button type="button" id="btn-create-level">Создать уровень</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
-    `<p class="muted">Уровни живут внутри активного профиля. У каждого уровня свои карта, зоны, маркеры, картинки, комнаты, источники Lovelace и импортированные устройства. Security/PIN и Attention остаются глобальными.</p>`;
-  qsa('button,input', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
+    `<p class="muted">Переключение для использования выполняется на главной карте и в kiosk mode. Настройки нужны для создания/редактирования уровней и их источников.</p>`;
+  qsa('button,input,textarea', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
 }
 async function createLevelFromSettings(){
   if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
@@ -2579,9 +2630,33 @@ async function duplicateLevelFromSettings(levelId){
 }
 async function activateLevelFromSettings(levelId){
   if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
-  if(!confirm('Переключить текущий уровень/область? После переключения страница будет перезагружена.')) return;
-  try{ await apiJson(`api/levels/${encodeURIComponent(levelId)}/activate`,{method:'POST'}); showToast('Уровень переключён. Перезагрузка...'); setTimeout(()=>location.reload(), 700); }
-  catch(e){ showToast('Ошибка переключения уровня: '+e.message); }
+  await activateLevelSmooth(levelId, {fromSettings:true});
+}
+async function saveLevelSources(levelId){
+  if(!canEditLayout()){ showToast('Источники уровня доступны только в admin mode'); return; }
+  const ta=document.querySelector(`[data-level-source-paths="${CSS.escape(levelId)}"]`);
+  const dashboardPathText=(ta?.value||'').trim();
+  try{
+    const res=await apiJson(`api/levels/${encodeURIComponent(levelId)}/source-config`,{method:'PATCH',body:JSON.stringify({dashboardPathText})});
+    if(res.levels) state.levels=res.levels;
+    renderLevelsManager();
+    showToast('Источники уровня сохранены');
+  }catch(e){ showToast('Ошибка сохранения источников уровня: '+e.message); }
+}
+async function importLevelSources(levelId){
+  if(!canEditLayout()){ showToast('Импорт уровня доступен только в admin mode'); return; }
+  const ta=document.querySelector(`[data-level-source-paths="${CSS.escape(levelId)}"]`);
+  const dashboardPathText=(ta?.value||'').trim();
+  if(!dashboardPathText && !confirm('Источники уровня пустые. Перечитать уровень без адресов?')) return;
+  try{
+    showToast('Перечитываю уровень...');
+    const res=await apiJson(`api/levels/${encodeURIComponent(levelId)}/lovelace/import`,{method:'POST',body:JSON.stringify({dashboardPathText})});
+    if(res.levels) state.levels=res.levels;
+    renderLevelsManager();
+    if(levelId === (state.levels?.activeLevelId || 'level-1')) await reloadActiveLevelRuntime();
+    const imp=res.import||{};
+    showToast(`Уровень перечитан. Устройств: ${imp.devices ?? 0}`);
+  }catch(e){ showToast('Ошибка перечитывания уровня: '+e.message); }
 }
 async function renameLevelFromSettings(levelId){
   if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
@@ -2991,7 +3066,7 @@ async function saveConfig(){
   try{
     status.textContent='Сохраняю настройки add-on...';
     saveUiPrefs();
-    const payload={dashboardPathText:(el('ha-dashboard-paths')?.value||'').trim(),pollIntervalMs:Math.max(2000,Number(el('poll-interval').value||6)*1000),...buildGlobalConfigPayload(),...buildSecurityConfigPayload()};
+    const payload={pollIntervalMs:Math.max(2000,Number(el('poll-interval')?.value||6)*1000),...buildGlobalConfigPayload(),...buildSecurityConfigPayload()};
     const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
     status.textContent='Настройки сохранены. Проверяю подключение к Home Assistant...';
@@ -3064,7 +3139,7 @@ async function readLovelaceRaw(){
   const status=el('settings-status');
   try{
     status.textContent='Читаю RAW панели из Home Assistant и пересобираю устройства...';
-    const dashboardPathText=(el('ha-dashboard-paths')?.value||'').trim();
+    const dashboardPathText=(state.sourceConfig?.dashboardPathText || (state.sourceConfig?.dashboardPaths||[]).join('\n') || '').trim();
     const data=await apiJson('api/ha/lovelace/import',{method:'POST',body:JSON.stringify({dashboardPathText})});
     const ok=(data.results||[]).filter(x=>x.ok).length;
     const bad=(data.results||[]).filter(x=>!x.ok).length;
@@ -3290,7 +3365,8 @@ function bindGlobal(){
     const create=e.target.closest('#btn-create-level'); if(create){ createLevelFromSettings(); return; }
     const act=e.target.closest('[data-level-activate]'); if(act){ activateLevelFromSettings(act.dataset.levelActivate); return; }
     const ren=e.target.closest('[data-level-rename]'); if(ren){ renameLevelFromSettings(ren.dataset.levelRename); return; }
-    const src=e.target.closest('[data-level-sources]'); if(src){ activateLevelFromSettings(src.dataset.levelSources); return; }
+    const saveSrc=e.target.closest('[data-level-source-save]'); if(saveSrc){ saveLevelSources(saveSrc.dataset.levelSourceSave); return; }
+    const importSrc=e.target.closest('[data-level-source-import]'); if(importSrc){ importLevelSources(importSrc.dataset.levelSourceImport); return; }
     const dup=e.target.closest('[data-level-duplicate]'); if(dup){ duplicateLevelFromSettings(dup.dataset.levelDuplicate); return; }
     const del=e.target.closest('[data-level-delete]'); if(del){ deleteLevelFromSettings(del.dataset.levelDelete); return; }
   });

@@ -1584,3 +1584,16 @@ body.kiosk-mode .kiosk-level-switcher:not(.hidden){display:flex!important}
 body.kiosk-mode .kiosk-level-switcher .level-switch-btn{font-size:12px;min-height:34px;padding:6px 10px;background:rgba(28,42,62,.9)}
 .advanced-maintenance{border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:10px 12px;background:#101821;margin:10px 0}.advanced-maintenance>summary{cursor:pointer;font-weight:900;color:#eaf2ff}.backup-manager{display:grid;gap:12px}.backup-summary{background:#101821;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px}.backup-actions{display:flex;gap:8px;flex-wrap:wrap}.backup-actions button{min-height:38px}.backup-tools .backup-list{max-height:420px;overflow:auto}.backup-row{word-break:break-word}
 @media(max-width:760px){.level-switcher{max-width:100%;order:4}.toolbar-actions .level-switch-btn{font-size:12px;padding:6px 8px}body.kiosk-mode .kiosk-level-switcher{bottom:56px;max-width:92vw}}
+
+/* v3.5.8.2 — smooth level switching and per-level sources */
+.level-switcher{gap:8px}
+.level-current{display:inline-flex;align-items:center;border-radius:999px;padding:7px 10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#d7e4f5;font-weight:900;white-space:nowrap}
+.kiosk-level-switcher .level-current{font-size:12px;padding:6px 9px;background:rgba(255,255,255,.10)}
+body.level-switching .canvas-card{opacity:.72;transition:opacity .16s ease, filter .16s ease;filter:saturate(.92)}
+body.level-switching .plan-content, body.level-switching .room-content{transition:opacity .16s ease;opacity:.55}
+.level-row{display:block}
+.level-row-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.level-source-details{margin-top:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px}
+.level-source-details textarea{width:100%;min-height:74px;resize:vertical}
+.level-source-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+@media(max-width:760px){.level-current{font-size:12px;padding:6px 8px}.level-row-top{display:block}.level-source-actions button{flex:1 1 auto}}
