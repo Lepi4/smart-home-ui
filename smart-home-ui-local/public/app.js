@@ -2921,6 +2921,7 @@ function renderLevelSetupWizard(levelId){
 function openLevelSetupWizard(levelId){
   if(!levelId) return;
   state.levelSetupWizardId=levelId;
+  hideWizardReturn();
   renderLevelSetupWizard(levelId);
   openModal('level-setup-wizard-modal');
 }
@@ -2931,15 +2932,20 @@ async function ensureWizardLevelActive(levelId){
   }
 }
 async function openWizardPanel(levelId, panel){
+  state.levelSetupWizardId = levelId || state.levelSetupWizardId;
   closeModal('level-setup-wizard-modal');
   openModal('settings-modal');
   if(panel==='images' || panel==='rooms') await ensureWizardLevelActive(levelId);
   openSettingsPanel(panel);
+  const labels={images:'↩ Вернуться в мастер после загрузки карты', rooms:'↩ Вернуться в мастер после проверки комнат/зон'};
+  showWizardReturn(levelId, labels[panel] || '↩ Вернуться в мастер настройки');
 }
 function focusLevelSources(levelId){
+  state.levelSetupWizardId = levelId || state.levelSetupWizardId;
   closeModal('level-setup-wizard-modal');
   openModal('settings-modal');
   openSettingsPanel('levels');
+  showWizardReturn(levelId, '↩ Вернуться в мастер после настройки источников');
   setTimeout(()=>{
     const row=document.querySelector(`[data-level-row="${CSS.escape(levelId)}"]`);
     const details=row?.querySelector('.level-source-details');
@@ -2948,6 +2954,25 @@ function focusLevelSources(levelId){
     if(row) row.scrollIntoView({block:'center', behavior:'smooth'});
     if(ta) ta.focus();
   }, 80);
+}
+function showWizardReturn(levelId, label){
+  state.levelSetupWizardId = levelId || state.levelSetupWizardId;
+  const btn=el('wizard-return-button');
+  if(!btn) return;
+  btn.dataset.returnLevelWizard = state.levelSetupWizardId || '';
+  btn.textContent = label || '↩ Вернуться в мастер настройки';
+  btn.classList.remove('hidden');
+}
+function hideWizardReturn(){
+  const btn=el('wizard-return-button');
+  if(btn) btn.classList.add('hidden');
+}
+async function returnToLevelSetupWizard(){
+  const levelId = el('wizard-return-button')?.dataset.returnLevelWizard || state.levelSetupWizardId;
+  if(!levelId){ hideWizardReturn(); return; }
+  await loadLevelsInfo();
+  openLevelSetupWizard(levelId);
+  hideWizardReturn();
 }
 async function initializeLevelFromSettings(levelId){
   if(!levelId) return;
@@ -3634,6 +3659,7 @@ function bindGlobal(){
   el('btn-close-settings').onclick=()=>closeModal('settings-modal');
   const closeLevelWizard=()=>closeModal('level-setup-wizard-modal');
   const bwc=el('btn-close-level-setup-wizard'); if(bwc) bwc.onclick=closeLevelWizard;
+  const wrb=el('wizard-return-button'); if(wrb) wrb.onclick=()=>returnToLevelSetupWizard();
   const closeProjectWizard=()=>closeProjectSetupWizard();
   const pswClose=el('btn-close-project-setup-wizard'); if(pswClose) pswClose.onclick=closeProjectWizard;
   const pswCancel=el('btn-project-setup-cancel'); if(pswCancel) pswCancel.onclick=closeProjectWizard;

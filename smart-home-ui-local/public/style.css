@@ -1724,3 +1724,9 @@ body:not(.kiosk-mode):not(.hide-sidebar) .sidebar .top-actions #btn-hide-sidebar
 .wizard-review ol{margin:6px 0 0 22px;padding:0;}
 .project-setup-wizard-actions{gap:8px;}
 @media(max-width:720px){.project-setup-wizard-actions button{width:100%;}.wizard-level-names{grid-template-columns:1fr;}}
+
+/* v3.5.8.14: persistent return button for Setup Wizard delegated settings steps */
+.wizard-return{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:1300;border:1px solid rgba(77,139,255,.55);background:#244a82;color:#fff;border-radius:999px;padding:12px 18px;box-shadow:0 14px 42px rgba(0,0,0,.45);font-weight:900}
+.wizard-return:hover{background:#2f5fa5}
+.wizard-return.hidden{display:none}
+body.mobile-layout .wizard-return{bottom:74px;max-width:calc(100vw - 28px);white-space:normal}
