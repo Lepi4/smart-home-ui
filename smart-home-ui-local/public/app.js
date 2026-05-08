@@ -25,6 +25,14 @@ const ROOM_LABELS = {
   guestbath:'Гостевой санузел', entrance:'Прихожая', corridor:'Коридор', media:'media', plumbing:'plumbing', system:'system', misc:'misc'
 };
 function friendlyRoomLabel(roomId){ return ROOM_LABELS[String(roomId||'').trim()] || String(roomId||'').trim(); }
+function runtimeRoomLabel(roomId, rawLabel){
+  const id=normalizedRoomId(String(roomId||'').trim());
+  const label=String(rawLabel||'').trim();
+  if(!label) return friendlyRoomLabel(id);
+  const technical = label.toLowerCase()===id.toLowerCase() || label.toLowerCase()===String(roomId||'').trim().toLowerCase();
+  if(technical && ROOM_LABELS[id]) return friendlyRoomLabel(id);
+  return label;
+}
 
 let ROOMS = [];
 let ROOM_MAP = {};
@@ -35,11 +43,11 @@ function refreshRuntimeRooms(){
   // Zones, metrics and room sensors must appear only after user/imported runtime data exists in /data.
   for(const item of (state.roomsSettings?.knownRooms || [])){
     const id=normalizedRoomId(item.id); if(!id || id==='overview') continue;
-    byId.set(id, { id, label:item.settings?.alias || item.label || friendlyRoomLabel(id), image:`media/images/rooms/${encodeURIComponent(id)}.webp` });
+    byId.set(id, { id, label:item.settings?.alias || runtimeRoomLabel(id, item.label), image:`media/images/rooms/${encodeURIComponent(id)}.webp` });
   }
   for(const d of allDevices()){
     const id=normalizedRoomId(d.room); if(!id || id==='overview' || id==='unassigned') continue;
-    if(!byId.has(id)) byId.set(id,{id,label:d.roomLabel || friendlyRoomLabel(id),image:`media/images/rooms/${encodeURIComponent(id)}.webp`});
+    if(!byId.has(id)) byId.set(id,{id,label:runtimeRoomLabel(id, d.roomLabel),image:`media/images/rooms/${encodeURIComponent(id)}.webp`});
   }
   ROOMS=[{id:'overview',label:'Общий план'}, ...[...byId.values()].sort((a,b)=>(a.label||a.id).localeCompare(b.label||b.id,'ru'))];
   rebuildRoomMap();
@@ -1793,9 +1801,30 @@ function renderPlacementEditorExistingZones(){
     const pts=zonePoints(r);
     const c=pctToPlacementSvgPoint(zoneCentroid(pts).x, zoneCentroid(pts).y);
     const cls=rid===current?'current':'';
-    rows.push(`<polygon class="${cls}" points="${svgPointsAttr(pts)}"><title>${esc(r.label||rid)}</title></polygon><text class="${cls}" x="${c.x.toFixed(2)}" y="${c.y.toFixed(2)}">${esc(r.label||rid)}</text>`);
+    rows.push(`<polygon class="${cls}" data-zone-room="${esc(rid)}" points="${svgPointsAttr(pts)}"><title>${esc(r.label||rid)}</title></polygon><text class="${cls}" data-zone-room-label="${esc(rid)}" x="${c.x.toFixed(2)}" y="${c.y.toFixed(2)}">${esc(r.label||rid)}</text>`);
   }
   layer.innerHTML=rows.join('');
+}
+function updatePlacementEditorZoneLabels(){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  const rid=normalizedRoomId(state.placementEditor.zoneRoomId);
+  const r=room(rid);
+  const dev=el('placement-editor-device'); if(dev) dev.textContent=`Зона: ${r?.label||rid}`;
+  const scope=el('placement-editor-scope'); if(scope) scope.textContent='Общий план · выберите существующую зону или обведите новую';
+}
+function selectPlacementEditorZone(roomId){
+  if(!state.placementEditor || state.placementEditor.targetType!=='zone') return;
+  const rid=normalizedRoomId(roomId);
+  const r=roomWithLayout(rid);
+  if(!r) return;
+  const pts=hasZoneShape(r) ? zonePoints(r) : [];
+  const b=pts.length ? zoneBounds(pts) : {x:50,y:50,w:1,h:1};
+  Object.assign(state.placementEditor,{zoneRoomId:rid,x:b.x,y:b.y,wPct:b.w,hPct:b.h,points:pts,drawing:false});
+  setPlacementEditorPoint(b.x,b.y);
+  renderZoneDrawPath();
+  renderPlacementEditorExistingZones();
+  updatePlacementEditorZoneLabels();
+  showToast('Выбрана зона: '+(room(rid)?.label||rid));
 }
 function renderZoneDrawPath(){
   const path=el('placement-editor-zone-draw'); if(!path || !state.placementEditor) return;
@@ -1864,7 +1893,9 @@ function renderPlacementEditorZoneRect(){
   const m=el('placement-editor-marker'), hl=el('placement-editor-hline'), vl=el('placement-editor-vline');
   if(!z || !state.placementEditor) return;
   const isZone=state.placementEditor.targetType==='zone';
-  z.classList.toggle('hidden', !isZone || sanitizeZonePoints(state.placementEditor.points).length>=3);
+  // v3.5.9.2: freehand zone editor must not show the old rectangle fallback.
+  // Empty zone = no shape until the user draws or selects an existing polygon.
+  z.classList.toggle('hidden', true);
   if(m) m.classList.toggle('hidden', isZone);
   if(hl) hl.classList.toggle('hidden', false);
   if(vl) vl.classList.toggle('hidden', false);
@@ -2158,7 +2189,7 @@ function openZoneLayoutEditor(roomId){
   if(!r){ showToast('Комната не найдена'); return; }
   closeDevicePicker();
   const pts=hasZoneShape(r) ? zonePoints(r) : [];
-  const b=pts.length ? zoneBounds(pts) : {x:50,y:50,w:18,h:14};
+  const b=pts.length ? zoneBounds(pts) : {x:50,y:50,w:1,h:1};
   state.placementEditor={targetType:'zone', zoneRoomId:rid, kind:'overview', x:b.x, y:b.y, wPct:b.w, hPct:b.h, angleDeg:0, points:pts, drawing:false};
   const src=placementImageSrc('overview');
   const img=el('placement-editor-image'); if(img) img.setAttribute('href',src);
@@ -2166,8 +2197,7 @@ function openZoneLayoutEditor(roomId){
   buildPlacementGrid();
   renderPlacementEditorExisting();
   const title=el('placement-editor-title'); if(title) title.textContent='Редактирование зоны комнаты';
-  const dev=el('placement-editor-device'); if(dev) dev.textContent=`Зона: ${room(rid)?.label||rid}`;
-  const scope=el('placement-editor-scope'); if(scope) scope.textContent='Общий план · свободная обводка зоны';
+  updatePlacementEditorZoneLabels();
   const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
   const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
   ['btn-clear-zone-draw','btn-delete-placement-zone'].forEach(id=>{const b=el(id); if(b) b.classList.remove('hidden');});
@@ -3867,6 +3897,13 @@ function bindGlobal(){
   const placementModal=el('placement-editor-modal'); if(placementModal) placementModal.addEventListener('click',e=>{ if(e.target.id==='placement-editor-modal') closePlacementEditor(); });
   const placementSvg=el('placement-editor-svg'); if(placementSvg){
     placementSvg.addEventListener('pointerdown',e=>{
+      const zoneTarget=e.target?.closest?.('[data-zone-room]');
+      if(state.placementEditor?.targetType==='zone' && zoneTarget){
+        e.preventDefault();
+        e.stopPropagation();
+        selectPlacementEditorZone(zoneTarget.dataset.zoneRoom);
+        return;
+      }
       const p=placementSvgPointFromEvent(e); if(!p) return;
       if(state.placementEditor?.targetType==='zone'){
         e.preventDefault();
@@ -3920,7 +3957,7 @@ function bindGlobal(){
   const exitKiosk=el('btn-exit-kiosk');
   if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
   const kioskMapMode=el('btn-kiosk-map-mode'); if(kioskMapMode) kioskMapMode.onclick=()=>{ state.ui.kioskTileMode=false; saveUiPrefs(); render(); };
-  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); render(); };
+  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); render(); const groups=placedKioskTileDevices(); if(!groups.length) showToast('Карточки строятся только из размещённых маркеров на карте'); };
   const kioskAttention=el('btn-kiosk-attention'); if(kioskAttention) kioskAttention.onclick=openAttentionModal;
   const closeAttention=el('btn-close-attention'); if(closeAttention) closeAttention.onclick=closeAttentionModal;
   const attentionModal=el('attention-modal'); if(attentionModal) attentionModal.addEventListener('click',e=>{ if(e.target.id==='attention-modal') closeAttentionModal(); });
