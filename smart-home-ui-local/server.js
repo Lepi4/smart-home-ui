@@ -926,6 +926,17 @@ function writeJsAssignedArray(file, name, arr){
 function emptyLayout(){
   return { version:8, coordinateSpace:'room-content-box', overviewRoomSync:false, roomCoordinateMigrated:{}, overviewMarkers:{}, roomMarkers:{}, overviewMetrics:{}, roomMetrics:{}, zones:{}, customNames:{} };
 }
+function writeEmptyRuntimeBundle(lp){
+  atomicWriteJson(lp.layout, emptyLayout());
+  atomicWriteJson(lp.rooms, defaultRoomsSettings());
+  atomicWriteJson(lp.sourceConfig, defaultSourceConfig());
+  atomicWriteJson(lp.uiState, defaultUiState());
+  atomicWriteJson(lp.imagesMeta, defaultImagesMeta());
+  writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
+  atomicWriteJson(lp.devicesJson, []);
+  fs.writeFileSync(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  atomicWriteJson(lp.lovelaceRaw, { version:1, views:[] });
+}
 function factoryResetProject(confirmWord){
   if(String(confirmWord||'') !== 'RESET') throw new Error('Для полного сброса требуется подтверждение RESET');
   ensureDataStore();
@@ -933,40 +944,69 @@ function factoryResetProject(confirmWord){
   const backupDir = path.join(LAYOUT_BACKUP_DIR, `factory-reset-${stamp}`);
   fs.mkdirSync(backupDir, {recursive:true});
   const candidates = [
-    ADDON_CONFIG_PATH, SOURCE_CONFIG_PATH, UI_STATE_PATH, LAYOUT_PATH, ROOMS_SETTINGS_PATH,
-    DEVICES_PATH, path.join(DATA_DIR,'devices.json'), LOVELACE_PATH, path.join(DATA_DIR,'lovelace_raw.json'),
-    ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH, DATA_IMAGES_DIR,
-    path.join(DATA_DIR,'profiles.json'), path.join(DATA_DIR,'profiles')
+    ADDON_CONFIG_PATH, PROFILES_META_PATH, PROFILES_DIR,
+    SOURCE_CONFIG_PATH, UI_STATE_PATH, LAYOUT_PATH, ROOMS_SETTINGS_PATH, DEVICES_PATH, activeLevelPaths().devicesJson, LOVELACE_PATH, activeLevelPaths().lovelaceRaw,
+    path.join(DATA_DIR,'layout.json'), path.join(DATA_DIR,'rooms.json'), path.join(DATA_DIR,'source_config.json'), path.join(DATA_DIR,'ui_state.json'),
+    path.join(DATA_DIR,'devices.js'), path.join(DATA_DIR,'devices.json'), path.join(DATA_DIR,'lovelace-source.js'), path.join(DATA_DIR,'lovelace_raw.json'), path.join(DATA_DIR,'images'),
+    ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH
   ];
   const backedUp = [];
+  const seenBackup = new Set();
   for(const src of candidates){
     try{
+      if(!src || seenBackup.has(src)) continue;
+      seenBackup.add(src);
       if(fs.existsSync(src)){
         const dst = path.join(backupDir, path.basename(src));
         if(copyPathRecursive(src, dst)) backedUp.push(path.basename(src));
       }
     }catch(e){ console.warn('[ALLHA-2D] factory reset backup failed:', src, e.message); }
   }
+
+  // Полный сброс должен удалять не только картинки, но и все runtime-данные:
+  // профили, уровни, layout/zones/markers, rooms cache, devices, Lovelace sources, UI state и security.
   const removeTargets = [
-    ADDON_CONFIG_PATH, SOURCE_CONFIG_PATH, UI_STATE_PATH, LAYOUT_PATH, ROOMS_SETTINGS_PATH,
-    DEVICES_PATH, path.join(DATA_DIR,'devices.json'), LOVELACE_PATH, path.join(DATA_DIR,'lovelace_raw.json'),
-    ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH, DATA_IMAGES_DIR,
-    path.join(DATA_DIR,'profiles.json'), path.join(DATA_DIR,'profiles')
+    ADDON_CONFIG_PATH, PROFILES_META_PATH, PROFILES_DIR,
+    path.join(DATA_DIR,'layout.json'), path.join(DATA_DIR,'rooms.json'), path.join(DATA_DIR,'source_config.json'), path.join(DATA_DIR,'ui_state.json'),
+    path.join(DATA_DIR,'devices.js'), path.join(DATA_DIR,'devices.json'), path.join(DATA_DIR,'lovelace-source.js'), path.join(DATA_DIR,'lovelace_raw.json'), path.join(DATA_DIR,'device_parse_report.json'), path.join(DATA_DIR,'device_parse_report.md'),
+    path.join(DATA_DIR,'images'), ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH
   ];
   for(const target of removeTargets) removePathSafe(target);
+
   fs.mkdirSync(DATA_DIR, {recursive:true});
+  fs.mkdirSync(LAYOUT_BACKUP_DIR, {recursive:true});
+
+  // Сбрасываем активный runtime на единственный чистый профиль/уровень.
+  const profilesMeta = defaultProfilesMeta();
+  profilesMeta.activeProfileId = 'profile-1';
+  profilesMeta.profiles = [{ id:'profile-1', name:'Основной', createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() }];
+  atomicWriteJson(PROFILES_META_PATH, profilesMeta);
+  const levelsMeta = defaultLevelsMeta();
+  levelsMeta.activeLevelId = 'level-1';
+  levelsMeta.levels = [{ id:'level-1', name:'Основной уровень', createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() }];
+  atomicWriteJson(levelsMetaPath('profile-1'), levelsMeta);
+
+  updateActiveProfilePaths();
+  const lp = ensureLevelDirs('profile-1', 'level-1');
+  writeEmptyRuntimeBundle(lp);
+
   atomicWriteJson(ADDON_CONFIG_PATH, defaultAddonConfig());
-  atomicWriteJson(SOURCE_CONFIG_PATH, defaultSourceConfig());
-  atomicWriteJson(UI_STATE_PATH, defaultUiState());
-  atomicWriteJson(LAYOUT_PATH, emptyLayout());
-  atomicWriteJson(ROOMS_SETTINGS_PATH, defaultRoomsSettings());
   saveAttentionRules(attentionDefault());
   saveSecurityRules(securityRulesDefault());
   atomicWriteJson(COMMAND_LOG_PATH, []);
-  writeJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES', []);
-  fs.writeFileSync(LOVELACE_PATH, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+
+  // Legacy-файлы оставляем пустыми, чтобы старые миграции/кэш не подтягивали старые устройства.
+  atomicWriteJson(path.join(DATA_DIR,'source_config.json'), defaultSourceConfig());
+  atomicWriteJson(path.join(DATA_DIR,'ui_state.json'), defaultUiState());
+  atomicWriteJson(path.join(DATA_DIR,'rooms.json'), defaultRoomsSettings());
+  atomicWriteJson(path.join(DATA_DIR,'layout.json'), emptyLayout());
+  writeJsAssignedArray(path.join(DATA_DIR,'devices.js'), 'ALL_DEVICES', []);
+  atomicWriteJson(path.join(DATA_DIR,'devices.json'), []);
+  fs.writeFileSync(path.join(DATA_DIR,'lovelace-source.js'), 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  atomicWriteJson(path.join(DATA_DIR,'lovelace_raw.json'), { version:1, views:[] });
+
   ensureDataStore();
-  return { ok:true, backup:path.basename(backupDir), backedUp, config: publicConfig(loadAddonConfig()), layout: loadLayout() };
+  return { ok:true, reset:true, backup:path.basename(backupDir), backedUp, config: publicConfig(loadAddonConfig()), layout: loadLayout(), profiles: profilesDiagnostics(), levels: levelsDiagnostics() };
 }
 
 function defaultImagesMeta(){
@@ -1443,11 +1483,17 @@ app.use(express.json({limit:'1mb'}));
 app.get('/devices.js', (req,res)=>{
   const generated = DEVICES_PATH;
   const fallback = path.join(__dirname, 'public', 'devices.js');
+  res.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma','no-cache');
+  res.set('Expires','0');
   res.type('application/javascript').sendFile(fs.existsSync(generated) ? generated : fallback);
 });
 app.get('/lovelace-source.js', (req,res)=>{
   const generated = LOVELACE_PATH;
   const fallback = path.join(__dirname, 'public', 'lovelace-source.js');
+  res.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma','no-cache');
+  res.set('Expires','0');
   res.type('application/javascript').sendFile(fs.existsSync(generated) ? generated : fallback);
 });
 app.use(express.static(path.join(__dirname, 'public')));

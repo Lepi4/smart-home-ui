@@ -3081,18 +3081,38 @@ async function saveConfig(){
     setConnection(false,'Ошибка настроек');
   }
 }
+function applyFactoryResetClientState(res={}){
+  window.ALL_DEVICES = [];
+  window.DEVICES = [];
+  window.LOVELACE_SOURCE = { version:1, views:[] };
+  state.selectedRoom = 'overview';
+  state.states = {};
+  state.sourceConfig = defaultSourceConfig();
+  state.layout = res.layout || { version:8, coordinateSpace:'room-content-box', overviewRoomSync:false, roomCoordinateMigrated:{}, overviewMarkers:{}, roomMarkers:{}, overviewMetrics:{}, roomMetrics:{}, zones:{}, customNames:{} };
+  state.roomsSettings = { version:1, rooms:{}, knownRooms:[] };
+  state.images = { version:1, overview:null, rooms:{} };
+  state.profiles = res.profiles || null;
+  state.levels = res.levels || null;
+  state.ui = { ...state.ui, hideSidebar:false, hideDevicePanel:false, hideToolbar:false, kioskMode:false, showZones:true, invisibleZones:false, showMarkers:true, showSensors:true };
+  state.viewport = { overview:{zoom:1,panX:0,panY:0}, rooms:{} };
+  try{ localStorage.removeItem('ui_prefs'); localStorage.removeItem('last_view'); }catch(e){}
+  refreshRuntimeRooms();
+  applyUiPrefs();
+  render();
+}
 async function clearConfig(){
   const status=el('settings-status');
-  const message = 'Будут удалены все пользовательские настройки, комнаты, устройства, зоны, маркеры, картинки, источники Lovelace/панелей, данные импорта, Attention, dangerous-правила и пользовательский PIN. Backup автоматически не создаётся. Продолжить?';
+  const message = 'Будут удалены все пользовательские настройки, комнаты, устройства, зоны, маркеры, картинки, источники Lovelace/панелей, данные импорта, Attention, dangerous-правила и пользовательский PIN. Перед сбросом будет создан backup текущего runtime-состояния. Продолжить?';
   if(!confirm(message)) return;
   const word=window.prompt('Для полного сброса введите RESET');
   if(word !== 'RESET'){ status.textContent='Сброс отменён.'; return; }
   try{
     status.textContent='Выполняю полный сброс проекта...';
     const res=await apiJson('api/factory-reset',{method:'POST',body:JSON.stringify({confirm:'RESET'})});
+    applyFactoryResetClientState(res);
     status.textContent='Полный сброс выполнен. Backup: '+(res.backup||'создан/не требовался')+'. Перезагрузка страницы...';
-    showToast('Настройки сброшены к дефолту');
-    setTimeout(()=>location.reload(), 1200);
+    showToast('Проект полностью сброшен к дефолту');
+    setTimeout(()=>{ location.href = location.pathname + '?reset=' + Date.now(); }, 900);
   }catch(e){
     status.textContent='Ошибка полного сброса: '+e.message;
   }

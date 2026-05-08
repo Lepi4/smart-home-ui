@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.5.8.5 — factory reset runtime cleanup
+
+- Исправлен полный сброс к дефолту: теперь удаляются не только карты, но и profiles/levels, layout, zones, markers, rooms cache, devices, Lovelace sources, import data, UI state, Attention, dangerous rules, command log и пользовательский PIN.
+- После сброса создаётся один чистый профиль `Основной` и один чистый уровень `Основной уровень`.
+- `/devices.js` и `/lovelace-source.js` после reset записываются пустыми runtime-файлами и отдаются с no-cache/no-store.
+- Клиент сразу очищает `window.ALL_DEVICES`, комнаты, layout, источники и local UI state, затем перезагружает страницу с cache-busting.
+- Перед сбросом создаётся backup текущего runtime-состояния в `/data/backups/factory-reset-*`.
+- README/FAQ обновлены под v3.5.8.5.
+
 ## v3.5.8.4 — empty level image fix + profile limit 5
 
 - Исправлено переключение на новый пустой уровень: overview image теперь принудительно перечитывается после смены active level, поэтому не должна оставаться карта предыдущего уровня.
