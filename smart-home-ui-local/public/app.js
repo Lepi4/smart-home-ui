@@ -12,7 +12,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
 };
@@ -62,7 +62,7 @@ const DRAG_SUPPRESS_MS = 420;
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
 const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','debugMode']);
-const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','showZones','invisibleZones','showMarkers','showSensors']);
+const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
   const src = (cfg && cfg.ui) ? cfg.ui : cfg || {};
@@ -417,7 +417,8 @@ function applyUiPrefs(){
   const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
   const kw=el('pref-kiosk-widget'); if(kw) kw.checked=!!state.ui.kioskWidget;
   const km=el('pref-kiosk-mode'); if(km) km.checked=!!state.ui.kioskMode;
-  const ktm=el('pref-kiosk-tile-mode'); if(ktm) ktm.checked=!!state.ui.kioskTileMode;
+  const ktm=el('pref-kiosk-navigation-mode'); if(ktm) ktm.value=String(state.ui.kioskNavigationMode || (state.ui.kioskTileMode?'tiles':'switchable'));
+  const oldKtm=el('pref-kiosk-tile-mode'); if(oldKtm) oldKtm.checked=!!state.ui.kioskTileMode;
   const dbg=el('pref-debug-mode'); if(dbg) dbg.checked=!!state.ui.debugMode;
   const kal=el('pref-kiosk-autolock'); if(kal) kal.checked=!!state.ui.kioskAutoLock;
   const kas=el('pref-kiosk-autolock-seconds'); if(kas) kas.value=String(Number(state.ui.kioskAutoLockSeconds||15));
@@ -949,6 +950,23 @@ function cancelEditChanges(){
 }
 
 
+function kioskNavigationMode(){
+  const mode=String(state.ui.kioskNavigationMode || 'switchable');
+  return ['maps','tiles','switchable'].includes(mode) ? mode : 'switchable';
+}
+function kioskEffectiveTileNavigation(){
+  const mode=kioskNavigationMode();
+  if(mode==='tiles') return true;
+  if(mode==='maps') return false;
+  return !!state.ui.kioskTileMode;
+}
+function kioskShouldShowSwitcher(){
+  return state.ui.kioskMode && kioskNavigationMode()==='switchable';
+}
+function kioskRoomTilesActive(){
+  return !!(state.ui.kioskMode && kioskEffectiveTileNavigation() && state.selectedRoom && state.selectedRoom!=='overview');
+}
+
 function pointInPolyPct(point, points){
   const pts=sanitizeZonePoints(points);
   if(!point || pts.length<3) return false;
@@ -1003,26 +1021,13 @@ function groupDevicesByRoomForKioskTile(list){
   })).filter(g=>g.items.length);
 }
 function placedKioskTileDevices(){
-  // Room filter is opened from the kiosk room list: it is a room device list,
-  // not the overview dashboard. Default tile dashboard stays overview-only.
-  const filter=normalizedRoomId(state.kioskTileRoomFilter||'');
-  if(filter && filter!=='overview'){
-    const all=devices().filter(d=>normalizedRoomId(effectiveDeviceRoomId(d) || d.room || inferRoomIdFromDevice(d))===filter && IMPORTANT_DOMAINS.has(d.domain));
-    return groupDevicesByRoomForKioskTile(all);
-  }
-  const overviewMarkers=state.layout.overviewMarkers||{};
-  const list=[];
-  const seen=new Set();
-  Object.keys(overviewMarkers).forEach(entity=>{
-    if(seen.has(entity)) return;
-    const d=devices().find(x=>x.entity_id===entity);
-    if(!d || !IMPORTANT_DOMAINS.has(d.domain)) return;
-    seen.add(entity);
-    const point=overviewMarkers[entity] || {};
-    const zoneRoom=roomIdFromOverviewMarkerPoint(point);
-    list.push({...d, __kioskTileRoom: zoneRoom || effectiveDeviceRoomId(d) || d.room || inferRoomIdFromDevice(d) || '__noroom'});
-  });
-  return groupDevicesByRoomForKioskTile(list);
+  // Kiosk cards are no longer a separate overview dashboard. The main screen
+  // remains the same overview map. In tile navigation mode a selected room is
+  // opened as a readable card screen with all devices from that room.
+  const rid=normalizedRoomId(state.selectedRoom||'overview');
+  if(!rid || rid==='overview') return [];
+  const list=devices().filter(d=>normalizedRoomId(effectiveDeviceRoomId(d) || d.room || inferRoomIdFromDevice(d))===rid && IMPORTANT_DOMAINS.has(d.domain));
+  return [{id:rid, label:roomGroupLabel(rid), items:list.slice().sort((a,b)=>displayName(a).localeCompare(displayName(b),'ru'))}].filter(g=>g.items.length);
 }
 function kioskTileDeviceHtml(d){
   const st=stateText(d);
@@ -1073,25 +1078,20 @@ function renderKioskTiles(){
   const view=el('kiosk-tile-view');
   const pages=el('kiosk-tile-pages');
   const pager=el('kiosk-tile-pager');
-  const active=!!(state.ui.kioskMode && state.ui.kioskTileMode);
+  const active=kioskRoomTilesActive();
   if(view) view.classList.toggle('hidden', !active);
   document.body.classList.toggle('kiosk-tiles-active', active);
-  const sw=el('kiosk-view-switcher'); if(sw) sw.classList.toggle('hidden', !state.ui.kioskMode);
-  const mapBtn=el('btn-kiosk-map-mode'); if(mapBtn) mapBtn.classList.toggle('active', !state.ui.kioskTileMode);
-  const tileBtn=el('btn-kiosk-tile-mode'); if(tileBtn) tileBtn.classList.toggle('active', !!state.ui.kioskTileMode);
+  const sw=el('kiosk-view-switcher'); if(sw) sw.classList.toggle('hidden', !kioskShouldShowSwitcher());
+  const mapBtn=el('btn-kiosk-map-mode'); if(mapBtn) mapBtn.classList.toggle('active', !kioskEffectiveTileNavigation());
+  const tileBtn=el('btn-kiosk-tile-mode'); if(tileBtn) tileBtn.classList.toggle('active', !!kioskEffectiveTileNavigation());
   if(!active || !pages) return;
   const groups=placedKioskTileDevices();
   const roomFilter=normalizedRoomId(state.kioskTileRoomFilter||'');
   const head=view?.querySelector('.kiosk-tile-head');
   if(head){
-    if(roomFilter && roomFilter!=='overview'){
-      head.innerHTML=`<h2>Устройства: ${esc(roomGroupLabel(roomFilter))}</h2><p>Список всех устройств выбранной комнаты. Кнопка “Комнаты” выбирает другую комнату, “Общий план” возвращает карту.</p><button type="button" class="kiosk-tile-back" id="btn-kiosk-tile-clear-room">Плитки общего плана</button>`;
-    }else{
-      head.innerHTML='<h2>Карточки устройств</h2><p>Только устройства, размещённые на общем плане. Редактирование выполняется на карте.</p>';
-    }
-    const clear=el('btn-kiosk-tile-clear-room'); if(clear) clear.onclick=()=>{ state.kioskTileRoomFilter=''; state.kioskTilePage=0; render(); };
+    head.innerHTML=`<h2>${esc(roomGroupLabel(state.selectedRoom))}</h2><p>Карточки устройств этой комнаты. “Общий план” возвращает на основную карту.</p>`;
   }
-  if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">Нет устройств для отображения. Основной экран карточек строится только из маркеров overview-карты.</div>'; if(pager) pager.innerHTML=''; return; }
+  if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">В этой комнате нет устройств для отображения. Проверьте источники Lovelace/HA Area или назначение комнаты.</div>'; if(pager) pager.innerHTML=''; return; }
 
   const totalDevices=groups.reduce((sum,g)=>sum+g.items.length,0);
   const vw=Math.max(320, window.innerWidth || 1280);
@@ -2695,8 +2695,9 @@ function renderKioskRoomOverlay(){
     b.className='kiosk-room-item'+(normalizedRoomId(state.selectedRoom)===normalizedRoomId(r.id)?' active':'');
     b.textContent=r.label;
     b.onclick=()=>{
-      if(state.ui.kioskMode && state.ui.kioskTileMode){ state.kioskTileRoomFilter=r.id; state.kioskTilePage=0; hideKioskRooms(); render(); }
-      else { selectRoom(r.id); hideKioskRooms(); }
+      state.kioskTilePage=0;
+      selectRoom(r.id);
+      hideKioskRooms();
     };
     list.appendChild(b);
   });
@@ -2754,12 +2755,12 @@ function renderLevelSwitcher(){
   const active=activeLevelMeta();
   const others=levels.filter(l=>l.id !== active.id);
   const levelHtml = levels.length > 1 ? others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
-  const overviewHtml = (state.ui.kioskMode && !state.ui.kioskTileMode && state.selectedRoom!=='overview') ? '<button type="button" class="level-switch-btn overview-switch-btn" data-kiosk-overview-home="1">Общий план</button>' : '';
+  const overviewHtml = (state.ui.kioskMode && state.selectedRoom!=='overview') ? '<button type="button" class="level-switch-btn overview-switch-btn" data-kiosk-overview-home="1">Общий план</button>' : '';
   const html = overviewHtml + levelHtml;
   ['level-switcher','kiosk-level-switcher'].forEach(id=>{
     const box=el(id);
     if(!box) return;
-    const useHtml = (state.ui.kioskMode && state.ui.kioskTileMode) ? '' : html;
+    const useHtml = html;
     box.innerHTML=useHtml;
     box.classList.toggle('hidden', !useHtml);
   });
@@ -4121,7 +4122,7 @@ function bindGlobal(){
   const exitKiosk=el('btn-exit-kiosk');
   if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.kioskTileRoomFilter=''; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
   const kioskMapMode=el('btn-kiosk-map-mode'); if(kioskMapMode) kioskMapMode.onclick=()=>{ state.ui.kioskTileMode=false; state.kioskTileRoomFilter=''; saveUiPrefs(); render(); };
-  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTileRoomFilter=''; state.kioskTilePage=0; saveUiPrefs(); render(); const groups=placedKioskTileDevices(); if(!groups.length) showToast('Карточки строятся только из устройств, размещённых на общем плане'); };
+  const kioskTileMode=el('btn-kiosk-tile-mode'); if(kioskTileMode) kioskTileMode.onclick=()=>{ state.ui.kioskTileMode=true; state.kioskTileRoomFilter=''; state.kioskTilePage=0; saveUiPrefs(); render(); if(state.selectedRoom==='overview') showToast('Выберите комнату: в режиме “Плитки” комната откроется карточками'); };
   const kioskAttention=el('btn-kiosk-attention'); if(kioskAttention) kioskAttention.onclick=openAttentionModal;
   const closeAttention=el('btn-close-attention'); if(closeAttention) closeAttention.onclick=closeAttentionModal;
   const attentionModal=el('attention-modal'); if(attentionModal) attentionModal.addEventListener('click',e=>{ if(e.target.id==='attention-modal') closeAttentionModal(); });
@@ -4140,7 +4141,8 @@ function bindGlobal(){
   const dbgPref=el('pref-debug-mode'); if(dbgPref) dbgPref.onchange=e=>{state.ui.debugMode=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const invZones=el('pref-invisible-zones'); if(invZones) invZones.onchange=e=>{state.ui.invisibleZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();};
   el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render(); resetKioskAutoLock();};
-  const ktp=el('pref-kiosk-tile-mode'); if(ktp) ktp.onchange=e=>{ state.ui.kioskTileMode=!!e.target.checked; state.kioskTilePage=0; saveUiPrefs(); render(); };
+  const ktp=el('pref-kiosk-navigation-mode'); if(ktp) ktp.onchange=e=>{ state.ui.kioskNavigationMode=e.target.value; if(e.target.value==='maps') state.ui.kioskTileMode=false; if(e.target.value==='tiles') state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); applyUiPrefs(); render(); };
+  const oldKtp=el('pref-kiosk-tile-mode'); if(oldKtp) oldKtp.onchange=e=>{ state.ui.kioskTileMode=!!e.target.checked; state.kioskTilePage=0; saveUiPrefs(); render(); };
   const pal=el('pref-kiosk-autolock'); if(pal) pal.onchange=e=>{state.ui.kioskAutoLock=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();};
