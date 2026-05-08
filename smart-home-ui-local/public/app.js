@@ -991,16 +991,38 @@ function renderKioskTiles(){
   if(!active || !pages) return;
   const groups=placedKioskTileDevices();
   if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">Нет устройств, размещённых на общем плане. Карточки строятся только из маркеров overview-карты.</div>'; if(pager) pager.innerHTML=''; return; }
-  const perPage=24;
-  const flat=[];
-  groups.forEach(g=>flat.push({type:'head',label:g.label}, ...g.items.map(d=>({type:'device',d}))));
-  const chunks=[]; for(let i=0;i<flat.length;i+=perPage) chunks.push(flat.slice(i,i+perPage));
-  state.kioskTilePage=clamp(Number(state.kioskTilePage||0),0,Math.max(0,chunks.length-1));
-  pages.innerHTML=chunks.map((chunk,i)=>`<div class="kiosk-tile-page ${i===state.kioskTilePage?'active':''}">${chunk.map(x=>x.type==='head'?`<h3 class="kiosk-tile-room">${esc(x.label)}</h3>`:kioskTileDeviceHtml(x.d)).join('')}</div>`).join('');
-  if(pager){ pager.innerHTML=chunks.length>1?`<button type="button" id="btn-kiosk-tile-prev">‹</button><span>${state.kioskTilePage+1} / ${chunks.length}</span><button type="button" id="btn-kiosk-tile-next">›</button>`:''; }
+
+  const totalDevices=groups.reduce((sum,g)=>sum+g.items.length,0);
+  const groupCount=groups.length;
+  const vw=Math.max(320, window.innerWidth || 1280);
+  const vh=Math.max(320, window.innerHeight || 720);
+  const headerReserve = vw < 720 ? 96 : 76;
+  const footerReserve = vw < 720 ? 76 : 58;
+  const availableH=Math.max(260, vh - headerReserve - footerReserve);
+  const availableW=Math.max(300, vw - 28);
+  let cols=clamp(Math.ceil(Math.sqrt(Math.max(1,totalDevices) * availableW / Math.max(1,availableH*1.35))), vw<760?2:3, vw>1600?8:7);
+  let best={cols, tileH:86, rows:999};
+  for(let c=cols;c<=9;c++){
+    const deviceRows=groups.reduce((sum,g)=>sum+Math.ceil(g.items.length/c),0);
+    const rows=deviceRows + groupCount;
+    const gap=c>=7?6:8;
+    const headH=c>=7?26:32;
+    const tileH=Math.floor((availableH - (groupCount*headH) - (rows*gap)) / Math.max(1,deviceRows));
+    if(tileH>=54){ best={cols:c,tileH:Math.min(112,tileH),rows}; break; }
+    best={cols:c,tileH:Math.max(44,tileH),rows};
+  }
+  const compact = best.tileH < 72 || totalDevices > 24;
+  if(view){
+    view.style.setProperty('--kt-cols', String(best.cols));
+    view.style.setProperty('--kt-tile-h', `${best.tileH}px`);
+    view.style.setProperty('--kt-gap', compact ? '6px' : '9px');
+    view.classList.toggle('kiosk-tiles-compact', compact);
+    view.classList.toggle('kiosk-tiles-ultra', best.tileH < 58);
+  }
+
+  pages.innerHTML=`<div class="kiosk-tile-page active">${groups.map(g=>`<h3 class="kiosk-tile-room">${esc(g.label)}</h3>${g.items.map(d=>kioskTileDeviceHtml(d)).join('')}`).join('')}</div>`;
+  if(pager) pager.innerHTML='';
   qsa('[data-kiosk-tile-device]', pages).forEach(btn=>{ const d=devices().find(x=>x.entity_id===btn.dataset.kioskTileDevice); if(d) attachPressActions(btn,d); });
-  const prev=el('btn-kiosk-tile-prev'); if(prev) prev.onclick=()=>{ state.kioskTilePage=Math.max(0,(state.kioskTilePage||0)-1); renderKioskTiles(); };
-  const next=el('btn-kiosk-tile-next'); if(next) next.onclick=()=>{ state.kioskTilePage=Math.min(chunks.length-1,(state.kioskTilePage||0)+1); renderKioskTiles(); };
 }
 
 function render(){
@@ -2617,7 +2639,7 @@ function renderLevelSwitcher(){
   const levels=currentLevelList();
   const active=activeLevelMeta();
   const others=levels.filter(l=>l.id !== active.id);
-  const html = levels.length > 1 ? `<span class="level-current">${esc(active.name||active.id||'Уровень')}</span>` + others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
+  const html = levels.length > 1 ? others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
   ['level-switcher','kiosk-level-switcher'].forEach(id=>{ const box=el(id); if(box){ box.innerHTML=html; box.classList.toggle('hidden', !html); } });
 }
 async function loadRuntimeScripts(){

@@ -1767,3 +1767,31 @@ body.kiosk-mode .kiosk-view-switcher:not(.hidden){display:flex!important}
 .kiosk-tile-device.light-on,.kiosk-tile-device.switch-on,.kiosk-tile-device.climate-heat,.kiosk-tile-device.climate-cool,.kiosk-tile-device.climate-fan,.kiosk-tile-device.climate-on,.kiosk-tile-device.cover-state-open,.kiosk-tile-device.window-state-open,.kiosk-tile-device.leak-state-leak,.kiosk-tile-device.media-state-playing{border-color:rgba(255,255,255,.34);}
 .kiosk-tile-device.unavailable-visual{animation:unavailablePulse 1.25s ease-in-out infinite;}
 @media (max-width:720px){.kiosk-tile-page{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));}.kiosk-tile-device{min-height:104px;grid-template-columns:48px 1fr;padding:12px}.kiosk-tile-state{grid-column:1/3}.kiosk-tile-icon{width:46px;height:46px;border-radius:15px}.kiosk-tile-name{font-size:15px}}
+
+
+/* v3.5.9.6 — kiosk tiles must fit screen without scroll, no duplicate level buttons in card view */
+body.kiosk-tiles-active{overflow:hidden;}
+body.kiosk-tiles-active .kiosk-level-switcher{display:none!important;}
+.kiosk-tile-view{overflow:hidden!important;padding:58px 14px 62px!important;}
+.kiosk-tile-head{margin-bottom:6px!important;}
+.kiosk-tile-head h2{font-size:clamp(20px,3.2vw,34px)!important;line-height:1.05;}
+.kiosk-tile-head p{font-size:clamp(11px,1.2vw,15px);line-height:1.25;margin-top:4px!important;}
+.kiosk-tile-pages{height:calc(100vh - 126px);overflow:hidden;}
+.kiosk-tile-page.active{display:grid!important;grid-template-columns:repeat(var(--kt-cols,6),minmax(0,1fr))!important;gap:var(--kt-gap,8px)!important;align-content:start;grid-auto-flow:row;}
+.kiosk-tile-room{min-height:26px;margin:0!important;padding:4px 10px!important;border-radius:12px!important;font-size:clamp(12px,1.45vw,19px)!important;line-height:1.05;display:flex;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.kiosk-tile-device{height:var(--kt-tile-h,86px)!important;min-height:var(--kt-tile-h,86px)!important;padding:8px 10px!important;border-radius:16px!important;grid-template-columns:minmax(34px,46px) minmax(0,1fr)!important;grid-template-rows:1fr auto!important;gap:4px 8px!important;}
+.kiosk-tile-icon{width:calc(var(--kt-tile-h,86px) * .46)!important;height:calc(var(--kt-tile-h,86px) * .46)!important;min-width:30px;min-height:30px;border-radius:12px!important;font-size:clamp(17px,1.8vw,24px)!important;}
+.kiosk-tile-icon .icon-svg{width:clamp(17px,1.8vw,24px)!important;height:clamp(17px,1.8vw,24px)!important;}
+.kiosk-tile-name{font-size:clamp(12px,1.35vw,18px)!important;line-height:1.05!important;}
+.kiosk-tile-room-name{font-size:clamp(10px,1vw,13px)!important;margin-top:2px!important;}
+.kiosk-tile-state{grid-column:2/3!important;font-size:clamp(10px,1vw,13px)!important;padding:3px 7px!important;line-height:1.05;}
+.kiosk-tiles-compact .kiosk-tile-head p{display:none;}
+.kiosk-tiles-compact .kiosk-tile-view,.kiosk-tile-view.kiosk-tiles-compact{padding-top:50px!important;}
+.kiosk-tiles-compact .kiosk-tile-pages{height:calc(100vh - 108px);}
+.kiosk-tiles-compact .kiosk-tile-room{font-size:clamp(11px,1.15vw,15px)!important;min-height:22px;}
+.kiosk-tiles-compact .kiosk-tile-device{border-radius:13px!important;padding:6px 8px!important;}
+.kiosk-tiles-ultra .kiosk-tile-room-name{display:none;}
+.kiosk-tiles-ultra .kiosk-tile-icon{width:30px!important;height:30px!important;}
+.kiosk-tiles-ultra .kiosk-tile-name{font-size:12px!important;}
+.kiosk-tiles-ultra .kiosk-tile-state{font-size:10px!important;padding:2px 5px!important;}
+@media (max-width:720px){.kiosk-tile-view{padding-top:82px!important}.kiosk-tile-pages{height:calc(100vh - 148px)}.kiosk-tile-page.active{grid-template-columns:repeat(var(--kt-cols,3),minmax(0,1fr))!important}.kiosk-tile-device{grid-template-columns:34px minmax(0,1fr)!important}.kiosk-tile-icon{width:30px!important;height:30px!important}.kiosk-tile-name{font-size:12px!important}.kiosk-tile-state{font-size:10px!important}}
