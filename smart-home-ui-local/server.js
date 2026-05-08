@@ -19,10 +19,12 @@ const PROFILES_DIR = path.join(DATA_DIR, 'profiles');
 const PROFILES_META_PATH = path.join(DATA_DIR, 'profiles.json');
 let ACTIVE_PROFILE_ID = 'profile-1';
 let ACTIVE_PROFILE_DIR = path.join(PROFILES_DIR, ACTIVE_PROFILE_ID);
-let LAYOUT_PATH = path.join(ACTIVE_PROFILE_DIR, 'layout.json');
-let SOURCE_CONFIG_PATH = path.join(ACTIVE_PROFILE_DIR, 'source_config.json');
-let UI_STATE_PATH = path.join(ACTIVE_PROFILE_DIR, 'ui_state.json');
-let DATA_IMAGES_DIR = path.join(ACTIVE_PROFILE_DIR, 'images');
+let ACTIVE_LEVEL_ID = 'level-1';
+let ACTIVE_LEVEL_DIR = path.join(ACTIVE_PROFILE_DIR, 'levels', ACTIVE_LEVEL_ID);
+let LAYOUT_PATH = path.join(ACTIVE_LEVEL_DIR, 'layout.json');
+let SOURCE_CONFIG_PATH = path.join(ACTIVE_LEVEL_DIR, 'source_config.json');
+let UI_STATE_PATH = path.join(ACTIVE_LEVEL_DIR, 'ui_state.json');
+let DATA_IMAGES_DIR = path.join(ACTIVE_LEVEL_DIR, 'images');
 let DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview');
 let DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
 let DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
@@ -32,12 +34,12 @@ const DEFAULT_OVERVIEW_IMAGE = null;
 const DEFAULT_ROOM_IMAGE = null;
 const ATTENTION_RULES_PATH = path.join(DATA_DIR, 'attention_rules.json');
 const SECURITY_RULES_PATH = path.join(DATA_DIR, 'security_rules.json');
-let ROOMS_SETTINGS_PATH = path.join(ACTIVE_PROFILE_DIR, 'rooms.json');
+let ROOMS_SETTINGS_PATH = path.join(ACTIVE_LEVEL_DIR, 'rooms.json');
 
-let DEVICES_PATH = path.join(ACTIVE_PROFILE_DIR, 'devices.js');
-let LOVELACE_PATH = path.join(ACTIVE_PROFILE_DIR, 'lovelace-source.js');
+let DEVICES_PATH = path.join(ACTIVE_LEVEL_DIR, 'devices.js');
+let LOVELACE_PATH = path.join(ACTIVE_LEVEL_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.7';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.8';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -172,19 +174,23 @@ function updateActiveProfilePaths(){
   const meta = loadProfilesMeta();
   ACTIVE_PROFILE_ID = meta.activeProfileId || 'profile-1';
   ACTIVE_PROFILE_DIR = path.join(PROFILES_DIR, ACTIVE_PROFILE_ID);
-  LAYOUT_PATH = path.join(ACTIVE_PROFILE_DIR, 'layout.json');
-  SOURCE_CONFIG_PATH = path.join(ACTIVE_PROFILE_DIR, 'source_config.json');
-  UI_STATE_PATH = path.join(ACTIVE_PROFILE_DIR, 'ui_state.json');
-  DATA_IMAGES_DIR = path.join(ACTIVE_PROFILE_DIR, 'images');
+  const levels = initializeLevelsStorage(ACTIVE_PROFILE_ID);
+  ACTIVE_LEVEL_ID = levels.activeLevelId || 'level-1';
+  const lp = ensureLevelDirs(ACTIVE_PROFILE_ID, ACTIVE_LEVEL_ID);
+  ACTIVE_LEVEL_DIR = lp.dir;
+  LAYOUT_PATH = lp.layout;
+  SOURCE_CONFIG_PATH = lp.sourceConfig;
+  UI_STATE_PATH = lp.uiState;
+  DATA_IMAGES_DIR = lp.images;
   DATA_IMAGES_OVERVIEW_DIR = path.join(DATA_IMAGES_DIR, 'overview');
   DATA_IMAGES_ROOMS_DIR = path.join(DATA_IMAGES_DIR, 'rooms');
   DATA_IMAGES_ORIGINALS_DIR = path.join(DATA_IMAGES_DIR, 'originals');
   DATA_IMAGES_ORIGINALS_ROOMS_DIR = path.join(DATA_IMAGES_ORIGINALS_DIR, 'rooms');
   IMAGES_META_PATH = path.join(DATA_IMAGES_DIR, 'images_meta.json');
-  ROOMS_SETTINGS_PATH = path.join(ACTIVE_PROFILE_DIR, 'rooms.json');
-  DEVICES_PATH = path.join(ACTIVE_PROFILE_DIR, 'devices.js');
-  LOVELACE_PATH = path.join(ACTIVE_PROFILE_DIR, 'lovelace-source.js');
-  return { meta, paths: profilePaths(ACTIVE_PROFILE_ID) };
+  ROOMS_SETTINGS_PATH = lp.rooms;
+  DEVICES_PATH = lp.devicesJs;
+  LOVELACE_PATH = lp.lovelaceJs;
+  return { meta, levels, paths: lp };
 }
 function profilePaths(id){
   const profileId = sanitizeProfileId(id);
@@ -207,6 +213,98 @@ function profilePaths(id){
     deviceParseReportMd: path.join(dir, 'device_parse_report.md')
   };
 }
+
+function sanitizeLevelId(id){
+  return String(id||'level-1').replace(/[^a-z0-9_-]/gi,'-').toLowerCase() || 'level-1';
+}
+function levelsMetaPath(profileId){ return path.join(profilePaths(profileId).dir, 'levels.json'); }
+function defaultLevelsMeta(){
+  return { version: 1, activeLevelId: 'level-1', levels: [ { id:'level-1', name:'Основной уровень', createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() } ] };
+}
+function normalizeLevelsMeta(raw){
+  const def = defaultLevelsMeta();
+  const list = Array.isArray(raw?.levels) ? raw.levels : def.levels;
+  const seen = new Set();
+  const levels = [];
+  for(const l of list){
+    if(!l || typeof l !== 'object') continue;
+    const id = sanitizeLevelId(l.id);
+    if(!id || seen.has(id)) continue;
+    seen.add(id);
+    levels.push({
+      id,
+      name: String(l.name || (id === 'level-1' ? 'Основной уровень' : id)).slice(0,80),
+      createdAt: l.createdAt || new Date().toISOString(),
+      updatedAt: l.updatedAt || null
+    });
+    if(levels.length >= 12) break;
+  }
+  if(!levels.length) levels.push(def.levels[0]);
+  const active = sanitizeLevelId(raw?.activeLevelId || levels[0].id);
+  const activeLevelId = levels.some(l=>l.id===active) ? active : levels[0].id;
+  return { version: Number(raw?.version)||1, activeLevelId, levels };
+}
+function loadLevelsMeta(profileId=ACTIVE_PROFILE_ID){
+  return normalizeLevelsMeta(readJsonSafe(levelsMetaPath(profileId), defaultLevelsMeta()));
+}
+function saveLevelsMeta(profileId, meta){
+  const normalized = normalizeLevelsMeta(meta);
+  atomicWriteJson(levelsMetaPath(profileId), normalized);
+  return normalized;
+}
+function levelPaths(profileId, levelId){
+  const profile = profilePaths(profileId);
+  const lid = sanitizeLevelId(levelId);
+  const dir = path.join(profile.dir, 'levels', lid);
+  const images = path.join(dir, 'images');
+  return {
+    profileId: profile.id,
+    id: lid,
+    dir,
+    layout: path.join(dir, 'layout.json'),
+    rooms: path.join(dir, 'rooms.json'),
+    sourceConfig: path.join(dir, 'source_config.json'),
+    uiState: path.join(dir, 'ui_state.json'),
+    images,
+    imagesMeta: path.join(images, 'images_meta.json'),
+    devicesJs: path.join(dir, 'devices.js'),
+    devicesJson: path.join(dir, 'devices.json'),
+    lovelaceJs: path.join(dir, 'lovelace-source.js'),
+    lovelaceRaw: path.join(dir, 'lovelace_raw.json'),
+    deviceParseReportJson: path.join(dir, 'device_parse_report.json'),
+    deviceParseReportMd: path.join(dir, 'device_parse_report.md')
+  };
+}
+function ensureLevelDirs(profileId, levelId){
+  const lp = levelPaths(profileId, levelId);
+  fs.mkdirSync(lp.dir, {recursive:true});
+  fs.mkdirSync(lp.images, {recursive:true});
+  fs.mkdirSync(path.join(lp.images,'overview'), {recursive:true});
+  fs.mkdirSync(path.join(lp.images,'rooms'), {recursive:true});
+  fs.mkdirSync(path.join(lp.images,'originals'), {recursive:true});
+  fs.mkdirSync(path.join(lp.images,'originals','rooms'), {recursive:true});
+  return lp;
+}
+function initializeLevelsStorage(profileId){
+  const pp = ensureProfileDirs(profileId);
+  let meta = fs.existsSync(levelsMetaPath(profileId)) ? loadLevelsMeta(profileId) : defaultLevelsMeta();
+  if(!fs.existsSync(levelsMetaPath(profileId))) atomicWriteJson(levelsMetaPath(profileId), meta);
+  for(const l of meta.levels) ensureLevelDirs(profileId, l.id);
+  const l1 = ensureLevelDirs(profileId, 'level-1');
+  // Миграция v3.5.7: данные лежали прямо в profile-N/. Переносим их в первый уровень.
+  copyIfExists(pp.layout, l1.layout);
+  copyIfExists(pp.rooms, l1.rooms);
+  copyIfExists(pp.sourceConfig, l1.sourceConfig);
+  copyIfExists(pp.uiState, l1.uiState);
+  copyIfExists(pp.images, l1.images);
+  copyIfExists(pp.devicesJs, l1.devicesJs);
+  copyIfExists(pp.devicesJson, l1.devicesJson);
+  copyIfExists(pp.lovelaceJs, l1.lovelaceJs);
+  copyIfExists(pp.lovelaceRaw, l1.lovelaceRaw);
+  copyIfExists(pp.deviceParseReportJson, l1.deviceParseReportJson);
+  return loadLevelsMeta(profileId);
+}
+function activeLevelPaths(){ return levelPaths(ACTIVE_PROFILE_ID, ACTIVE_LEVEL_ID); }
 function ensureProfileDirs(id){
   const pp = profilePaths(id);
   fs.mkdirSync(pp.dir, {recursive:true});
@@ -225,7 +323,7 @@ function initializeProfilesStorage(){
   fs.mkdirSync(PROFILES_DIR, {recursive:true});
   let meta = fs.existsSync(PROFILES_META_PATH) ? loadProfilesMeta() : defaultProfilesMeta();
   if(!fs.existsSync(PROFILES_META_PATH)) atomicWriteJson(PROFILES_META_PATH, meta);
-  for(const p of meta.profiles) ensureProfileDirs(p.id);
+  for(const p of meta.profiles){ ensureProfileDirs(p.id); initializeLevelsStorage(p.id); }
   const p1 = profilePaths('profile-1');
   ensureProfileDirs('profile-1');
   copyIfExists(path.join(DATA_DIR,'layout.json'), p1.layout);
@@ -254,9 +352,136 @@ function profilesDiagnostics(){
       active: p.id === meta.activeProfileId,
       exists: fs.existsSync(profilePaths(p.id).dir)
     })),
-    activePaths: profilePaths(meta.activeProfileId)
+    activePaths: levelPaths(meta.activeProfileId, loadLevelsMeta(meta.activeProfileId).activeLevelId),
+    activeLevelId: loadLevelsMeta(meta.activeProfileId).activeLevelId
   };
 }
+
+function levelsDiagnostics(profileId=ACTIVE_PROFILE_ID){
+  const pid = sanitizeProfileId(profileId);
+  const meta = loadLevelsMeta(pid);
+  return {
+    profileId: pid,
+    metaPath: levelsMetaPath(pid),
+    activeLevelId: meta.activeLevelId,
+    count: meta.levels.length,
+    max: 12,
+    levels: meta.levels.map(l=>({
+      ...l,
+      active: l.id === meta.activeLevelId,
+      dir: levelPaths(pid, l.id).dir,
+      exists: fs.existsSync(levelPaths(pid, l.id).dir)
+    })),
+    activePaths: levelPaths(pid, meta.activeLevelId)
+  };
+}
+function nextLevelId(profileId){
+  const meta = loadLevelsMeta(profileId);
+  let n=1, id;
+  do { id = 'level-' + (++n); } while(meta.levels.some(l=>l.id===id) && n < 99);
+  return id;
+}
+function createLevel(payload={}){
+  const pid = ACTIVE_PROFILE_ID;
+  const meta = loadLevelsMeta(pid);
+  if(meta.levels.length >= 12) throw new Error('Слишком много уровней/областей');
+  const id = nextLevelId(pid);
+  const name = String(payload.name || `Уровень ${meta.levels.length + 1}`).trim().slice(0,80) || `Уровень ${meta.levels.length + 1}`;
+  const lp = ensureLevelDirs(pid, id);
+  const baseLayout = emptyLayout();
+  const currentLayout = normalizeLayoutPayload(loadLayout(), {strict:false}).layout;
+  if(payload.duplicateZones) baseLayout.zones = currentLayout.zones || {};
+  if(payload.duplicateMarkers){
+    baseLayout.overviewMarkers = currentLayout.overviewMarkers || {};
+    baseLayout.roomMarkers = currentLayout.roomMarkers || {};
+    baseLayout.overviewMetrics = currentLayout.overviewMetrics || {};
+    baseLayout.roomMetrics = currentLayout.roomMetrics || {};
+    baseLayout.customNames = currentLayout.customNames || {};
+  }
+  atomicWriteJson(lp.layout, baseLayout);
+  if(payload.duplicateImages) copyPathRecursive(DATA_IMAGES_DIR, lp.images); else atomicWriteJson(lp.imagesMeta, defaultImagesMeta());
+  if(payload.duplicateSources){
+    copyIfExists(SOURCE_CONFIG_PATH, lp.sourceConfig);
+    copyIfExists(DEVICES_PATH, lp.devicesJs);
+    copyIfExists(activeLevelPaths().devicesJson, lp.devicesJson);
+    copyIfExists(LOVELACE_PATH, lp.lovelaceJs);
+    copyIfExists(activeLevelPaths().lovelaceRaw, lp.lovelaceRaw);
+  }
+  if(!fs.existsSync(lp.rooms)) atomicWriteJson(lp.rooms, defaultRoomsSettings());
+  if(!fs.existsSync(lp.sourceConfig)) atomicWriteJson(lp.sourceConfig, defaultSourceConfig());
+  if(!fs.existsSync(lp.uiState)) atomicWriteJson(lp.uiState, defaultUiState());
+  if(!fs.existsSync(lp.devicesJs)) writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
+  if(!fs.existsSync(lp.lovelaceJs)) fs.writeFileSync(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  const now = new Date().toISOString();
+  meta.levels.push({id, name, createdAt:now, updatedAt:now});
+  saveLevelsMeta(pid, meta);
+  return levelsDiagnostics(pid);
+}
+function duplicateLevel(levelId, payload={}){
+  const pid = ACTIVE_PROFILE_ID;
+  const meta = loadLevelsMeta(pid);
+  const srcId = sanitizeLevelId(levelId || meta.activeLevelId);
+  const srcMeta = meta.levels.find(l=>l.id===srcId);
+  if(!srcMeta) throw new Error('Исходный уровень не найден');
+  const newId = nextLevelId(pid);
+  const src = levelPaths(pid, srcId), dst = levelPaths(pid, newId);
+  copyPathRecursive(src.dir, dst.dir);
+  const now = new Date().toISOString();
+  const name = String(payload.name || `Копия ${srcMeta.name}`).trim().slice(0,80) || `Копия ${srcMeta.name}`;
+  meta.levels.push({id:newId, name, createdAt:now, updatedAt:now});
+  saveLevelsMeta(pid, meta);
+  return levelsDiagnostics(pid);
+}
+function backupLevelDirectory(profileId, levelId, reason='level-backup'){
+  const lp = levelPaths(profileId, levelId);
+  if(!fs.existsSync(lp.dir)) return null;
+  const stamp = timestampForFile();
+  const backupDir = path.join(LAYOUT_BACKUP_DIR, 'levels', `${sanitizeProfileId(profileId)}-${sanitizeLevelId(levelId)}-${String(reason).replace(/[^a-z0-9_-]/gi,'-')}-${stamp}`);
+  copyPathRecursive(lp.dir, backupDir);
+  return backupDir;
+}
+function activateLevel(levelId){
+  const pid = ACTIVE_PROFILE_ID;
+  const meta = loadLevelsMeta(pid);
+  const id = sanitizeLevelId(levelId);
+  if(!meta.levels.some(l=>l.id===id)) throw new Error('Уровень не найден');
+  meta.activeLevelId = id;
+  for(const l of meta.levels) if(l.id===id) l.updatedAt = new Date().toISOString();
+  saveLevelsMeta(pid, meta);
+  updateActiveProfilePaths();
+  ensureDataStore();
+  return levelsDiagnostics(pid);
+}
+function patchLevel(levelId, payload={}){
+  const pid = ACTIVE_PROFILE_ID;
+  const meta = loadLevelsMeta(pid);
+  const id = sanitizeLevelId(levelId);
+  const l = meta.levels.find(x=>x.id===id);
+  if(!l) throw new Error('Уровень не найден');
+  if(payload.name !== undefined) l.name = String(payload.name || l.name).trim().slice(0,80) || l.name;
+  l.updatedAt = new Date().toISOString();
+  saveLevelsMeta(pid, meta);
+  return levelsDiagnostics(pid);
+}
+function deleteLevel(levelId){
+  const pid = ACTIVE_PROFILE_ID;
+  const meta = loadLevelsMeta(pid);
+  const id = sanitizeLevelId(levelId);
+  if(meta.levels.length <= 1) throw new Error('Нельзя удалить последний уровень');
+  const idx = meta.levels.findIndex(l=>l.id===id);
+  if(idx < 0) throw new Error('Уровень не найден');
+  const backup = backupLevelDirectory(pid, id, 'before-delete');
+  meta.levels.splice(idx, 1);
+  if(meta.activeLevelId === id) meta.activeLevelId = meta.levels[0].id;
+  saveLevelsMeta(pid, meta);
+  removePathSafe(levelPaths(pid, id).dir);
+  updateActiveProfilePaths();
+  ensureDataStore();
+  const diag = levelsDiagnostics(pid);
+  diag.backup = backup ? path.basename(backup) : null;
+  return diag;
+}
+
 function createProfile(payload={}){
   const meta = loadProfilesMeta();
   if(meta.profiles.length >= 3) throw new Error('Можно создать максимум 3 профиля');
@@ -264,7 +489,11 @@ function createProfile(payload={}){
   do { id = 'profile-' + (++n); } while(meta.profiles.some(p=>p.id===id) && n < 20);
   const now = new Date().toISOString();
   const name = String(payload.name || `Профиль ${meta.profiles.length + 1}`).trim().slice(0,60) || `Профиль ${meta.profiles.length + 1}`;
-  const pp = ensureProfileDirs(id);
+  ensureProfileDirs(id);
+  let levelsMeta = defaultLevelsMeta();
+  levelsMeta.levels[0].name = 'Основной уровень';
+  atomicWriteJson(levelsMetaPath(id), levelsMeta);
+  const pp = ensureLevelDirs(id, 'level-1');
   const baseLayout = emptyLayout();
   const duplicateZones = !!payload.duplicateZones;
   const duplicateMarkers = !!payload.duplicateMarkers;
@@ -279,9 +508,9 @@ function createProfile(payload={}){
       baseLayout.customNames = current.customNames || {};
       copyIfExists(SOURCE_CONFIG_PATH, pp.sourceConfig);
       copyIfExists(DEVICES_PATH, pp.devicesJs);
-      copyIfExists(path.join(ACTIVE_PROFILE_DIR,'devices.json'), pp.devicesJson);
+      copyIfExists(activeLevelPaths().devicesJson, pp.devicesJson);
       copyIfExists(LOVELACE_PATH, pp.lovelaceJs);
-      copyIfExists(path.join(ACTIVE_PROFILE_DIR,'lovelace_raw.json'), pp.lovelaceRaw);
+      copyIfExists(activeLevelPaths().lovelaceRaw, pp.lovelaceRaw);
     }
   }
   atomicWriteJson(pp.layout, baseLayout);
@@ -998,7 +1227,7 @@ async function buildDiagnostics(){
     profiles: profilesDiagnostics(),
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: listBackups().slice(0,50),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, profilesPath: PROFILES_META_PATH, profilesDir: PROFILES_DIR, activeProfileId: ACTIVE_PROFILE_ID, activeProfileDir: ACTIVE_PROFILE_DIR, roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), roomsSettingsExists: fs.existsSync(ROOMS_SETTINGS_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, profilesPath: PROFILES_META_PATH, profilesDir: PROFILES_DIR, activeProfileId: ACTIVE_PROFILE_ID, activeProfileDir: ACTIVE_PROFILE_DIR, activeLevelId: ACTIVE_LEVEL_ID, activeLevelDir: ACTIVE_LEVEL_DIR, levelsMetaPath: levelsMetaPath(ACTIVE_PROFILE_ID), roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), roomsSettingsExists: fs.existsSync(ROOMS_SETTINGS_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     safeServices: SAFE_SERVICES,
@@ -1345,7 +1574,7 @@ async function readLovelaceRawFromHa(paths){
     }
   }
   fs.mkdirSync(DATA_DIR,{recursive:true});
-  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).lovelaceRaw, JSON.stringify({ generatedAt:new Date().toISOString(), requested, results }, null, 2), 'utf8');
+  fs.writeFileSync(activeLevelPaths().lovelaceRaw, JSON.stringify({ generatedAt:new Date().toISOString(), requested, results }, null, 2), 'utf8');
   return { requested, results };
 }
 
@@ -1602,10 +1831,10 @@ function writeDeviceOutputs(parsed){
   fs.mkdirSync(DATA_DIR,{recursive:true});
   const devicesJs = 'window.ALL_DEVICES = '+JSON.stringify(parsed.devices, null, 2)+';\nwindow.DEVICES = window.ALL_DEVICES;\n';
   const lovelaceJs = 'window.LOVELACE_SOURCE = '+JSON.stringify(parsed.source, null, 2)+';\n';
-  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).devicesJson, JSON.stringify(parsed.devices, null, 2), 'utf8');
+  fs.writeFileSync(activeLevelPaths().devicesJson, JSON.stringify(parsed.devices, null, 2), 'utf8');
   fs.writeFileSync(DEVICES_PATH, devicesJs, 'utf8');
   fs.writeFileSync(LOVELACE_PATH, lovelaceJs, 'utf8');
-  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).deviceParseReportJson, JSON.stringify(parsed.stats, null, 2), 'utf8');
+  fs.writeFileSync(activeLevelPaths().deviceParseReportJson, JSON.stringify(parsed.stats, null, 2), 'utf8');
   const md = [
     '# Device parse report v3.4.13',
     '',
@@ -1625,7 +1854,7 @@ function writeDeviceOutputs(parsed){
     '## Skipped views',
     ...(parsed.stats.skippedViews.length ? parsed.stats.skippedViews.map(x=>`- ${x}`) : ['- none'])
   ].join('\n');
-  fs.writeFileSync(profilePaths(ACTIVE_PROFILE_ID).deviceParseReportMd, md+'\n', 'utf8');
+  fs.writeFileSync(activeLevelPaths().deviceParseReportMd, md+'\n', 'utf8');
 }
 
 async function importLovelaceRaw(paths){
@@ -1636,7 +1865,7 @@ async function importLovelaceRaw(paths){
   return { ...rawBundle, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
 async function importStoredLovelaceRaw(){
-  const file = profilePaths(ACTIVE_PROFILE_ID).lovelaceRaw;
+  const file = activeLevelPaths().lovelaceRaw;
   if(!fs.existsSync(file)) throw new Error('data/lovelace_raw.json не найден. Сначала перечитайте RAW панели из HA.');
   const rawBundle = JSON.parse(fs.readFileSync(file,'utf8'));
   const registry = await loadHaEntityAreaMap();
@@ -1670,6 +1899,13 @@ app.post('/api/profiles/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...d
 app.post('/api/profiles/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateProfile(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.delete('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...deleteProfile(req.params.id, req.body||{}), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.patch('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...patchProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+
+app.get('/api/levels', (req,res)=>{ try{res.json({ok:true, ...levelsDiagnostics()});}catch(e){res.status(500).json({ok:false,error:e.message});} });
+app.post('/api/levels', (req,res)=>{ try{res.json({ok:true, ...createLevel(req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/levels/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...duplicateLevel(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/levels/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateLevel(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.delete('/api/levels/:id', (req,res)=>{ try{res.json({ok:true, ...deleteLevel(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.patch('/api/levels/:id', (req,res)=>{ try{res.json({ok:true, ...patchLevel(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 
 app.get('/api/images', (req,res)=>{
   try{

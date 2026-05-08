@@ -198,6 +198,7 @@
         <button type="button" data-settings-panel="rooms">Комнаты / зоны / датчики</button>
         <button type="button" data-settings-panel="sources">Источники устройств</button>
         <button type="button" data-settings-panel="profiles">Профили</button>
+        <button type="button" data-settings-panel="levels">Уровни / области</button>
       </div>
       <div class="image-tools settings-section-panel hidden" id="settings-panel-images">
         <h3>Картинки / План</h3>
@@ -275,6 +276,13 @@
         <p class="muted">Профили позволяют иметь до 3 параллельных вариантов проекта: свои картинки, layout, zones, rooms settings, устройства и источники. Security/PIN и Attention остаются общими.</p>
         <div id="profiles-manager" class="profiles-manager"><p class="muted">Загрузка профилей...</p></div>
       </div>
+
+      <div class="levels-tools settings-section-panel hidden" id="settings-panel-levels">
+        <h3>Уровни / области</h3>
+        <p class="muted">Уровни позволяют разделить объект на этажи, мансарду, двор, придомовую территорию и другие области. Название уровня вводится вручную; для каждого уровня отдельно настраиваются карта, зоны, маркеры, картинки и источники Lovelace.</p>
+        <div id="levels-manager" class="profiles-manager"><p class="muted">Загрузка уровней...</p></div>
+      </div>
+
       <div class="source-tools settings-section-panel hidden" id="settings-panel-sources">
         <h3>Источники устройств из панели</h3>
         <p class="muted">Структура и названия берутся из RAW Lovelace / device.txt, состояние — из Home Assistant API. Адрес панели можно указывать как dashboard-unknown или dashboard-unknown/0.</p>

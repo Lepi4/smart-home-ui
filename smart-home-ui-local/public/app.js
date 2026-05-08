@@ -14,7 +14,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:false, hideDevicePanel:false, hideToolbar:false, mobileMode:false, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null
 };
 
 const ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -2481,6 +2481,101 @@ async function deleteProfileFromSettings(profileId){
   }catch(e){ showToast('Ошибка удаления профиля: '+e.message); }
 }
 
+
+async function loadLevelsInfo(){
+  try{
+    state.levels = await apiJson('api/levels');
+    renderLevelsManager();
+    return state.levels;
+  }catch(e){
+    state.levels = null;
+    const box=el('levels-manager');
+    if(box) box.innerHTML='<p class="muted">Ошибка загрузки уровней: '+esc(e.message)+'</p>';
+  }
+}
+function renderLevelsManager(){
+  const box=el('levels-manager');
+  if(!box) return;
+  const data=state.levels;
+  const admin=canEditLayout();
+  if(!data){ box.innerHTML='<p class="muted">Уровни ещё не загружены.</p>'; return; }
+  const levels=Array.isArray(data.levels) ? data.levels : [];
+  const activeId=data.activeLevelId || levels.find(l=>l.active)?.id || 'level-1';
+  const rows=levels.map(l=>{
+    const active=l.id===activeId || l.active;
+    return `<div class="profile-row${active?' active-profile':''}" data-level-row="${esc(l.id)}">`+
+      `<div><strong>${esc(l.name||l.id)}</strong>${active?' <span class="profile-badge">текущий</span>':''}<br>`+
+      `<small class="muted">${esc(l.id)} · ${l.exists?'папка есть':'папка не найдена'}</small></div>`+
+      `<div class="profile-actions">`+
+      `<button type="button" data-level-activate="${esc(l.id)}" ${active?'disabled':''}>Переключить</button>`+
+      `<button type="button" data-level-rename="${esc(l.id)}">Переименовать</button>`+
+      `<button type="button" data-level-duplicate="${esc(l.id)}">Дублировать</button>`+
+      `<button type="button" class="danger-button small-danger" data-level-delete="${esc(l.id)}" ${levels.length<=1?'disabled':''}>Удалить</button>`+
+      `</div></div>`;
+  }).join('');
+  box.innerHTML=`<div class="profile-summary"><strong>Текущий уровень/область:</strong> ${esc(activeId)} · ${levels.length}/${data.max||12}</div>`+
+    `<div class="profile-create-card"><h4>Создать уровень / область</h4>`+
+    `<label>Название уровня <input id="new-level-name" type="text" placeholder="Например: Этаж 2 / Мансарда / Двор"></label>`+
+    `<label class="settings-check"><input type="checkbox" id="new-level-copy-zones"> Дублировать зоны из текущего уровня</label>`+
+    `<label class="settings-check"><input type="checkbox" id="new-level-copy-markers"> Дублировать значки/маркеры из текущего уровня</label>`+
+    `<label class="settings-check"><input type="checkbox" id="new-level-copy-images"> Дублировать картинки</label>`+
+    `<label class="settings-check"><input type="checkbox" id="new-level-copy-sources"> Дублировать Lovelace-источники и устройства</label>`+
+    `<p class="muted">Название уровня вводится вручную и не парсится из Home Assistant. Источники Lovelace затем настраиваются отдельно на вкладке “Источники устройств” для текущего уровня.</p>`+
+    `<button type="button" id="btn-create-level">Создать уровень</button></div>`+
+    `<div class="profiles-list">${rows}</div>`+
+    `<p class="muted">Уровни живут внутри активного профиля. У каждого уровня свои карта, зоны, маркеры, картинки, комнаты, источники Lovelace и импортированные устройства. Security/PIN и Attention остаются глобальными.</p>`;
+  qsa('button,input', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
+}
+async function createLevelFromSettings(){
+  if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
+  const body={
+    name: el('new-level-name')?.value?.trim() || '',
+    duplicateZones: !!el('new-level-copy-zones')?.checked,
+    duplicateMarkers: !!el('new-level-copy-markers')?.checked,
+    duplicateImages: !!el('new-level-copy-images')?.checked,
+    duplicateSources: !!el('new-level-copy-sources')?.checked
+  };
+  try{ state.levels=await apiJson('api/levels',{method:'POST',body:JSON.stringify(body)}); renderLevelsManager(); showToast('Уровень создан'); }
+  catch(e){ showToast('Ошибка создания уровня: '+e.message); }
+}
+async function duplicateLevelFromSettings(levelId){
+  if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
+  const current=state.levels?.levels?.find(l=>l.id===levelId);
+  const name=window.prompt('Название копии уровня', current ? `Копия ${current.name}` : 'Копия уровня');
+  if(name===null) return;
+  try{ state.levels=await apiJson(`api/levels/${encodeURIComponent(levelId)}/duplicate`,{method:'POST',body:JSON.stringify({name})}); renderLevelsManager(); showToast('Уровень продублирован'); }
+  catch(e){ showToast('Ошибка дублирования уровня: '+e.message); }
+}
+async function activateLevelFromSettings(levelId){
+  if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
+  if(!confirm('Переключить текущий уровень/область? После переключения страница будет перезагружена.')) return;
+  try{ await apiJson(`api/levels/${encodeURIComponent(levelId)}/activate`,{method:'POST'}); showToast('Уровень переключён. Перезагрузка...'); setTimeout(()=>location.reload(), 700); }
+  catch(e){ showToast('Ошибка переключения уровня: '+e.message); }
+}
+async function renameLevelFromSettings(levelId){
+  if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
+  const current=state.levels?.levels?.find(l=>l.id===levelId);
+  const name=window.prompt('Новое название уровня/области', current?.name || levelId);
+  if(name===null) return;
+  try{ state.levels=await apiJson(`api/levels/${encodeURIComponent(levelId)}`,{method:'PATCH',body:JSON.stringify({name})}); renderLevelsManager(); showToast('Уровень переименован'); }
+  catch(e){ showToast('Ошибка переименования уровня: '+e.message); }
+}
+async function deleteLevelFromSettings(levelId){
+  if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
+  const list=state.levels?.levels || [];
+  if(list.length<=1){ showToast('Нельзя удалить последний уровень'); return; }
+  const current=list.find(l=>l.id===levelId);
+  if(!confirm(`Удалить уровень "${current?.name||levelId}"? Перед удалением будет создан backup уровня.`)) return;
+  const word=window.prompt('Для удаления введите DELETE');
+  if(word !== 'DELETE'){ showToast('Удаление отменено'); return; }
+  try{
+    const wasActive=levelId === (state.levels?.activeLevelId || 'level-1');
+    const res=await apiJson(`api/levels/${encodeURIComponent(levelId)}`,{method:'DELETE'});
+    state.levels=res; renderLevelsManager(); showToast('Уровень удалён. Backup: '+(res.backup||'—'));
+    if(wasActive) setTimeout(()=>location.reload(),700);
+  }catch(e){ showToast('Ошибка удаления уровня: '+e.message); }
+}
+
 async function loadImagesInfo(){
   try{
     state.images = await apiJson('api/images');
@@ -2915,6 +3010,10 @@ function renderInfoModal(){
       infoRow('active profile', d.profiles?.activeProfileId || 'profile-1'),
       infoRow('profiles count', ((d.profiles?.count ?? 1)+' / '+(d.profiles?.max ?? 3))),
       infoRow('active profile dir', d.profiles?.activePaths?.dir || '—'),
+      infoSection('Levels / areas'),
+      infoRow('active level', d.levels?.activeLevelId || 'level-1'),
+      infoRow('levels count', ((d.levels?.count ?? 1)+' / '+(d.levels?.max ?? 12))),
+      infoRow('active level dir', d.levels?.activePaths?.dir || '—'),
       infoSection('Images storage'),
       infoRow('/data/images',d.images?.exists?'есть':'нет'),
       infoRow('/data/images/overview',d.images?.overviewDirExists?'есть':'нет'),
@@ -2989,7 +3088,7 @@ function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncM
 
 
 function openSettingsPanel(name){
-  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles'};
+  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels'};
   const id=map[name]||name;
   qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));
   qsa('#settings-modal [data-settings-panel]').forEach(btn=>btn.classList.toggle('active', btn.dataset.settingsPanel===name));
@@ -3066,6 +3165,14 @@ function bindGlobal(){
     const ren=e.target.closest('[data-profile-rename]'); if(ren){ renameProfileFromSettings(ren.dataset.profileRename); return; }
     const dup=e.target.closest('[data-profile-duplicate]'); if(dup){ duplicateProfileFromSettings(dup.dataset.profileDuplicate); return; }
     const del=e.target.closest('[data-profile-delete]'); if(del){ deleteProfileFromSettings(del.dataset.profileDelete); return; }
+  });
+  const levelsManager=el('levels-manager');
+  if(levelsManager) levelsManager.addEventListener('click', e=>{
+    const create=e.target.closest('#btn-create-level'); if(create){ createLevelFromSettings(); return; }
+    const act=e.target.closest('[data-level-activate]'); if(act){ activateLevelFromSettings(act.dataset.levelActivate); return; }
+    const ren=e.target.closest('[data-level-rename]'); if(ren){ renameLevelFromSettings(ren.dataset.levelRename); return; }
+    const dup=e.target.closest('[data-level-duplicate]'); if(dup){ duplicateLevelFromSettings(dup.dataset.levelDuplicate); return; }
+    const del=e.target.closest('[data-level-delete]'); if(del){ deleteLevelFromSettings(del.dataset.levelDelete); return; }
   });
   const roomsManager=el('rooms-zones-manager');
   if(roomsManager) roomsManager.addEventListener('click', e=>{
@@ -3208,6 +3315,7 @@ async function initialHaSync(){
   await loadImagesInfo();
   await loadRoomsSettings();
   await loadProfilesInfo();
+  await loadLevelsInfo();
   loadKioskLockLocal();
   bindGlobal();
   startClock();
@@ -3218,6 +3326,7 @@ async function initialHaSync(){
     await loadSecurityRules();
     applyConfigToInputs();
     renderProfilesManager();
+    renderLevelsManager();
   }catch(e){
     console.error('config load failed', e);
   }
