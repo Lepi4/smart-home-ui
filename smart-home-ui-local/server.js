@@ -33,7 +33,7 @@ const ROOMS_SETTINGS_PATH = path.join(DATA_DIR, 'rooms.json');
 const DEVICES_PATH = path.join(DATA_DIR, 'devices.js');
 const LOVELACE_PATH = path.join(DATA_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.5.2';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.5.3';
 const APP_BRAND = 'ALLHA-3D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -349,6 +349,73 @@ function clearLayoutZones(){
   return { ok:true, backup: backup ? path.basename(backup) : null, layout: saved, diagnostics: analyzeLayout(saved) };
 }
 
+
+
+function copyPathRecursive(src, dst){
+  if(!fs.existsSync(src)) return false;
+  const st = fs.statSync(src);
+  fs.mkdirSync(path.dirname(dst), {recursive:true});
+  if(st.isDirectory()){
+    fs.mkdirSync(dst, {recursive:true});
+    for(const name of fs.readdirSync(src)) copyPathRecursive(path.join(src,name), path.join(dst,name));
+  } else {
+    fs.copyFileSync(src, dst);
+  }
+  return true;
+}
+function removePathSafe(target){
+  if(!target || !target.startsWith(DATA_DIR)) return;
+  try{ if(fs.existsSync(target)) fs.rmSync(target, {recursive:true, force:true}); }catch(e){ console.warn('[ALLHA-3D] factory reset remove failed:', target, e.message); }
+}
+function writeJsAssignedArray(file, name, arr){
+  fs.mkdirSync(path.dirname(file), {recursive:true});
+  fs.writeFileSync(file, `window.${name} = ${JSON.stringify(arr||[], null, 2)};\n`, 'utf8');
+}
+function emptyLayout(){
+  return { version:8, coordinateSpace:'room-content-box', overviewRoomSync:false, roomCoordinateMigrated:{}, overviewMarkers:{}, roomMarkers:{}, overviewMetrics:{}, roomMetrics:{}, zones:{}, customNames:{} };
+}
+function factoryResetProject(confirmWord){
+  if(String(confirmWord||'') !== 'RESET') throw new Error('Для полного сброса требуется подтверждение RESET');
+  ensureDataStore();
+  const stamp = timestampForFile();
+  const backupDir = path.join(LAYOUT_BACKUP_DIR, `factory-reset-${stamp}`);
+  fs.mkdirSync(backupDir, {recursive:true});
+  const candidates = [
+    ADDON_CONFIG_PATH, SOURCE_CONFIG_PATH, UI_STATE_PATH, LAYOUT_PATH, ROOMS_SETTINGS_PATH,
+    DEVICES_PATH, path.join(DATA_DIR,'devices.json'), LOVELACE_PATH, path.join(DATA_DIR,'lovelace_raw.json'),
+    ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH, DATA_IMAGES_DIR,
+    path.join(DATA_DIR,'profiles.json'), path.join(DATA_DIR,'profiles')
+  ];
+  const backedUp = [];
+  for(const src of candidates){
+    try{
+      if(fs.existsSync(src)){
+        const dst = path.join(backupDir, path.basename(src));
+        if(copyPathRecursive(src, dst)) backedUp.push(path.basename(src));
+      }
+    }catch(e){ console.warn('[ALLHA-3D] factory reset backup failed:', src, e.message); }
+  }
+  const removeTargets = [
+    ADDON_CONFIG_PATH, SOURCE_CONFIG_PATH, UI_STATE_PATH, LAYOUT_PATH, ROOMS_SETTINGS_PATH,
+    DEVICES_PATH, path.join(DATA_DIR,'devices.json'), LOVELACE_PATH, path.join(DATA_DIR,'lovelace_raw.json'),
+    ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH, DATA_IMAGES_DIR,
+    path.join(DATA_DIR,'profiles.json'), path.join(DATA_DIR,'profiles')
+  ];
+  for(const target of removeTargets) removePathSafe(target);
+  fs.mkdirSync(DATA_DIR, {recursive:true});
+  atomicWriteJson(ADDON_CONFIG_PATH, defaultAddonConfig());
+  atomicWriteJson(SOURCE_CONFIG_PATH, defaultSourceConfig());
+  atomicWriteJson(UI_STATE_PATH, defaultUiState());
+  atomicWriteJson(LAYOUT_PATH, emptyLayout());
+  atomicWriteJson(ROOMS_SETTINGS_PATH, defaultRoomsSettings());
+  saveAttentionRules(attentionDefault());
+  saveSecurityRules(securityRulesDefault());
+  atomicWriteJson(COMMAND_LOG_PATH, []);
+  writeJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES', []);
+  fs.writeFileSync(LOVELACE_PATH, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  ensureDataStore();
+  return { ok:true, backup:path.basename(backupDir), backedUp, config: publicConfig(loadAddonConfig()), layout: loadLayout() };
+}
 
 function defaultImagesMeta(){
   return { version: 1, overview: null, rooms: {} };
@@ -1485,6 +1552,7 @@ app.get('/api/layout/diagnostics', (req,res)=>{ try{res.json(analyzeLayout(loadL
 app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/clear-zones', (req,res)=>{ try{res.json(clearLayoutZones());}catch(e){res.status(500).json({error:e.message});} });
+app.post('/api/factory-reset', (req,res)=>{ try{res.json(factoryResetProject(req.body?.confirm));}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.get('/api/source-config', (req,res)=>{ try{res.json(loadSourceConfig());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/source-config', (req,res)=>{ try{saveSourceConfig(req.body);res.json({ok:true, config: loadSourceConfig()});}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout', (req,res)=>{ try{const backup=saveLayout(req.body);res.json({ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(loadLayout())});}catch(e){res.status(400).json({error:e.message});} });

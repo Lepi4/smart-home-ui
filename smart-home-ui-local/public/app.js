@@ -718,12 +718,12 @@ function fmtNum(v, digits){const n=Number(v); return Number.isFinite(n)?n.toFixe
 function tempValue(entity){const s=getState(entity); return s?fmtNum(s.state,1):''}
 function humValue(entity){const s=getState(entity); return s?String(Math.round(Number(s.state)||0)):''}
 const STANDARD_SENSOR_DEFS = [
-  { key:'temperature', label:'Температура', placeholder:'sensor.room_temperature', unitFallback:'°', domains:['sensor'] },
-  { key:'humidity', label:'Влажность', placeholder:'sensor.room_humidity', unitFallback:'%', domains:['sensor'] },
-  { key:'motion', label:'Движение', placeholder:'binary_sensor.room_motion', unitFallback:'', domains:['binary_sensor','sensor'] },
-  { key:'noise', label:'Шум', placeholder:'sensor.room_noise', unitFallback:' dB', domains:['sensor'] },
-  { key:'co2', label:'CO2', placeholder:'sensor.room_co2', unitFallback:' ppm', domains:['sensor'] },
-  { key:'illuminance', label:'Освещённость', placeholder:'sensor.room_illuminance', unitFallback:' lx', domains:['sensor'] }
+  { key:'temperature', label:'Температура', shortLabel:'Темп.', icon:'🌡', placeholder:'sensor.room_temperature', unitFallback:'°', domains:['sensor'] },
+  { key:'humidity', label:'Влажность', shortLabel:'Вл.', icon:'💧', placeholder:'sensor.room_humidity', unitFallback:'%', domains:['sensor'] },
+  { key:'motion', label:'Движение', shortLabel:'Движ.', icon:'🚶', placeholder:'binary_sensor.room_motion', unitFallback:'', domains:['binary_sensor','sensor'] },
+  { key:'noise', label:'Шум', shortLabel:'Шум', icon:'🔊', placeholder:'sensor.room_noise', unitFallback:' dBA', domains:['sensor'] },
+  { key:'co2', label:'CO2', shortLabel:'CO2', icon:'CO₂', placeholder:'sensor.room_co2', unitFallback:' ppm', domains:['sensor'] },
+  { key:'illuminance', label:'Освещённость', shortLabel:'Свет', icon:'☀', placeholder:'sensor.room_illuminance', unitFallback:' lx', domains:['sensor'] }
 ];
 function standardSensorsForRoom(roomId){
   const entry = state.roomsSettings?.rooms?.[normalizedRoomId(roomId)];
@@ -945,7 +945,11 @@ function renderOverviewZones(){
 function metricContent(r){
   const items = standardMetricItems(r);
   if(!items.length) return '';
-  return items.map(({def,value})=>`<span class="metric-item metric-${esc(def.key)}"><span class="metric-label">${esc(def.label)}:</span> <span class="metric-value">${esc(value)}</span></span>`).join(' ');
+  return items.map(({def,value})=>{
+    const icon = def.icon || def.shortLabel || def.label;
+    const aria = `${def.label}: ${value}`;
+    return `<span class="metric-item metric-${esc(def.key)} compact-metric-item" title="${esc(aria)}" aria-label="${esc(aria)}"><span class="metric-icon" aria-hidden="true">${esc(icon)}</span><span class="metric-value">${esc(value)}</span></span>`;
+  }).join(' ');
 }
 function defaultMetricPos(r){return {x:clamp(r.x-r.w/4,2,98),y:clamp(r.y-r.h/4,2,98)}}
 function safeMetricPoint(stored, fallback){
@@ -2684,16 +2688,18 @@ async function saveConfig(){
 }
 async function clearConfig(){
   const status=el('settings-status');
+  const message = 'Будут удалены все пользовательские настройки, комнаты, устройства, зоны, маркеры, картинки, источники Lovelace/панелей, данные импорта, Attention, dangerous-правила и пользовательский PIN. Перед сбросом будет создан backup. Продолжить?';
+  if(!confirm(message)) return;
+  const word=window.prompt('Для полного сброса введите RESET');
+  if(word !== 'RESET'){ status.textContent='Сброс отменён.'; return; }
   try{
-    status.textContent='Сбрасываю настройки add-on...';
-    const res=await apiJson('api/config/clear',{method:'POST'});
-    state.config=res.config||{configured:true,haUrl:'Home Assistant Supervisor API',hasToken:true,pollIntervalMs:6000,dashboardPaths:[]};
-    const dp=el('ha-dashboard-paths'); if(dp) dp.value=''; el('poll-interval').value='6';
-    status.textContent='Настройки сброшены.';
-    await testConnection({keepModal:true});
-    render();
+    status.textContent='Выполняю полный сброс проекта...';
+    const res=await apiJson('api/factory-reset',{method:'POST',body:JSON.stringify({confirm:'RESET'})});
+    status.textContent='Полный сброс выполнен. Backup: '+(res.backup||'создан/не требовался')+'. Перезагрузка страницы...';
+    showToast('Настройки сброшены к дефолту');
+    setTimeout(()=>location.reload(), 1200);
   }catch(e){
-    status.textContent='Ошибка сброса настроек: '+e.message;
+    status.textContent='Ошибка полного сброса: '+e.message;
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}

@@ -1497,3 +1497,10 @@ body.invisible-zones:not(.editing) .room-zone{background:transparent!important;b
 .metric-label{opacity:.78;font-size:.86em}
 .metric-value{font-weight:800}
 @media (max-width:720px){.standard-sensor-field{grid-template-columns:1fr}.room-manager-head{display:grid}.room-manager-actions{justify-content:flex-start}}
+
+
+/* v3.5.5.3 compact standard sensors + factory reset warning */
+.compact-metric-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;}
+.metric-icon{font-weight:800;line-height:1;opacity:.95;}
+.metric-co2 .metric-icon{font-size:.92em;letter-spacing:-.04em;}
+.factory-reset-warning{margin:12px 0 4px;padding:10px 12px;border:1px solid rgba(255,160,64,.45);border-radius:12px;background:rgba(255,160,64,.10);color:var(--text,#eef4ff);font-size:13px;line-height:1.4;}
