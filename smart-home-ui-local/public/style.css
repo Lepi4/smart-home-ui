@@ -1903,3 +1903,23 @@ body.kiosk-mode .kiosk-view-switcher{top:12px!important;}
 body.kiosk-tiles-active .kiosk-tile-view{padding-top:68px!important;}
 body.kiosk-tiles-active .kiosk-tile-head p::after{content:''!important;}
 @media(max-width:760px){body.kiosk-mode:not(.kiosk-tiles-active) .quick-overlay-button:not(.hidden){bottom:58px!important;left:10px!important}.kiosk-view-switcher{top:54px!important}.kiosk-tile-view{padding-top:104px!important}}
+
+
+/* v3.5.9.11: kiosk room device button must not inherit centered transform. */
+body.kiosk-mode:not(.kiosk-tiles-active) .quick-overlay-button:not(.hidden){
+  left:14px!important;
+  bottom:64px!important;
+  transform:none!important;
+  right:auto!important;
+  width:auto!important;
+  min-width:116px!important;
+  text-align:center!important;
+  justify-content:center!important;
+}
+@media(max-width:760px){
+  body.kiosk-mode:not(.kiosk-tiles-active) .quick-overlay-button:not(.hidden){
+    left:10px!important;
+    bottom:64px!important;
+    transform:none!important;
+  }
+}

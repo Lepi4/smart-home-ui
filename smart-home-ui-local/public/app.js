@@ -1159,6 +1159,7 @@ function render(){
   renderEditSheet();
   renderKioskWidget();
   renderKioskTiles();
+  renderLevelSwitcher();
   renderProjectSetupEmptyPrompt();
   updateZoomControls();
   requestAnimationFrame(updateLiveCoordinateDebug);
