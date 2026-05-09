@@ -105,7 +105,7 @@ const DIRECT_DASHBOARD_PORT = Number(process.env.DIRECT_DASHBOARD_PORT || proces
 function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
 
 /* ── Mobile access helpers ───────────────────────────── */
-const LOCAL_IP_RE = /^(127\.|::1$|::ffff:127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
+const LOCAL_IP_RE = /^(127\.|::1$|::ffff:(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
 function isLocalIp(req) {
   const ip = req.socket?.remoteAddress || req.ip || '';
   return LOCAL_IP_RE.test(ip);
@@ -2640,6 +2640,38 @@ app.delete('/api/mobile/devices', (req, res) => {
   if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
   mobileAuth.revokeAllDevices();
   res.json({ ok: true, devices: [] });
+});
+
+/* ── Per-client preferences (profile, panelMode, UI scales per device) ─ */
+const CLIENT_PREFS_DIR = path.join(DATA_DIR, 'client-prefs');
+
+function sanitizeClientId(id) {
+  // Allow only safe chars to prevent path traversal
+  return String(id || '').replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 128);
+}
+
+app.get('/api/prefs', (req, res) => {
+  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
+  if (!cid) return res.json({});
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(CLIENT_PREFS_DIR, `${cid}.json`), 'utf8'));
+    res.json(data);
+  } catch { res.json({}); }
+});
+
+app.put('/api/prefs', express.json(), (req, res) => {
+  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
+  if (!cid) return res.status(400).json({ error: 'X-Client-ID required' });
+  try {
+    fs.mkdirSync(CLIENT_PREFS_DIR, { recursive: true });
+    const body = req.body || {};
+    const prefs = {};
+    if (body.ui && typeof body.ui === 'object') prefs.ui = body.ui;
+    if (body.panelMode !== undefined) prefs.panelMode = String(body.panelMode);
+    if (body.activeProfileId !== undefined) prefs.activeProfileId = body.activeProfileId;
+    fs.writeFileSync(path.join(CLIENT_PREFS_DIR, `${cid}.json`), JSON.stringify(prefs, null, 2), 'utf8');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 const server = app.listen(PORT, () => {

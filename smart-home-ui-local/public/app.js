@@ -63,14 +63,20 @@ const DRAG_SUPPRESS_MS = 420;
 
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
-const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','debugMode']);
+// Ключи, хранящиеся на сервере глобально (одинаковы для всех устройств)
+const GLOBAL_UI_KEYS = new Set(['weatherEntity']);
+// Ключи, хранящиеся per-device в /api/prefs (у каждого устройства свои)
+const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','debugMode']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors','theme']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
   const src = (cfg && cfg.ui) ? cfg.ui : cfg || {};
-  const next = pickKeys(src, GLOBAL_UI_KEYS);
+  // Читаем и GLOBAL и CLIENT ключи из серверного конфига как дефолты (backward compat).
+  // После loadClientPrefs() client-ключи будут перекрыты per-device значениями.
+  const next = pickKeys(src, new Set([...GLOBAL_UI_KEYS, ...CLIENT_UI_KEYS]));
   if(Object.keys(next).length){ state.ui = { ...state.ui, ...next }; applyUiPrefs(); renderKioskWidget(); }
 }
+// В глобальный конфиг отправляем только действительно общие ключи
 function buildGlobalConfigPayload(){ return { ui: pickKeys(state.ui, GLOBAL_UI_KEYS) }; }
 function buildSecurityConfigPayload(){ return { security:{panelMode:el('pref-panel-mode')?.value||state.config?.security?.panelMode||'admin',confirmDangerousServices:!!el('pref-confirm-dangerous')?.checked,dangerousRequirePin:!!el('pref-dangerous-pin')?.checked,pinEnabled:!!state.config?.security?.pinEnabled} }; }
 function panelMode(){ const m=state.config?.security?.panelMode || 'admin'; return m==='user'?'viewer':m; }
@@ -84,9 +90,40 @@ async function verifyPinPrompt(message='Введите PIN для повышен
 }
 
 async function saveGlobalPrefs(){
-  const res=await apiJson('api/config',{method:'POST',body:JSON.stringify({...buildGlobalConfigPayload(),...buildSecurityConfigPayload()})});
+  // panelMode теперь per-client → убираем из глобального security
+  const sec = buildSecurityConfigPayload();
+  if(sec.security) delete sec.security.panelMode;
+  const res=await apiJson('api/config',{method:'POST',body:JSON.stringify({...buildGlobalConfigPayload(),...sec})});
   state.config=res.config||state.config;
+  saveClientPrefs().catch(()=>{});
   return res;
+}
+
+async function loadClientPrefs(){
+  try{
+    const prefs = await apiJson('api/prefs');
+    // Применяем per-device UI настройки (перекрывают глобальные дефолты)
+    if(prefs.ui){
+      const over = pickKeys(prefs.ui, CLIENT_UI_KEYS);
+      if(Object.keys(over).length){ state.ui={...state.ui,...over}; applyUiPrefs(); renderKioskWidget(); }
+    }
+    // Применяем режим доступа для этого устройства
+    if(prefs.panelMode && state.config?.security){
+      state.config.security.panelMode = prefs.panelMode;
+      const pm = el('pref-panel-mode'); if(pm) pm.value = prefs.panelMode;
+    }
+    // Активный профиль (применяется в renderProfilesManager после загрузки)
+    if(prefs.activeProfileId !== undefined) state._clientActiveProfileId = prefs.activeProfileId;
+  }catch(e){ console.warn('[prefs] load', e); }
+}
+
+async function saveClientPrefs(){
+  const prefs = {
+    ui: pickKeys(state.ui, CLIENT_UI_KEYS),
+    panelMode: el('pref-panel-mode')?.value || state.config?.security?.panelMode || 'admin',
+  };
+  if(state._clientActiveProfileId !== undefined) prefs.activeProfileId = state._clientActiveProfileId;
+  await apiJson('api/prefs', {method:'PUT', body:JSON.stringify(prefs)});
 }
 
 function el(id){return document.getElementById(id)}
@@ -2828,7 +2865,7 @@ function setConnection(ok,text,mode){const cls=mode==='live'?'connected':mode===
 /* ── Mobile auth token (set by Capacitor app via URL hash) ─────────── */
 const _mobileAuth = (()=>{
   try{
-    // Capacitor передаёт токен через fragment: #_mt=TOKEN&_did=DEVICE_ID
+    // Capacitor передаёт через fragment: #_mt=TOKEN&_did=DEVICE_ID&_local=URL&_remote=URL
     const hash = location.hash.slice(1);
     if(hash.includes('_mt=')){
       const p = new URLSearchParams(hash);
@@ -2836,15 +2873,100 @@ const _mobileAuth = (()=>{
       if(mt && did){
         localStorage.setItem('_mobile_token', mt);
         localStorage.setItem('_mobile_did', did);
-        // Убираем из URL чтобы не светиться в истории
+        const loc = p.get('_local'); if(loc) localStorage.setItem('_mobile_local', loc);
+        const rem = p.get('_remote'); if(rem) localStorage.setItem('_mobile_remote', rem);
         history.replaceState(null,'', location.pathname + location.search);
       }
     }
-    const token = localStorage.getItem('_mobile_token') || '';
-    const deviceId = localStorage.getItem('_mobile_did') || '';
-    return { token, deviceId, active: !!(token && deviceId) };
-  }catch{ return { token:'', deviceId:'', active:false }; }
+    const token    = localStorage.getItem('_mobile_token')  || '';
+    const deviceId = localStorage.getItem('_mobile_did')    || '';
+    const localUrl = localStorage.getItem('_mobile_local')  || '';
+    const remoteUrl= localStorage.getItem('_mobile_remote') || '';
+    return { token, deviceId, localUrl, remoteUrl, active: !!(token && deviceId) };
+  }catch{ return { token:'', deviceId:'', localUrl:'', remoteUrl:'', active:false }; }
 })();
+
+/* ── Per-client ID (stable per browser/device, used for /api/prefs) ── */
+const _clientId = (() => {
+  if(_mobileAuth.active) return _mobileAuth.deviceId; // мобилка — device_id уже есть
+  try{
+    let id = localStorage.getItem('_client_id');
+    if(!id){
+      id = crypto.randomUUID ? crypto.randomUUID()
+         : (Math.random().toString(36).slice(2) + Date.now().toString(36));
+      localStorage.setItem('_client_id', id);
+    }
+    return id;
+  }catch{ return ''; }
+})();
+
+/* ── Mobile offline overlay (только когда _mobileAuth.active) ──────── */
+let _mobileOfflineCount = 0;
+function _mobileShowOffline(){
+  let ov = document.getElementById('_mob-offline');
+  if(!ov){
+    ov = document.createElement('div');
+    ov.id = '_mob-offline';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(14,16,19,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:32px;font-family:system-ui,sans-serif';
+    ov.innerHTML = '<div style="font-size:48px">📡</div>'
+      + '<div style="font-size:20px;font-weight:700;color:#e8edf4">Нет связи с сервером</div>'
+      + '<div id="_mob-status" style="font-size:14px;color:#6f7a8a;text-align:center"></div>'
+      + '<button id="_mob-retry" style="background:#f0b34b;color:#1a1000;border:none;border-radius:12px;padding:14px 28px;font-size:16px;font-weight:700;min-width:200px;cursor:pointer">Попробовать снова</button>';
+    document.body.appendChild(ov);
+    document.getElementById('_mob-retry').onclick = _mobileReconnect;
+  }
+  ov.style.display = 'flex';
+  _mobileAutoRetry();
+}
+function _mobileHideOffline(){
+  const ov = document.getElementById('_mob-offline');
+  if(ov) ov.style.display = 'none';
+  _mobileOfflineCount = 0;
+}
+let _mobileRetryTimer = null;
+function _mobileAutoRetry(){
+  if(_mobileRetryTimer) return;
+  let secs = 15;
+  const tick = () => {
+    const st = document.getElementById('_mob-status');
+    if(st) st.textContent = `Повтор через ${secs}с...`;
+    if(--secs < 0){ secs = 15; _mobileReconnect(); }
+  };
+  tick();
+  _mobileRetryTimer = setInterval(tick, 1000);
+}
+async function _mobileReconnect(){
+  clearInterval(_mobileRetryTimer); _mobileRetryTimer = null;
+  const st = document.getElementById('_mob-status');
+  const { token, deviceId, localUrl, remoteUrl } = _mobileAuth;
+  const tryUrl = async (url) => {
+    if(!url) return false;
+    try{
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 3000);
+      const res = await fetch(url + '/api/diagnostics', { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(t);
+      return res.ok;
+    }catch{ return false; }
+  };
+  const currentOrigin = location.origin;
+  const isLocal = localUrl && currentOrigin === new URL(localUrl).origin;
+  const ordered = isLocal ? [localUrl, remoteUrl] : [remoteUrl, localUrl];
+  for(const url of ordered){
+    if(!url) continue;
+    if(st) st.textContent = `Проверка ${url.replace(/https?:\/\//,'')}…`;
+    if(await tryUrl(url)){
+      const hp = new URLSearchParams();
+      hp.set('_mt', token); hp.set('_did', deviceId);
+      if(localUrl)  hp.set('_local', localUrl);
+      if(remoteUrl) hp.set('_remote', remoteUrl);
+      window.location.href = `${url}/#${hp.toString()}`;
+      return;
+    }
+  }
+  if(st) st.textContent = 'Сервер недоступен.';
+  _mobileAutoRetry();
+}
 
 async function apiJson(url,opt={}){
   const headers = {'Content-Type':'application/json', ...(opt.headers||{})};
@@ -2852,6 +2974,7 @@ async function apiJson(url,opt={}){
     headers['Authorization'] = `Bearer ${_mobileAuth.token}`;
     headers['X-Device-ID'] = _mobileAuth.deviceId;
   }
+  if(_clientId) headers['X-Client-ID'] = _clientId;
   const res=await fetch(url,{...opt,headers});
   const data=await res.json().catch(()=>({}));
   if(!res.ok){const err=new Error(data.error||data.message||res.status);err.status=res.status;err.data=data;throw err;}
@@ -3872,9 +3995,12 @@ async function saveConfig(){
   try{
     status.textContent='Сохраняю настройки add-on...';
     saveUiPrefs();
-    const payload={pollIntervalMs:Math.max(2000,Number(el('poll-interval')?.value||6)*1000),...buildGlobalConfigPayload(),...buildSecurityConfigPayload()};
+    const sec = buildSecurityConfigPayload();
+    if(sec.security) delete sec.security.panelMode; // per-client
+    const payload={pollIntervalMs:Math.max(2000,Number(el('poll-interval')?.value||6)*1000),...buildGlobalConfigPayload(),...sec};
     const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
+    saveClientPrefs().catch(()=>{});
     status.textContent='Настройки сохранены. Проверяю подключение к Home Assistant...';
     await testConnection({keepModal:true});
     status.textContent='Настройки сохранены.';
@@ -3926,7 +4052,7 @@ async function clearConfig(){
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();const sseOpen=state._sseSource&&state._sseSource.readyState===1;if(state.edit)setConnection(true,'Редактор · live paused');else if(sseOpen)setConnection(true,'Live ●','live');else setConnection(true,'Поллинг ↺','polling')}catch(e){setConnection(false,'Нет связи ✗');console.error(e)}}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();const sseOpen=state._sseSource&&state._sseSource.readyState===1;if(_mobileAuth.active) _mobileHideOffline();if(state.edit)setConnection(true,'Редактор · live paused');else if(sseOpen)setConnection(true,'Live ●','live');else setConnection(true,'Поллинг ↺','polling')}catch(e){setConnection(false,'Нет связи ✗');console.error(e);if(_mobileAuth.active){_mobileOfflineCount++;if(_mobileOfflineCount>=2)_mobileShowOffline();}}}
 function startPolling(){
   if(state.pollTimer)clearInterval(state.pollTimer);
   if(state.edit || state.livePaused) return;
@@ -3966,6 +4092,7 @@ function startPolling(){
         states.forEach(s=>{ state.states[s.entity_id]=s; });
         applySourceConfig(); refreshRuntimeRooms(); updateAttentionFromStates();
         if(!state.edit && !state.livePaused) render();
+        if(_mobileAuth.active) _mobileHideOffline();
         setConnection(true, state.edit?'Редактор · live paused':'Live ●', state.edit?'':'live');
         // Перезапускаем поллинг с длинным интервалом (fallback)
         startPolling();
@@ -4743,6 +4870,7 @@ async function initialHaSync(){
   render();
   try{
     await loadConfig();
+    await loadClientPrefs(); // применяем per-device настройки поверх глобальных
     await loadSecurityRules();
     applyConfigToInputs();
     renderProfilesManager();
