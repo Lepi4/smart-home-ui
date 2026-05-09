@@ -1,3 +1,19 @@
+## v4.0.0 — Mobile app support: pairing, Bearer token auth, auto-switch local/remote
+
+### New
+- **Мобильный доступ** — новый раздел в настройках аддона
+- **Паринг по коду**: аддон генерирует 6-значный код (5 мин, одноразовый), пользователь вводит его в мобильном приложении → соединение установлено, токены настраиваются автоматически
+- **Bearer token middleware**: внешние запросы к аддону проверяются по токену + device_id; локальная сеть всегда открыта
+- **`src/mobile-auth.js`**: хранит привязки device_id→token в `/data/mobile-devices.json`, rate-limit на паринг
+- **Мобильное приложение (Capacitor)**: исходники в папке `mobile-app/`, два сервера (локальный + удалённый), авто-переключение, экран паринга «Введите код»
+- **API**: `/api/mobile/code`, `/api/mobile/pair`, `/api/mobile/devices` (CRUD)
+- **config.yaml version**: исправлено (было 3.6.0.5, теперь синхронизировано с package.json)
+- **ZIP**: пересобран с Unix-путями (forward slash) для корректной распаковки на Linux/HAOS
+
+### Fixed
+- config.yaml version не совпадал с package.json — HA считал что обновления нет
+- ZIP-архив содержал Windows backslash пути
+
 ## v3.6.0.7 — Live indicator + src/lovelace.js module split
 
 ### New

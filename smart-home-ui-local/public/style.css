@@ -1279,6 +1279,14 @@ body.live-paused #connection-text::after{content:' · live paused';font-size:11p
 .dot.connected{background:#45b66a;animation:dot-live-pulse 2s ease-in-out infinite}
 
 
+/* v3.6.0.7 — Mobile access panel */
+.mobile-pair-block,.mobile-devices-block{margin-top:18px;padding-top:14px;border-top:1px solid #252c36}
+.mobile-pair-block h4,.mobile-devices-block h4{margin:0 0 6px;font-size:14px}
+.mobile-code-wrap{display:flex;align-items:center;gap:14px;margin:10px 0}
+.mobile-code{font-size:32px;font-weight:800;letter-spacing:.18em;font-family:monospace;color:#f0b34b;background:#0e1117;padding:10px 20px;border-radius:12px;border:1px solid #303846;user-select:all}
+.mobile-device-row{background:#151a21;border:1px solid #222832;border-radius:12px;padding:10px 12px;margin:6px 0;display:flex;flex-direction:column;gap:4px}
+.mobile-device-name{background:#0b0f14;border:1px solid #2e3744;border-radius:8px;color:#fff;padding:6px 10px;width:100%}
+
 /* v3.4.31 — Placement Editor Rework: independent SVG coordinate layer */
 .placement-editor-modal{z-index:1900!important}
 .placement-editor-card{width:min(1180px,calc(100vw - 18px));height:min(94dvh,850px);max-height:94dvh;background:#0f141b!important;display:grid;grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden}

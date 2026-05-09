@@ -4,17 +4,26 @@ const path = require('path');
 const { Readable } = require('stream');
 const crypto = require('crypto');
 const { HA_API_BASE, HA_WS_URL, HA_TOKEN, haFetch, haWsCommand, statesCache, sseClients, broadcastSseEvent, startHaWsSubscription } = require('./src/ha');
+const mobileAuth = require('./src/mobile-auth');
 let sharp = null;
 try { sharp = require('sharp'); } catch (e) { sharp = null; }
 
 const app = express();
 
-// Security headers
+// Security + CORS headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Allow Capacitor mobile app (capacitor://localhost and http://localhost)
+  const origin = req.headers.origin || '';
+  if (/^capacitor:\/\/localhost$|^http:\/\/localhost(:\d+)?$/.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Device-ID');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
@@ -62,7 +71,7 @@ let ROOMS_SETTINGS_PATH = path.join(ACTIVE_LEVEL_DIR, 'rooms.json');
 let DEVICES_PATH = path.join(ACTIVE_LEVEL_DIR, 'devices.js');
 let LOVELACE_PATH = path.join(ACTIVE_LEVEL_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0.5';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '4.0.0';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -94,6 +103,28 @@ const COMMAND_LOG_PATH = path.join(DATA_DIR, 'command_log.json');
 const DASHBOARD_PROXY_STATE_PATH = path.join(DATA_DIR, 'dashboard_proxy.json');
 const DIRECT_DASHBOARD_PORT = Number(process.env.DIRECT_DASHBOARD_PORT || process.env.ALLHA_DIRECT_PORT || 8099);
 function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
+
+/* ── Mobile access helpers ───────────────────────────── */
+const LOCAL_IP_RE = /^(127\.|::1$|::ffff:127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
+function isLocalIp(req) {
+  const ip = req.socket?.remoteAddress || req.ip || '';
+  return LOCAL_IP_RE.test(ip);
+}
+function mobileAccessEnabled() {
+  try { return !!loadAddonConfig().mobileAccess?.enabled; } catch { return false; }
+}
+// Middleware: внешние запросы требуют Bearer token + X-Device-ID когда mobile access включён
+app.use((req, res, next) => {
+  if (!mobileAccessEnabled()) return next();
+  if (isLocalIp(req)) return next();
+  if (req.path === '/api/mobile/pair') return next(); // паринг открыт
+  const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+  const deviceId = (req.headers['x-device-id'] || '').trim();
+  if (!mobileAuth.validateToken(token, deviceId)) {
+    return res.status(401).json({ error: 'Требуется авторизация мобильного устройства' });
+  }
+  next();
+});
 function requestHostname(req){
   const raw = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim();
   if(!raw) return '';
@@ -1833,7 +1864,8 @@ function defaultAddonConfig(){
       darkTheme:true, kioskWidget:false, weatherEntity:'', showAllDevicesInRoom:false,
       haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00
     },
-    security: { panelMode:'admin', confirmDangerousServices:true, dangerousRequirePin:false, pinEnabled:false }
+    security: { panelMode:'admin', confirmDangerousServices:true, dangerousRequirePin:false, pinEnabled:false },
+    mobileAccess: { enabled: false, localUrl: '', remoteUrl: '' }
   };
 }
 function normalizeUiConfig(input){
@@ -1958,7 +1990,12 @@ function saveAddonConfig(cfg){
     pollIntervalMs: Math.max(2000, Number(cfg?.pollIntervalMs || current.pollIntervalMs || 6000)),
     dashboardPaths: normalizeDashboardPaths(cfg?.dashboardPaths ?? cfg?.dashboardPathText ?? current.dashboardPaths ?? ''),
     ui: normalizeUiConfig({ ...current.ui, ...(cfg?.ui||{}) }),
-    security: normalizeSecurityConfig({ ...current.security, ...(cfg?.security||{}) })
+    security: normalizeSecurityConfig({ ...current.security, ...(cfg?.security||{}) }),
+    mobileAccess: cfg?.mobileAccess !== undefined ? {
+      enabled: !!cfg.mobileAccess.enabled,
+      localUrl: String(cfg.mobileAccess.localUrl || current.mobileAccess?.localUrl || '').trim(),
+      remoteUrl: String(cfg.mobileAccess.remoteUrl || current.mobileAccess?.remoteUrl || '').trim()
+    } : (current.mobileAccess || { enabled: false, localUrl: '', remoteUrl: '' })
   };
   fs.writeFileSync(ADDON_CONFIG_PATH, JSON.stringify(next, null, 2), 'utf8');
   return next;
@@ -1991,7 +2028,13 @@ function publicConfig(cfg){
     dashboardPaths,
     dashboardPathText: dashboardPaths.join('\n'),
     ui: normalizeUiConfig(cfg?.ui||{}),
-    security: publicSecurityConfig(cfg?.security||{})
+    security: publicSecurityConfig(cfg?.security||{}),
+    mobileAccess: {
+      enabled: !!cfg?.mobileAccess?.enabled,
+      localUrl: String(cfg?.mobileAccess?.localUrl || ''),
+      remoteUrl: String(cfg?.mobileAccess?.remoteUrl || ''),
+      pairedDevices: mobileAuth.listDevices().length
+    }
   };
 }
 function splitDashboardPath(raw){
@@ -2534,6 +2577,69 @@ app.post('/api/import/layout', express.json({limit:'5mb'}), (req, res) => {
     const backup = saveLayout(layout);
     res.json({ok:true, backup: backup ? path.basename(backup) : null});
   } catch(e) { res.status(400).json({error: e.message}); }
+});
+
+/* ── Mobile access API ──────────────────────────────────────────────── */
+
+// Генерация кода — только с локального IP (только admin)
+app.get('/api/mobile/code', (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  try {
+    const existing = mobileAuth.getPendingCode();
+    res.json(existing || mobileAuth.generatePairingCode());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/mobile/code/new', (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  try { res.json(mobileAuth.generatePairingCode()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/mobile/code', (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  mobileAuth.cancelPendingCode();
+  res.json({ ok: true });
+});
+
+// Паринг — открытый эндпоинт (с rate-limit)
+app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res) => {
+  try {
+    const { code, device_id } = req.body || {};
+    const token = mobileAuth.consumeCode(code, device_id);
+    res.json({ ok: true, token });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
+// Список устройств — только локально
+app.get('/api/mobile/devices', (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  res.json({ devices: mobileAuth.listDevices() });
+});
+
+// Переименование
+app.patch('/api/mobile/devices/:id', express.json(), (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  try {
+    mobileAuth.renameDevice(req.params.id, req.body?.name);
+    res.json({ ok: true, devices: mobileAuth.listDevices() });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
+// Отзыв токена
+app.delete('/api/mobile/devices/:id', (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  try {
+    mobileAuth.revokeDevice(req.params.id);
+    res.json({ ok: true, devices: mobileAuth.listDevices() });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
+// Отзыв всех токенов
+app.delete('/api/mobile/devices', (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  mobileAuth.revokeAllDevices();
+  res.json({ ok: true, devices: [] });
 });
 
 const server = app.listen(PORT, () => {

@@ -2825,7 +2825,38 @@ function selectRoom(id){
   render();
 }
 function setConnection(ok,text,mode){const cls=mode==='live'?'connected':mode==='polling'?'polling':ok?'connected':'disconnected';el('connection-dot').className='dot '+cls;el('connection-text').textContent=text}
-async function apiJson(url,opt={}){const res=await fetch(url,{headers:{'Content-Type':'application/json'},...opt});const data=await res.json().catch(()=>({}));if(!res.ok){const err=new Error(data.error||data.message||res.status);err.status=res.status;err.data=data;throw err;}return data}
+/* ── Mobile auth token (set by Capacitor app via URL hash) ─────────── */
+const _mobileAuth = (()=>{
+  try{
+    // Capacitor передаёт токен через fragment: #_mt=TOKEN&_did=DEVICE_ID
+    const hash = location.hash.slice(1);
+    if(hash.includes('_mt=')){
+      const p = new URLSearchParams(hash);
+      const mt = p.get('_mt'), did = p.get('_did');
+      if(mt && did){
+        localStorage.setItem('_mobile_token', mt);
+        localStorage.setItem('_mobile_did', did);
+        // Убираем из URL чтобы не светиться в истории
+        history.replaceState(null,'', location.pathname + location.search);
+      }
+    }
+    const token = localStorage.getItem('_mobile_token') || '';
+    const deviceId = localStorage.getItem('_mobile_did') || '';
+    return { token, deviceId, active: !!(token && deviceId) };
+  }catch{ return { token:'', deviceId:'', active:false }; }
+})();
+
+async function apiJson(url,opt={}){
+  const headers = {'Content-Type':'application/json', ...(opt.headers||{})};
+  if(_mobileAuth.active){
+    headers['Authorization'] = `Bearer ${_mobileAuth.token}`;
+    headers['X-Device-ID'] = _mobileAuth.deviceId;
+  }
+  const res=await fetch(url,{...opt,headers});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){const err=new Error(data.error||data.message||res.status);err.status=res.status;err.data=data;throw err;}
+  return data;
+}
 async function loadLayout(){try{const l=await apiJson('api/layout'); state.layout={version:8,coordinateSpace:'room-content-box',overviewRoomSync:false,roomCoordinateMigrated:{},overviewMarkers:{},roomMarkers:{},overviewMetrics:{},roomMetrics:{},zones:{},customNames:{},...l}; if(!('coordinateSpace' in (l||{}))) state.layout.coordinateSpace='legacy-stage'; if(!('roomCoordinateMigrated' in (l||{}))) state.layout.roomCoordinateMigrated={}; if(!state.layout.overviewMarkers&&state.layout.markers)state.layout.overviewMarkers=state.layout.markers; migrateLayout();}catch(e){console.warn('layout load failed',e)}}
 function migrateLayout(){
   if(!state.layout.roomMarkers)state.layout.roomMarkers={};
@@ -4173,8 +4204,123 @@ function openModal(id){ const m=el(id); if(m){ m.classList.remove('hidden'); syn
 function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncModalOpenClass(); } }
 
 
+/* ── Mobile access UI ─────────────────────────────────────────────── */
+let _mobileCodeTimer = null;
+
+function mobileCodeTick(){
+  const disp = el('mobile-code-display');
+  const timer = el('mobile-code-timer');
+  if(!disp || !timer) return;
+  apiJson('api/mobile/code').then(d=>{
+    if(d && d.code && d.expires_in > 0){
+      disp.textContent = d.code;
+      timer.textContent = `${d.expires_in} с`;
+    } else {
+      disp.textContent = '——————';
+      timer.textContent = '';
+      if(_mobileCodeTimer){ clearInterval(_mobileCodeTimer); _mobileCodeTimer = null; }
+    }
+  }).catch(()=>{});
+}
+
+function startMobileCodePoll(){
+  if(_mobileCodeTimer) clearInterval(_mobileCodeTimer);
+  mobileCodeTick();
+  _mobileCodeTimer = setInterval(mobileCodeTick, 2000);
+}
+
+function stopMobileCodePoll(){
+  if(_mobileCodeTimer){ clearInterval(_mobileCodeTimer); _mobileCodeTimer = null; }
+  const disp = el('mobile-code-display'); if(disp) disp.textContent = '——————';
+  const timer = el('mobile-code-timer'); if(timer) timer.textContent = '';
+}
+
+async function loadMobileSettings(){
+  try{
+    const cfg = await apiJson('api/config');
+    const m = cfg.mobileAccess || {};
+    const chk = el('mobile-access-enabled'); if(chk) chk.checked = !!m.enabled;
+    const lu = el('mobile-local-url'); if(lu) lu.value = m.localUrl || '';
+    const ru = el('mobile-remote-url'); if(ru) ru.value = m.remoteUrl || '';
+    const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${m.pairedDevices || 0})`;
+    await loadMobileDevices();
+    startMobileCodePoll();
+  }catch(e){ console.error('loadMobileSettings', e); }
+}
+
+async function loadMobileDevices(){
+  const list = el('mobile-devices-list');
+  if(!list) return;
+  try{
+    const data = await apiJson('api/mobile/devices');
+    const devs = data.devices || [];
+    const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${devs.length})`;
+    if(!devs.length){ list.innerHTML = '<p class="muted">Нет привязанных устройств</p>'; return; }
+    list.innerHTML = devs.map(d=>`
+      <div class="mobile-device-row" data-did="${esc(d.device_id)}">
+        <input type="text" class="mobile-device-name" value="${esc(d.name)}" placeholder="Имя устройства">
+        <span class="muted" style="font-size:11px">Привязано: ${d.paired_at?.slice(0,10)||'—'} · Был: ${d.last_seen?.slice(0,10)||'—'}</span>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <button type="button" class="btn-mobile-rename" data-did="${esc(d.device_id)}">Переименовать</button>
+          <button type="button" class="btn-mobile-revoke" data-did="${esc(d.device_id)}">Отозвать</button>
+        </div>
+      </div>`).join('');
+  }catch(e){ list.innerHTML = `<p class="muted">Ошибка: ${esc(e.message)}</p>`; }
+}
+
+function bindMobileSettings(){
+  const saveCfg = el('btn-save-mobile-config');
+  if(saveCfg) saveCfg.onclick = async()=>{
+    const payload = { mobileAccess:{
+      enabled: !!el('mobile-access-enabled')?.checked,
+      localUrl: el('mobile-local-url')?.value||'',
+      remoteUrl: el('mobile-remote-url')?.value||''
+    }};
+    try{ await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)}); showToast('Настройки мобильного доступа сохранены'); }
+    catch(e){ showToast('Ошибка: '+e.message); }
+  };
+
+  const genCode = el('btn-mobile-gen-code');
+  if(genCode) genCode.onclick = async()=>{
+    try{ await apiJson('api/mobile/code/new',{method:'POST'}); startMobileCodePoll(); }
+    catch(e){ showToast('Ошибка генерации кода: '+e.message); }
+  };
+
+  const cancelCode = el('btn-mobile-cancel-code');
+  if(cancelCode) cancelCode.onclick = async()=>{
+    try{ await apiJson('api/mobile/code',{method:'DELETE'}); stopMobileCodePoll(); }
+    catch(e){ showToast('Ошибка: '+e.message); }
+  };
+
+  const revokeAll = el('btn-mobile-revoke-all');
+  if(revokeAll) revokeAll.onclick = async()=>{
+    if(!confirm('Отозвать токены всех устройств? Им придётся пройти паринг заново.')) return;
+    try{ await apiJson('api/mobile/devices',{method:'DELETE'}); await loadMobileDevices(); showToast('Все токены отозваны'); }
+    catch(e){ showToast('Ошибка: '+e.message); }
+  };
+
+  const devList = el('mobile-devices-list');
+  if(devList) devList.addEventListener('click', async e=>{
+    const renameBtn = e.target.closest('.btn-mobile-rename');
+    const revokeBtn = e.target.closest('.btn-mobile-revoke');
+    if(renameBtn){
+      const did = renameBtn.dataset.did;
+      const row = devList.querySelector(`[data-did="${did}"]`);
+      const name = row?.querySelector('.mobile-device-name')?.value || '';
+      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'PATCH',body:JSON.stringify({name})}); showToast('Имя сохранено'); }
+      catch(e){ showToast('Ошибка: '+e.message); }
+    }
+    if(revokeBtn){
+      const did = revokeBtn.dataset.did;
+      if(!confirm('Отозвать токен этого устройства?')) return;
+      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'DELETE'}); await loadMobileDevices(); showToast('Токен отозван'); }
+      catch(e){ showToast('Ошибка: '+e.message); }
+    }
+  });
+}
+
 function openSettingsPanel(name){
-  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels', backups:'settings-panel-backups'};
+  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels', backups:'settings-panel-backups', mobile:'settings-panel-mobile'};
   const id=map[name]||name;
   qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));
   qsa('#settings-modal [data-settings-panel]').forEach(btn=>btn.classList.toggle('active', btn.dataset.settingsPanel===name));
@@ -4182,6 +4328,7 @@ function openSettingsPanel(name){
   if(panel){
     panel.classList.remove('hidden');
     if(name==='backups') loadBackupsInfo();
+    if(name==='mobile') loadMobileSettings();
     const scroll=el('settings-modal')?.querySelector('.settings-scroll');
     setTimeout(()=>panel.scrollIntoView({block:'start', behavior:'smooth'}), 0);
     if(scroll) setTimeout(()=>{ scroll.scrollTop=Math.max(0, panel.offsetTop-10); }, 80);
@@ -4251,6 +4398,7 @@ function bindGlobal(){
     }
   }
   el('btn-faq-settings').onclick=async()=>{ await loadFaqContent(); openModal('faq-modal'); setTimeout(()=>{ const b=el('faq-content'); if(b) b.scrollTop=0; }, 50); };
+  bindMobileSettings();
   el('btn-close-faq').onclick=()=>closeModal('faq-modal');
   el('faq-modal').addEventListener('click',e=>{if(e.target.id==='faq-modal')closeModal('faq-modal')});
   el('btn-refresh-info').onclick=loadDiagnostics;

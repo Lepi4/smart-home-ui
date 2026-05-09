@@ -231,6 +231,7 @@
         <button type="button" id="btn-open-project-setup-wizard-settings">Мастер настройки</button>
         <button type="button" data-settings-panel="levels">Уровни / области</button>
         <button type="button" data-settings-panel="backups">Backup / архивы</button>
+        <button type="button" data-settings-panel="mobile">Мобильный доступ</button>
       </div>
       <div class="image-tools settings-section-panel hidden" id="settings-panel-images">
         <h3>Картинки / План</h3>
@@ -346,6 +347,35 @@
         </div>
         <div id="source-settings" class="source-settings"></div>
       </div>
+      <!-- Мобильный доступ -->
+      <div class="settings-section-panel hidden" id="settings-panel-mobile">
+        <h3>Мобильный доступ</h3>
+        <p class="muted">Разрешает вход в аддон по токену с мобильного приложения через внешний адрес. Локальная сеть (192.168.x.x) всегда открыта без токена.</p>
+        <label class="settings-check"><input type="checkbox" id="mobile-access-enabled"> Включить мобильный доступ (Bearer token для внешних запросов)</label>
+        <label>Локальный адрес аддона<input id="mobile-local-url" type="text" placeholder="http://192.168.1.45:8099"></label>
+        <label>Внешний адрес (DynDNS / белый IP)<input id="mobile-remote-url" type="text" placeholder="https://haos.dns.keenetic.club:8443"></label>
+        <button type="button" id="btn-save-mobile-config">Сохранить адреса</button>
+
+        <div class="mobile-pair-block">
+          <h4>Добавить устройство</h4>
+          <p class="muted">Нажмите «Создать код», введите его в мобильном приложении. Код действует 5 минут и сгорает после первого использования.</p>
+          <div class="mobile-code-wrap">
+            <span id="mobile-code-display" class="mobile-code">——————</span>
+            <span id="mobile-code-timer" class="muted"></span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <button type="button" id="btn-mobile-gen-code">Создать код</button>
+            <button type="button" id="btn-mobile-cancel-code">Отменить код</button>
+          </div>
+        </div>
+
+        <div class="mobile-devices-block">
+          <h4>Привязанные устройства <span id="mobile-devices-count" class="muted"></span></h4>
+          <div id="mobile-devices-list"><p class="muted">Загрузка...</p></div>
+          <button type="button" id="btn-mobile-revoke-all" style="margin-top:8px">Отозвать все токены</button>
+        </div>
+      </div>
+
       <div id="settings-status" class="status"></div>
       </div>
       <div class="modal-actions">
