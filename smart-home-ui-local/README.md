@@ -2,7 +2,7 @@
 
 ## v3.6.0.5 — Dual Access Mode: локальный direct-доступ + ingress для Home Assistant
 
-## Что добавлено
+### Что добавлено
 
 - Добавлен локальный direct-доступ к ALLHA-2D по порту **8099** без открытия интерфейса Home Assistant.
 - Штатный Home Assistant add-on ingress сохранён: боковое меню Home Assistant продолжает работать как раньше.
