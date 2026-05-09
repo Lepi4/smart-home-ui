@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "allha-2d-ha-addon",
   "version": "3.6.0.7",
   "private": true,
@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "express": "^4.21.2",
-    "ws": "^8.17.1",
+    "ws": "^8.17.1"
+  },
+  "optionalDependencies": {
     "sharp": "^0.33.5"
   }
 }

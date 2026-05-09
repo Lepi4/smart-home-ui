@@ -12,7 +12,9 @@ ENV npm_config_fund=false
 # on some arm64 emulated builders a simple `node -e ...` exits with code 132
 # even when npm install completed successfully.
 COPY package.json ./
-RUN npm install --omit=dev \
+# --ignore-optional skips sharp (native addon, crashes QEMU arm64 builds via SIGILL).
+# sharp is optional: server.js has try/catch fallback; image upload works without WebP conversion.
+RUN npm install --omit=dev --ignore-optional \
   && npm cache clean --force
 
 COPY . .
