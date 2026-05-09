@@ -2824,7 +2824,7 @@ function selectRoom(id){
   saveUiPrefs();
   render();
 }
-function setConnection(ok,text){el('connection-dot').className='dot '+(ok?'connected':'disconnected');el('connection-text').textContent=text}
+function setConnection(ok,text,mode){const cls=mode==='live'?'connected':mode==='polling'?'polling':ok?'connected':'disconnected';el('connection-dot').className='dot '+cls;el('connection-text').textContent=text}
 async function apiJson(url,opt={}){const res=await fetch(url,{headers:{'Content-Type':'application/json'},...opt});const data=await res.json().catch(()=>({}));if(!res.ok){const err=new Error(data.error||data.message||res.status);err.status=res.status;err.data=data;throw err;}return data}
 async function loadLayout(){try{const l=await apiJson('api/layout'); state.layout={version:8,coordinateSpace:'room-content-box',overviewRoomSync:false,roomCoordinateMigrated:{},overviewMarkers:{},roomMarkers:{},overviewMetrics:{},roomMetrics:{},zones:{},customNames:{},...l}; if(!('coordinateSpace' in (l||{}))) state.layout.coordinateSpace='legacy-stage'; if(!('roomCoordinateMigrated' in (l||{}))) state.layout.roomCoordinateMigrated={}; if(!state.layout.overviewMarkers&&state.layout.markers)state.layout.overviewMarkers=state.layout.markers; migrateLayout();}catch(e){console.warn('layout load failed',e)}}
 function migrateLayout(){
@@ -3895,7 +3895,7 @@ async function clearConfig(){
   }
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();setConnection(true,state.edit?'Редактор · live paused':'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();const sseOpen=state._sseSource&&state._sseSource.readyState===1;if(state.edit)setConnection(true,'Редактор · live paused');else if(sseOpen)setConnection(true,'Live ●','live');else setConnection(true,'Поллинг ↺','polling')}catch(e){setConnection(false,'Нет связи ✗');console.error(e)}}
 function startPolling(){
   if(state.pollTimer)clearInterval(state.pollTimer);
   if(state.edit || state.livePaused) return;
@@ -3935,7 +3935,7 @@ function startPolling(){
         states.forEach(s=>{ state.states[s.entity_id]=s; });
         applySourceConfig(); refreshRuntimeRooms(); updateAttentionFromStates();
         if(!state.edit && !state.livePaused) render();
-        setConnection(true, state.edit?'Редактор · live paused':'Live ●');
+        setConnection(true, state.edit?'Редактор · live paused':'Live ●', state.edit?'':'live');
         // Перезапускаем поллинг с длинным интервалом (fallback)
         startPolling();
       }catch(err){ console.error('SSE initial_states',err); }
@@ -3969,7 +3969,7 @@ function startPolling(){
 
     es.onerror=()=>{
       state._sseSource=null; es.close();
-      // Возврат к нормальному поллингу
+      setConnection(true,'Поллинг ↺','polling');
       startPolling();
       clearTimeout(retryTimer);
       retryTimer=setTimeout(connectSse, 8000);

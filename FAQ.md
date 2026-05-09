@@ -1,3 +1,53 @@
+# ALLHA-2D FAQ — v3.6.0.5
+
+## Как открыть ALLHA-2D локально без Home Assistant UI?
+
+В v3.6.0.5 добавлен локальный direct-доступ через порт **8099**:
+
+```text
+http://IP_HOME_ASSISTANT:8099/
+```
+
+Например для домашнего планшета/киоска в локальной сети:
+
+```text
+http://192.168.1.10:8099/
+```
+
+Этот порт не нужно открывать наружу на роутере. Он предназначен для локальной сети.
+
+## Сохранится ли боковое меню add-on в Home Assistant?
+
+Да. `ingress: true` сохранён. ALLHA-2D можно открывать двумя способами:
+
+```text
+Home Assistant → боковое меню → ALLHA-2D
+```
+
+и
+
+```text
+http://IP_HOME_ASSISTANT:8099/
+```
+
+## Как сделать ALLHA-2D стартовой панелью Home Assistant, чтобы работало локально и удалённо?
+
+Используйте ingress-aware Lovelace card / Addon Iframe Card, которую вы уже выбрали. Это лучше, чем вставлять локальный `http://IP:8099/` в обычный Webpage dashboard, потому что локальный IP не откроется через Home Assistant Cloud/удалённый доступ.
+
+Рекомендуемая схема:
+
+```text
+Локальный киоск/планшет: http://IP_HOME_ASSISTANT:8099/
+Home Assistant dashboard локально/удалённо: ingress-aware Lovelace card
+Боковое меню add-on: штатный ingress
+```
+
+## Нужно ли пробрасывать порт 8099 в интернет?
+
+Нет. Не пробрасывайте порт 8099 на роутере. Для удалённого доступа используйте Home Assistant + ingress-aware card или свой reverse proxy с авторизацией/HTTPS.
+
+---
+
 # ALLHA-2D FAQ — v3.6.0.4
 
 ## Что изменилось в v3.6.0.4?

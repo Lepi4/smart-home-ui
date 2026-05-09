@@ -1273,6 +1273,10 @@ body.editing .quick-overlay-button,
 body.editing .quick-overlay{display:none!important}
 body.editing .toolbar p{color:#7a8491!important}
 body.live-paused #connection-text::after{content:' · live paused';font-size:11px;color:#d9a441}
+/* v3.6.0.7 — connection mode indicator */
+.dot.polling{background:#d9a441}
+@keyframes dot-live-pulse{0%,100%{box-shadow:0 0 0 0 rgba(69,182,106,.55)}50%{box-shadow:0 0 0 4px rgba(69,182,106,0)}}
+.dot.connected{background:#45b66a;animation:dot-live-pulse 2s ease-in-out infinite}
 
 
 /* v3.4.31 — Placement Editor Rework: independent SVG coordinate layer */
