@@ -1,42 +1,22 @@
-# ALLHA-2D Local — v3.6.0.5
+# ALLHA-2D Local — v3.6.0.7
 
-## v3.6.0.5 — Dual Access Mode: локальный direct-доступ + ingress для Home Assistant
+## v3.6.0.7 — Live indicator + Lovelace parser module split
 
 ### Что добавлено
 
-- Добавлен локальный direct-доступ к ALLHA-2D по порту **8099** без открытия интерфейса Home Assistant.
-- Штатный Home Assistant add-on ingress сохранён: боковое меню Home Assistant продолжает работать как раньше.
-- Новый сценарий для домашней панели/планшета:
-
-```text
-http://IP_HOME_ASSISTANT:8099/
-```
-
-- Порт 8099 предназначен для локальной сети. Не пробрасывайте его на роутере наружу.
-- Для стартовой панели Home Assistant локально/удалённо используйте вашу ingress-aware Lovelace card / Addon Iframe Card.
-- В окне **Информация / Диагностика** добавлены строки:
-  - **Локальный адрес без Home Assistant**;
-  - **Direct local port**;
-  - **Ingress для карточки**.
-- Для reverse proxy оставлен маршрут `/allha-2d-direct/`, но он нужен только если вы сами настраиваете proxy-route.
-
-### Режимы доступа
-
-```text
-Локально без Home Assistant:
-http://IP_HOME_ASSISTANT:8099/
-
-Внутри Home Assistant:
-Боковое меню add-on / ingress
-
-Стартовая панель Home Assistant локально и удалённо:
-Ingress-aware Lovelace card / Addon Iframe Card
-```
+- Добавлен индикатор режима соединения в строке подключения:
+  - 🟢 **Live ●** — активна SSE-подписка, состояния приходят в реальном времени;
+  - 🟡 **Поллинг ↺** — SSE недоступен, работает HTTP-поллинг;
+  - 🔴 **Нет связи ✗** — ошибка соединения.
+- Зелёная точка Live-режима пульсирует для визуального отличия.
+- Парсер Lovelace вынесен из `server.js` в отдельный модуль `src/lovelace.js`.
+- Архитектура сервера стала чище: `server.js` отвечает за HTTP-роуты и бизнес-логику, `src/ha.js` — за HA WebSocket/SSE, `src/lovelace.js` — за разбор Lovelace.
+- Сохранён Dual Access Mode из v3.6.0.5: локальный direct-доступ по `http://IP_HOME_ASSISTANT:8099/` и штатный Home Assistant ingress через боковое меню.
 
 > Репозиторий проекта: https://github.com/Lepi4/smart-home-ui  
 > Разработчик: **Lepi4**  
 > Приложение: **ALLHA-2D**  
-> Версия: **3.6.0.5**
+> Версия: **3.6.0.7**
 
 ---
 

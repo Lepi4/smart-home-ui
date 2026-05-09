@@ -1,4 +1,4 @@
-# ALLHA-2D FAQ — v3.6.0.5
+# ALLHA-2D FAQ — v3.6.0.7
 
 ## Как открыть ALLHA-2D локально без Home Assistant UI?
 
