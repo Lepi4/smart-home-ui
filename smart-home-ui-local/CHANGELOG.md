@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## v4.1.5
+
+- Исправлена проверка доступности сервера из Android/Capacitor WebView.
+- CORS теперь разрешает `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost`, `null` и отвечает на Private Network Access preflight.
+- `OPTIONS` отвечает до мобильной авторизации.
+- Добавлен открытый endpoint `/api/mobile/debug` для проверки готовности мобильного доступа и паринга.
+- В мобильном приложении добавлена кнопка «Проверить сервер».
+- Ошибка «Сервер недоступен» заменена на подробную диагностику URL, HTTP status, CORS/no-cors/network.
+- Сохранена защита порта 8100: без токена браузер видит только заглушку, не полный интерфейс.
+
 ## v4.1.4
 
 - Исправлена диагностика “сервер недоступен” в Android-приложении: сервер теперь отдаёт CORS-заголовки для `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost` и `null` origin.

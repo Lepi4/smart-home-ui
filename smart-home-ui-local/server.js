@@ -16,18 +16,23 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  // Allow Capacitor mobile app WebView origins.
-  // Android Capacitor may use https://localhost, http://localhost, capacitor://localhost
-  // or ionic://localhost depending on Capacitor/WebView version. Missing CORS headers
-  // made the app report “server unavailable” even when http://IP:8100 opened in browser.
+
+  // Mobile app / Capacitor CORS.
+  // Capacitor 6 on Android commonly sends Origin: https://localhost.
+  // Chrome/WebView may also send a Private Network Access preflight when
+  // https://localhost calls http://192.168.x.x:8100. This must be answered
+  // before mobile auth middleware, otherwise the APK only reports "server unavailable".
   const origin = req.headers.origin || '';
-  const allowedMobileOrigins = /^(capacitor|ionic):\/\/localhost$|^https?:\/\/localhost(?::\d+)?$/i;
-  if (!origin || origin === 'null' || allowedMobileOrigins.test(origin)) {
-    if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
-    else res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Vary', 'Origin');
+  const allowedOrigins = /^(capacitor|ionic):\/\/localhost$|^https?:\/\/localhost(?::\d+)?$/i;
+  if (!origin || origin === 'null' || allowedOrigins.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Vary', 'Origin, Access-Control-Request-Headers, Access-Control-Request-Method, Access-Control-Request-Private-Network');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Device-ID,X-Client-ID');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-ID, X-Client-ID, Accept, Origin, X-Requested-With');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (String(req.headers['access-control-request-private-network'] || '').toLowerCase() === 'true') {
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    }
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -50,7 +55,7 @@ setInterval(() => { const now = Date.now(); _rlStore.forEach((e, k) => { if (now
 
 const PORT = process.env.PORT || 8080;
 const MOBILE_PORT = Number(process.env.MOBILE_PORT || 8100);
-const MOBILE_OPEN_PATHS = new Set(['/api/health', '/api/mobile/pair', '/mobile-lock.html']);
+const MOBILE_OPEN_PATHS = new Set(['/api/health', '/api/mobile/debug', '/api/mobile/pair', '/mobile-lock.html']);
 const MOBILE_WEB_COOKIE = 'allha_mobile_session';
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const FALLBACK_DATA_DIR = path.join(__dirname, 'data');
@@ -2404,6 +2409,20 @@ app.delete('/api/images/rooms/:room_id', (req,res)=>{
 });
 
 app.get('/api/health', (req,res)=> res.json({ ok:true, app:'ALLHA-2D', version: ADDON_VERSION, mobilePort: req.socket?.localPort === MOBILE_PORT }));
+app.get('/api/mobile/debug', (req, res) => {
+  const cfg = loadAddonConfig();
+  const pending = mobileAuth.getPendingCode();
+  res.json({
+    ok: true,
+    app: 'ALLHA-2D',
+    version: ADDON_VERSION,
+    mobilePort: req.socket?.localPort === MOBILE_PORT,
+    mobileAccessEnabled: !!cfg?.mobileAccess?.enabled,
+    pairingPasswordSet: !!String(cfg?.mobileAccess?.pairingPassword || '').trim(),
+    pairingCodeActive: !!pending,
+    pairedDevices: mobileAuth.listDevices().length
+  });
+});
 app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
 app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });

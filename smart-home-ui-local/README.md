@@ -886,3 +886,11 @@ https://example.domain
 Если адрес `http://IP:8100` открывается в браузере и показывает заглушку `ALLHA-2D Mobile Access`, но Android-приложение пишет “Сервер недоступен”, причина обычно в CORS origin Android WebView. В v4.1.4 сервер разрешает `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost` и `null` origin.
 
 Проверочный адрес для браузера: `http://IP_HOME_ASSISTANT:8100/api/health`. Должен вернуться JSON с `ok: true`.
+
+
+## v4.1.5 — mobile CORS / pairing diagnostics
+
+- Усилен CORS для Android/Capacitor WebView (`https://localhost`, `capacitor://localhost`, Private Network Access).
+- Добавлена диагностика мобильного подключения `/api/mobile/debug`.
+- APK показывает точный URL и ошибку подключения вместо общего сообщения.
+- Порт 8100 по-прежнему не отдаёт полный web UI без токена.
