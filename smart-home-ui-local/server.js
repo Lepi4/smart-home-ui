@@ -21,7 +21,7 @@ app.use((req, res, next) => {
   if (/^capacitor:\/\/localhost$|^http:\/\/localhost(:\d+)?$/.test(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Device-ID');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Device-ID,X-Client-ID');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -931,8 +931,8 @@ function defaultUiState(){
     updatedAt: null
   };
 }
-function loadUiState(){
-  const loaded = readJsonSafe(UI_STATE_PATH, {});
+function loadUiState(uiPath = UI_STATE_PATH){
+  const loaded = readJsonSafe(uiPath, {});
   const def = defaultUiState();
   const legacyUi = (loaded && loaded.ui && typeof loaded.ui === 'object') ? loaded.ui : {};
   const cleanUi = { ...def.ui };
@@ -950,8 +950,8 @@ function loadUiState(){
     viewport: { ...def.viewport, ...(loaded.viewport||{}), overview:{...def.viewport.overview, ...(loaded.viewport?.overview||{})}, rooms: loaded.viewport?.rooms || {} }
   };
 }
-function saveUiState(payload){
-  const current = loadUiState();
+function saveUiState(payload, uiPath = UI_STATE_PATH){
+  const current = loadUiState(uiPath);
   const next = {
     ...current,
     ...(payload||{}),
@@ -959,7 +959,7 @@ function saveUiState(payload){
     viewport: { ...current.viewport, ...(payload?.viewport||{}), overview:{...current.viewport.overview, ...(payload?.viewport?.overview||{})}, rooms: payload?.viewport?.rooms || current.viewport.rooms || {} },
     updatedAt: new Date().toISOString()
   };
-  atomicWriteJson(UI_STATE_PATH, next);
+  atomicWriteJson(uiPath, next);
   return next;
 }
 function parseJsAssignedArray(file, name){
@@ -1617,17 +1617,17 @@ function normalizeRoomsSettings(payload){
   }
   return { version: Number(src.version) || 1, rooms, updatedAt: src.updatedAt || null };
 }
-function loadRoomsSettings(){ return normalizeRoomsSettings(readJsonSafe(ROOMS_SETTINGS_PATH, defaultRoomsSettings())); }
-function saveRoomsSettings(payload){
+function loadRoomsSettings(roomsPath = ROOMS_SETTINGS_PATH){ return normalizeRoomsSettings(readJsonSafe(roomsPath, defaultRoomsSettings())); }
+function saveRoomsSettings(payload, roomsPath = ROOMS_SETTINGS_PATH){
   const next = normalizeRoomsSettings({ ...(payload||{}), updatedAt: new Date().toISOString() });
-  atomicWriteJson(ROOMS_SETTINGS_PATH, next);
+  atomicWriteJson(roomsPath, next);
   return next;
 }
-function saveRoomStandardSensors(roomId, sensors){
+function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId);
-  const current = loadRoomsSettings();
+  const current = loadRoomsSettings(roomsPath);
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: normalizeStandardSensors(sensors || {}) };
-  return saveRoomsSettings(current);
+  return saveRoomsSettings(current, roomsPath);
 }
 function roomSourcesForApi(){
   const settings = loadRoomsSettings();
@@ -1707,7 +1707,7 @@ async function buildDiagnostics(req=null){
     generatedAt: new Date().toISOString()
   };
 }
-function loadLayout(){ if(!fs.existsSync(LAYOUT_PATH)) return {version:1, markers:{}}; try{return JSON.parse(fs.readFileSync(LAYOUT_PATH,'utf8'));}catch(e){return {version:1, markers:{}};} }
+function loadLayout(layoutPath = LAYOUT_PATH){ if(!fs.existsSync(layoutPath)) return {version:1, markers:{}}; try{return JSON.parse(fs.readFileSync(layoutPath,'utf8'));}catch(e){return {version:1, markers:{}};} }
 function timestampForFile(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function backupLayout(){
   if(!fs.existsSync(LAYOUT_PATH)) return null;
@@ -1716,15 +1716,19 @@ function backupLayout(){
   fs.copyFileSync(LAYOUT_PATH, backupPath);
   return backupPath;
 }
-function saveLayout(layout){
-  fs.mkdirSync(DATA_DIR,{recursive:true});
+function saveLayout(layout, layoutPath = LAYOUT_PATH){
+  fs.mkdirSync(path.dirname(layoutPath),{recursive:true});
   const normalized = normalizeLayoutPayload(layout || {version:8}, {strict:false});
   const payload = normalized.layout;
   let backupPath = null;
-  if(fs.existsSync(LAYOUT_PATH)) backupPath = backupLayout();
-  const tmpPath = LAYOUT_PATH + '.tmp';
+  if(fs.existsSync(layoutPath)){
+    fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
+    backupPath = path.join(LAYOUT_BACKUP_DIR, `layout-${timestampForFile()}.json`);
+    fs.copyFileSync(layoutPath, backupPath);
+  }
+  const tmpPath = layoutPath + '.tmp';
   fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
-  fs.renameSync(tmpPath, LAYOUT_PATH);
+  fs.renameSync(tmpPath, layoutPath);
   pruneLayoutBackups(20);
   return backupPath;
 }
@@ -1742,14 +1746,14 @@ function defaultSourceConfig(){
     dashboardPaths: []
   };
 }
-function loadSourceConfig(){
-  if(!fs.existsSync(SOURCE_CONFIG_PATH)) return defaultSourceConfig();
-  try { return { ...defaultSourceConfig(), ...JSON.parse(fs.readFileSync(SOURCE_CONFIG_PATH,'utf8')) }; }
+function loadSourceConfig(srcPath = SOURCE_CONFIG_PATH){
+  if(!fs.existsSync(srcPath)) return defaultSourceConfig();
+  try { return { ...defaultSourceConfig(), ...JSON.parse(fs.readFileSync(srcPath,'utf8')) }; }
   catch(e){ return defaultSourceConfig(); }
 }
-function saveSourceConfig(cfg){
-  fs.mkdirSync(path.dirname(SOURCE_CONFIG_PATH),{recursive:true});
-  fs.writeFileSync(SOURCE_CONFIG_PATH, JSON.stringify({ ...defaultSourceConfig(), ...(cfg || {}) }, null, 2), 'utf8');
+function saveSourceConfig(cfg, srcPath = SOURCE_CONFIG_PATH){
+  fs.mkdirSync(path.dirname(srcPath),{recursive:true});
+  fs.writeFileSync(srcPath, JSON.stringify({ ...defaultSourceConfig(), ...(cfg || {}) }, null, 2), 'utf8');
 }
 function loadSourceConfigForLevel(profileId, levelId){
   const lp = ensureLevelDirs(profileId || ACTIVE_PROFILE_ID, levelId || ACTIVE_LEVEL_ID);
@@ -2173,6 +2177,21 @@ app.get('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...profilesDiagnost
 app.post('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...createProfile(req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.post('/api/profiles/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...duplicateProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.post('/api/profiles/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateProfile(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/profiles/:id/activate-for-client', express.json(), (req,res)=>{
+  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
+  if(!cid) return res.status(400).json({ ok:false, error: 'X-Client-ID required' });
+  try{
+    const profileId = sanitizeProfileId(req.params.id);
+    const meta = loadProfilesMeta();
+    if(!meta.profiles.some(p=>p.id===profileId)) return res.status(404).json({ ok:false, error: 'Profile not found' });
+    fs.mkdirSync(CLIENT_PREFS_DIR,{recursive:true});
+    const prefsFile = path.join(CLIENT_PREFS_DIR, `${cid}.json`);
+    const existing = (()=>{ try{return JSON.parse(fs.readFileSync(prefsFile,'utf8'));}catch{return {};} })();
+    existing.activeProfileId = profileId;
+    fs.writeFileSync(prefsFile, JSON.stringify(existing,null,2), 'utf8');
+    res.json({ ok:true, activeProfileId: profileId });
+  }catch(e){ res.status(500).json({ ok:false, error: e.message }); }
+});
 app.post('/api/profiles/:id/copy-from', (req,res)=>{ try{res.json(copyProfileData(req.params.id, req.body||{}));}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.delete('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...deleteProfile(req.params.id, req.body||{}), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.patch('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...patchProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
@@ -2326,17 +2345,17 @@ app.delete('/api/images/rooms/:room_id', (req,res)=>{
 });
 
 app.get('/api/health', (req,res)=> res.json({ ok:true }));
-app.get('/api/layout', (req,res)=>{ try{res.json(loadLayout());}catch(e){res.status(500).json({error:e.message});} });
-app.get('/api/rooms', (req,res)=>{ try{ res.json({ ok:true, ...loadRoomsSettings(), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
-app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });
-app.get('/api/layout/diagnostics', (req,res)=>{ try{res.json(analyzeLayout(loadLayout()));}catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
+app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });
+app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/clear-zones', (req,res)=>{ try{res.json(clearLayoutZones());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/factory-reset', (req,res)=>{ try{res.json(factoryResetProject(req.body?.confirm));}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.get('/api/source-config', (req,res)=>{ try{res.json(loadSourceConfig());}catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/source-config', (req,res)=>{ try{saveSourceConfig(req.body);res.json({ok:true, config: loadSourceConfig()});}catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/layout', (req,res)=>{ try{const backup=saveLayout(req.body);res.json({ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(loadLayout())});}catch(e){res.status(400).json({error:e.message});} });
+app.get('/api/source-config', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadSourceConfig(lp.sourceConfig)); }catch(e){res.status(500).json({error:e.message});} });
+app.post('/api/source-config', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveSourceConfig(req.body, lp.sourceConfig); res.json({ok:true, config: loadSourceConfig(lp.sourceConfig)}); }catch(e){res.status(500).json({error:e.message});} });
+app.post('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); const backup=saveLayout(req.body, lp.layout); res.json({ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(loadLayout(lp.layout))}); }catch(e){res.status(400).json({error:e.message});} });
 app.get('/api/config', (req,res)=> { try { res.json(publicConfig(loadAddonConfig())); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/config', (req,res)=> {
   try {
@@ -2350,7 +2369,7 @@ app.post('/api/config', (req,res)=> {
 app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:6000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', hasSupervisorToken:!!HA_TOKEN }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/ui-state', (req,res)=> { try { res.json(loadUiState()); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/ui-state', (req,res)=> { try { const lp=clientLevelPaths(req); res.json(loadUiState(lp.uiState)); } catch(e){ res.status(500).json({error:e.message}); } });
 
 
 app.get('/api/security/rules', (req,res)=>{
@@ -2434,7 +2453,7 @@ app.post('/api/attention/clear', async (req,res)=> {
   catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.post('/api/ui-state', (req,res)=> { try { res.json({ok:true, state: saveUiState(req.body || {})}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/ui-state', (req,res)=> { try { const lp=clientLevelPaths(req); res.json({ok:true, state: saveUiState(req.body || {}, lp.uiState)}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics(req)); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/backups/create', (req,res)=> { try { const item=createManualBackup(req.body?.reason||'manual'); res.json({ok:true, backup:item, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
@@ -2648,6 +2667,20 @@ const CLIENT_PREFS_DIR = path.join(DATA_DIR, 'client-prefs');
 function sanitizeClientId(id) {
   // Allow only safe chars to prevent path traversal
   return String(id || '').replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 128);
+}
+function getClientPrefs(clientId) {
+  const safe = sanitizeClientId(clientId);
+  if(!safe) return {};
+  try{ return JSON.parse(fs.readFileSync(path.join(CLIENT_PREFS_DIR, `${safe}.json`), 'utf8')); }catch{ return {}; }
+}
+function clientLevelPaths(req) {
+  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
+  const prefs = cid ? getClientPrefs(cid) : {};
+  const requestedPid = sanitizeProfileId(prefs.activeProfileId || '');
+  const meta = loadProfilesMeta();
+  const profileId = (requestedPid && meta.profiles.some(p=>p.id===requestedPid)) ? requestedPid : ACTIVE_PROFILE_ID;
+  const levels = loadLevelsMeta(profileId);
+  return ensureLevelDirs(profileId, levels.activeLevelId || 'level-1');
 }
 
 app.get('/api/prefs', (req, res) => {

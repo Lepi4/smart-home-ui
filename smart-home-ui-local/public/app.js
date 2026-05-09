@@ -3132,15 +3132,21 @@ function renderProfilesManager(){
   const data=state.profiles;
   if(!data){ box.innerHTML='<p class="muted">Профили ещё не загружены.</p>'; return; }
   const profiles=Array.isArray(data.profiles) ? data.profiles : [];
-  const activeId=data.activeProfileId || profiles.find(p=>p.active)?.id || 'profile-1';
+  const globalActiveId=data.activeProfileId || profiles.find(p=>p.active)?.id || 'profile-1';
+  const clientActiveId=state._clientActiveProfileId || globalActiveId;
   const canCreate=profiles.length < (data.max || 5);
   const rows=profiles.map(p=>{
-    const active=p.id===activeId || p.active;
-    return `<div class="profile-row${active?' active-profile':''}" data-profile-row="${esc(p.id)}">`+
-      `<div><strong>${esc(p.name||p.id)}</strong>${active?' <span class="profile-badge">активный</span>':''}<br>`+
+    const globalActive=p.id===globalActiveId || p.active;
+    const clientActive=p.id===clientActiveId;
+    let badges='';
+    if(globalActive) badges+=' <span class="profile-badge">общий</span>';
+    if(clientActive) badges+=' <span class="profile-badge profile-badge-device">это устройство</span>';
+    return `<div class="profile-row${clientActive?' active-profile':''}" data-profile-row="${esc(p.id)}">`+
+      `<div><strong>${esc(p.name||p.id)}</strong>${badges}<br>`+
       `<span class="muted">${esc(p.id)} · ${p.exists?'папка есть':'папка не найдена'}${p.updatedAt?' · '+esc(new Date(p.updatedAt).toLocaleString()):''}</span></div>`+
       `<div class="profile-actions">`+
-      `<button type="button" data-profile-activate="${esc(p.id)}" ${active?'disabled':''}>Переключить</button>`+
+      `<button type="button" data-profile-activate-device="${esc(p.id)}" ${clientActive?'disabled':''}>Для этого устройства</button>`+
+      `<button type="button" data-profile-activate="${esc(p.id)}" ${globalActive?'disabled':''}>Глобально</button>`+
       `<button type="button" data-profile-rename="${esc(p.id)}">Переименовать</button>`+
       `<button type="button" data-profile-duplicate="${esc(p.id)}" ${canCreate?'':'disabled'}>Дублировать</button>`+
       `<button type="button" class="danger-button small-danger" data-profile-delete="${esc(p.id)}" ${profiles.length<=1?'disabled':''}>Удалить</button>`+
@@ -3150,7 +3156,8 @@ function renderProfilesManager(){
       `<p class="muted">Для зон и маркеров приложение сравнит overview-карты источника и назначения. При несовпадении размера или aspect ratio появится предупреждение.</p>`+
       `</details>`;
   }).join('');
-  box.innerHTML=`<div class="profile-summary"><strong>Активный профиль:</strong> ${esc(activeId)} · ${profiles.length}/${data.max||3}</div>`+
+  box.innerHTML=`<div class="profile-summary"><strong>Общий профиль:</strong> ${esc(globalActiveId)} · <strong>Этот клиент:</strong> ${esc(clientActiveId)} · ${profiles.length}/${data.max||3}</div>`+
+    `<p class="muted" style="margin:4px 0 12px">«Для этого устройства» — только эта вкладка/телефон переключится на выбранный профиль. «Глобально» — все устройства без своего профиля будут видеть этот профиль.</p>`+
     `<div class="profile-create-card"><h4>Создать новый профиль</h4>`+
     `<label>Название профиля <input id="new-profile-name" type="text" placeholder="Например: Этаж 2 / Двор / Тест"></label>`+
     `<label class="settings-check"><input type="checkbox" id="new-profile-copy-zones"> Дублировать зоны из текущего профиля</label>`+
@@ -3159,7 +3166,7 @@ function renderProfilesManager(){
     `<button type="button" id="btn-open-project-setup-wizard" ${canCreate?'':'disabled'}>Мастер настройки</button>`+
     `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 5 профилей'}</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
-    `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей. После переключения профиль лучше перезагрузить страницу.</p>`;
+    `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей.</p>`;
   qsa('button,input,select', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
 }
 async function createProfileFromSettings(){
@@ -3186,10 +3193,20 @@ async function duplicateProfileFromSettings(profileId){
 }
 async function activateProfileFromSettings(profileId){
   if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
-  if(!confirm('Переключить активный профиль? Несохранённые изменения текущей формы настроек будут потеряны. После переключения страница будет перезагружена.')) return;
+  if(!confirm('Переключить глобальный профиль? Все устройства без своего профиля увидят его. После переключения страница будет перезагружена.')) return;
   try{
     await apiJson(`api/profiles/${encodeURIComponent(profileId)}/activate`,{method:'POST'});
     showToast('Профиль переключён. Перезагрузка...');
+    setTimeout(()=>location.reload(), 700);
+  }catch(e){ showToast('Ошибка переключения профиля: '+e.message); }
+}
+async function activateProfileForDevice(profileId){
+  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  try{
+    await apiJson(`api/profiles/${encodeURIComponent(profileId)}/activate-for-client`,{method:'POST'});
+    state._clientActiveProfileId = profileId;
+    await saveClientPrefs().catch(()=>{});
+    showToast('Профиль переключён для этого устройства. Перезагрузка...');
     setTimeout(()=>location.reload(), 700);
   }catch(e){ showToast('Ошибка переключения профиля: '+e.message); }
 }
@@ -4552,6 +4569,7 @@ function bindGlobal(){
   if(profilesManager) profilesManager.addEventListener('click', e=>{
     const setup=e.target.closest('#btn-open-project-setup-wizard'); if(setup){ openProjectSetupWizard(); return; }
     const create=e.target.closest('#btn-create-profile'); if(create){ createProfileFromSettings(); return; }
+    const actDevice=e.target.closest('[data-profile-activate-device]'); if(actDevice){ activateProfileForDevice(actDevice.dataset.profileActivateDevice); return; }
     const act=e.target.closest('[data-profile-activate]'); if(act){ activateProfileFromSettings(act.dataset.profileActivate); return; }
     const ren=e.target.closest('[data-profile-rename]'); if(ren){ renameProfileFromSettings(ren.dataset.profileRename); return; }
     const dup=e.target.closest('[data-profile-duplicate]'); if(dup){ duplicateProfileFromSettings(dup.dataset.profileDuplicate); return; }
