@@ -1970,3 +1970,27 @@ body.kiosk-tiles-active:not(.kiosk-has-clock) .kiosk-tile-head h2{
   body.kiosk-tiles-active .kiosk-tile-home-btn{min-height:34px!important;padding:7px 10px!important;font-size:12px!important;}
   body.kiosk-tiles-active .kiosk-tile-head h2{padding-right:96px!important;}
 }
+
+
+/* v3.6.0.4: profile copy tools + copyable diagnostics/settings */
+#settings-modal, #info-modal, #faq-modal,
+#settings-modal *, #info-modal *, #faq-modal *,
+#settings-modal input, #settings-modal textarea, #settings-modal code, #settings-modal pre,
+#info-modal code, #info-modal pre, .copyable, .copyable *,.dashboard-url{
+  user-select:text!important;
+  -webkit-user-select:text!important;
+}
+.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone{
+  user-select:none;
+  -webkit-user-select:none;
+}
+.profile-copy-tools{grid-column:1/-1;margin-top:10px;border-top:1px solid rgba(255,255,255,.10);padding-top:8px;}
+.profile-copy-tools summary{cursor:pointer;font-weight:800;color:#dce6f3;}
+.profile-copy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;margin-top:10px;}
+.profile-copy-action{display:grid;grid-template-columns:1fr;gap:6px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.045);border-radius:12px;padding:8px;}
+.profile-copy-action button{width:100%;}
+.profile-copy-action select{width:100%;min-height:36px;border-radius:10px;background:rgba(0,0,0,.22);color:var(--text);border:1px solid rgba(255,255,255,.14);padding:6px 8px;}
+.info-table td.copyable{word-break:break-word;}
+.copyable-value{white-space:pre-wrap;}
+.copy-inline{margin-left:8px;padding:4px 8px;border-radius:9px;font-size:12px;vertical-align:middle;}
+.copy-fallback-textarea{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:.01;}

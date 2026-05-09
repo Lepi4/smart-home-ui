@@ -39,7 +39,7 @@ let ROOMS_SETTINGS_PATH = path.join(ACTIVE_LEVEL_DIR, 'rooms.json');
 let DEVICES_PATH = path.join(ACTIVE_LEVEL_DIR, 'devices.js');
 let LOVELACE_PATH = path.join(ACTIVE_LEVEL_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0.3';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0.4';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -83,6 +83,16 @@ function normalizeIngressProxyPath(value){
   if(m) return m[1] + '/';
   return '';
 }
+function dashboardUrlCandidates(basePath){
+  const clean = normalizeIngressProxyPath(basePath);
+  const out = [];
+  if(clean){
+    out.push({ label:'Ingress proxy', url:clean, status:'try-first' });
+    out.push({ label:'Ingress proxy + dashboard flag', url:clean + '?allha_dashboard=1', status:'try-if-503' });
+  }
+  out.push({ label:'Direct route for external reverse proxy', url:'/allha-2d-direct/', status:'requires-explicit-proxy' });
+  return out;
+}
 function getDashboardProxyFromRequest(req){
   const candidates = [
     req.headers['x-ingress-path'],
@@ -93,17 +103,34 @@ function getDashboardProxyFromRequest(req){
   ];
   for(const c of candidates){
     const p = normalizeIngressProxyPath(c);
-    if(p) return { dashboardUrl: p, source: 'home-assistant-ingress-header' };
+    if(p) return { dashboardUrl: p, source: 'home-assistant-ingress-header', candidates: dashboardUrlCandidates(p) };
   }
-  return { dashboardUrl: '', source: 'not-detected' };
+  return { dashboardUrl: '', source: 'not-detected', candidates: dashboardUrlCandidates('') };
 }
 function loadDashboardProxyState(){
-  const fallback = { version: 1, dashboardUrl: '', source: 'not-detected', updatedAt: null, hint: 'Откройте add-on через штатный ingress/боковое меню Home Assistant, затем обновите диагностику.' };
-  return { ...fallback, ...readJsonSafe(DASHBOARD_PROXY_STATE_PATH, fallback) };
+  const fallback = {
+    version: 2,
+    dashboardUrl: '',
+    source: 'not-detected',
+    updatedAt: null,
+    candidates: dashboardUrlCandidates(''),
+    hint: 'Откройте add-on через штатный ingress/боковое меню Home Assistant, затем обновите диагностику. Если /api/hassio_ingress/... даёт 503 в Webpage dashboard, этот путь нельзя считать стабильным для вашей установки; используйте внешний reverse proxy к /allha-2d-direct/ или штатную боковую панель add-on.'
+  };
+  const saved = readJsonSafe(DASHBOARD_PROXY_STATE_PATH, fallback);
+  const url = normalizeIngressProxyPath(saved.dashboardUrl || '');
+  return { ...fallback, ...saved, version:2, dashboardUrl:url, candidates: dashboardUrlCandidates(url) };
 }
 function saveDashboardProxyState(info){
   if(!info || !info.dashboardUrl) return loadDashboardProxyState();
-  const payload = { version: 1, dashboardUrl: info.dashboardUrl, source: info.source || 'home-assistant-ingress-header', updatedAt: new Date().toISOString(), hint: 'Этот адрес можно вводить как URL веб-страницы в Webpage dashboard.' };
+  const clean = normalizeIngressProxyPath(info.dashboardUrl);
+  const payload = {
+    version: 2,
+    dashboardUrl: clean,
+    source: info.source || 'home-assistant-ingress-header',
+    updatedAt: new Date().toISOString(),
+    candidates: dashboardUrlCandidates(clean),
+    hint: 'Скопируйте Ingress proxy в Dashboard → Webpage. Если Home Assistant возвращает 503, значит этот ingress-token не работает как стабильный Webpage URL в вашей установке; нужен внешний proxy-route на /allha-2d-direct/ или штатный ingress add-on.'
+  };
   try{ atomicWriteJson(DASHBOARD_PROXY_STATE_PATH, payload); }catch(e){}
   return payload;
 }
@@ -623,6 +650,113 @@ function duplicateProfile(id, payload={}){
   return profilesDiagnostics();
 }
 
+
+function profileActiveLevelPath(profileId){
+  const pid = sanitizeProfileId(profileId);
+  const lm = loadLevelsMeta(pid);
+  return levelPaths(pid, lm.activeLevelId || 'level-1');
+}
+function overviewImageInfoForLevelPath(lp){
+  const meta = readJsonSafe(lp.imagesMeta, defaultImagesMeta());
+  const fromMeta = meta && meta.overview ? meta.overview : null;
+  if(fromMeta && (fromMeta.processedWidth || fromMeta.originalWidth) && (fromMeta.processedHeight || fromMeta.originalHeight)){
+    const width = Number(fromMeta.processedWidth || fromMeta.originalWidth) || null;
+    const height = Number(fromMeta.processedHeight || fromMeta.originalHeight) || null;
+    return { exists:true, width, height, aspectRatio: width && height ? Math.round((width/height)*1000)/1000 : null, source:'images_meta' };
+  }
+  const candidates=[];
+  for(const ext of ['webp','png','jpg','jpeg']){
+    candidates.push(path.join(lp.images,'overview',`overview.${ext}`));
+    candidates.push(path.join(lp.images,`overview.${ext}`));
+  }
+  for(const file of candidates){
+    if(fs.existsSync(file)){
+      const size=getImageSize(file);
+      const width=Number(size.width)||null, height=Number(size.height)||null;
+      return { exists:true, width, height, aspectRatio: width && height ? Math.round((width/height)*1000)/1000 : null, source:path.basename(file) };
+    }
+  }
+  return { exists:false, width:null, height:null, aspectRatio:null, source:'fallback' };
+}
+function compareOverviewImagesForCopy(srcLp, dstLp){
+  const source = overviewImageInfoForLevelPath(srcLp);
+  const target = overviewImageInfoForLevelPath(dstLp);
+  const bothHaveImages = !!(source.exists && target.exists);
+  const sourceRatio = Number(source.aspectRatio)||0;
+  const targetRatio = Number(target.aspectRatio)||0;
+  const sizeMismatch = bothHaveImages && (Number(source.width)!==Number(target.width) || Number(source.height)!==Number(target.height));
+  const aspectMismatch = bothHaveImages && sourceRatio && targetRatio && Math.abs(sourceRatio-targetRatio) > 0.01;
+  return { source, target, bothHaveImages, sizeMismatch, aspectMismatch, mismatch: !!(sizeMismatch || aspectMismatch) };
+}
+function copyJsonFileWithFallback(src, dst, fallback){
+  fs.mkdirSync(path.dirname(dst), {recursive:true});
+  if(fs.existsSync(src)){ if(fs.existsSync(dst)) removePathSafe(dst); copyPathRecursive(src, dst); } else atomicWriteJson(dst, fallback);
+}
+function replacePathIfExists(src, dst){
+  if(!fs.existsSync(src)) return false;
+  if(fs.existsSync(dst)) removePathSafe(dst);
+  return copyPathRecursive(src, dst);
+}
+function copyProfileData(targetProfileId, payload={}){
+  const meta = loadProfilesMeta();
+  const targetId = sanitizeProfileId(targetProfileId);
+  const sourceId = sanitizeProfileId(payload.sourceProfileId || payload.source || '');
+  const kind = String(payload.kind || payload.copyKind || '').trim();
+  const allowed = new Set(['zones','sensors','markers','rooms','overview','all']);
+  if(!allowed.has(kind)) throw new Error('Некорректный тип копирования');
+  if(!meta.profiles.some(p=>p.id===targetId)) throw new Error('Профиль назначения не найден');
+  if(!meta.profiles.some(p=>p.id===sourceId)) throw new Error('Профиль-источник не найден');
+  if(targetId === sourceId) throw new Error('Источник и назначение совпадают');
+  ensureProfileDirs(sourceId); ensureProfileDirs(targetId);
+  initializeLevelsStorage(sourceId); initializeLevelsStorage(targetId);
+  const srcLp = profileActiveLevelPath(sourceId);
+  const dstLp = profileActiveLevelPath(targetId);
+  ensureLevelDirs(sourceId, srcLp.id); ensureLevelDirs(targetId, dstLp.id);
+  const overviewCompare = compareOverviewImagesForCopy(srcLp, dstLp);
+  if((kind === 'zones' || kind === 'markers' || kind === 'all') && overviewCompare.mismatch && payload.confirmMismatch !== true){
+    return { ok:false, needsConfirmation:true, warning:'Размеры или aspect ratio overview-карт источника и назначения не совпадают. Координаты зон/маркеров могут визуально сместиться, после копирования может потребоваться ручное редактирование.', comparison:overviewCompare };
+  }
+  const backup = backupProfileDirectory(targetId, `before-copy-${kind}-from-${sourceId}`);
+  const srcLayout = normalizeLayoutPayload(readJsonSafe(srcLp.layout, emptyLayout()), {strict:false}).layout;
+  const dstLayout = normalizeLayoutPayload(readJsonSafe(dstLp.layout, emptyLayout()), {strict:false}).layout;
+  if(kind === 'zones' || kind === 'all') dstLayout.zones = srcLayout.zones || {};
+  if(kind === 'markers' || kind === 'all'){
+    dstLayout.overviewMarkers = srcLayout.overviewMarkers || {};
+    dstLayout.roomMarkers = srcLayout.roomMarkers || {};
+    dstLayout.overviewMetrics = srcLayout.overviewMetrics || {};
+    dstLayout.roomMetrics = srcLayout.roomMetrics || {};
+    dstLayout.customNames = srcLayout.customNames || {};
+  }
+  if(kind === 'zones' || kind === 'markers' || kind === 'all') atomicWriteJson(dstLp.layout, dstLayout);
+  if(kind === 'sensors' || kind === 'rooms' || kind === 'all') copyJsonFileWithFallback(srcLp.rooms, dstLp.rooms, defaultRoomsSettings());
+  if(kind === 'overview' || kind === 'all'){
+    removePathSafe(path.join(dstLp.images,'overview'));
+    fs.mkdirSync(path.join(dstLp.images,'overview'), {recursive:true});
+    copyPathRecursive(path.join(srcLp.images,'overview'), path.join(dstLp.images,'overview'));
+    const srcImagesMeta = readJsonSafe(srcLp.imagesMeta, defaultImagesMeta());
+    const dstImagesMeta = readJsonSafe(dstLp.imagesMeta, defaultImagesMeta());
+    dstImagesMeta.overview = srcImagesMeta.overview || null;
+    atomicWriteJson(dstLp.imagesMeta, { ...defaultImagesMeta(), ...dstImagesMeta, rooms: isPlainObject(dstImagesMeta.rooms) ? dstImagesMeta.rooms : {} });
+  }
+  if(kind === 'all'){
+    copyJsonFileWithFallback(srcLp.sourceConfig, dstLp.sourceConfig, defaultSourceConfig());
+    copyJsonFileWithFallback(srcLp.uiState, dstLp.uiState, defaultUiState());
+    replacePathIfExists(srcLp.devicesJs, dstLp.devicesJs); replacePathIfExists(srcLp.devicesJson, dstLp.devicesJson);
+    replacePathIfExists(srcLp.lovelaceJs, dstLp.lovelaceJs); replacePathIfExists(srcLp.lovelaceRaw, dstLp.lovelaceRaw);
+    replacePathIfExists(srcLp.deviceParseReportJson, dstLp.deviceParseReportJson); replacePathIfExists(srcLp.deviceParseReportMd, dstLp.deviceParseReportMd);
+    removePathSafe(path.join(dstLp.images,'rooms'));
+    copyPathRecursive(path.join(srcLp.images,'rooms'), path.join(dstLp.images,'rooms'));
+    const srcImagesMeta = readJsonSafe(srcLp.imagesMeta, defaultImagesMeta());
+    const dstImagesMeta = readJsonSafe(dstLp.imagesMeta, defaultImagesMeta());
+    atomicWriteJson(dstLp.imagesMeta, { ...defaultImagesMeta(), ...dstImagesMeta, overview:srcImagesMeta.overview || null, rooms:isPlainObject(srcImagesMeta.rooms) ? srcImagesMeta.rooms : {} });
+  }
+  const now = new Date().toISOString();
+  const t = meta.profiles.find(p=>p.id===targetId); if(t) t.updatedAt = now;
+  saveProfilesMeta(meta);
+  updateActiveProfilePaths();
+  ensureDataStore();
+  return { ok:true, copiedKind:kind, sourceProfileId:sourceId, targetProfileId:targetId, backup: backup ? path.basename(backup) : null, comparison:overviewCompare, profiles:profilesDiagnostics() };
+}
 function backupProfileDirectory(profileId, reason='profile-backup'){
   const id = sanitizeProfileId(profileId);
   const src = profilePaths(id).dir;
@@ -1600,7 +1734,7 @@ async function importLovelaceRawForLevel(profileId, levelId, paths){
 
 ensureDataStore();
 
-// v3.6.0.3: capture the real Home Assistant ingress proxy URL for Webpage dashboards.
+// v3.6.0.4: capture the real Home Assistant ingress proxy URL for Webpage dashboards.
 // Home Assistant exposes add-ons through /api/hassio_ingress/<token>/.
 // The token/path is discovered from X-Ingress-Path and shown in diagnostics as "Адрес для дашборда".
 app.use((req, res, next) => {
@@ -1624,7 +1758,7 @@ app.use(express.json({limit:'1mb'}));
 app.get('/api/dashboard-info', (req,res)=>{
   try{
     const info = dashboardProxyInfo(req);
-    res.json({ ok:true, ...info, directRoute:'/allha-2d-direct/', recommended: info.dashboardUrl || 'Откройте add-on через ingress, затем обновите эту страницу.' });
+    res.json({ ok:true, ...info, directRoute:'/allha-2d-direct/', recommended: info.dashboardUrl || 'Откройте add-on через ingress, затем обновите эту страницу.', candidates: info.candidates || dashboardUrlCandidates(info.dashboardUrl) });
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 app.get('/devices.js', (req,res)=>{
@@ -2256,6 +2390,7 @@ app.get('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...profilesDiagnost
 app.post('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...createProfile(req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.post('/api/profiles/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...duplicateProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.post('/api/profiles/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateProfile(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/profiles/:id/copy-from', (req,res)=>{ try{res.json(copyProfileData(req.params.id, req.body||{}));}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.delete('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...deleteProfile(req.params.id, req.body||{}), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.patch('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...patchProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
 

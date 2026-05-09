@@ -2825,6 +2825,47 @@ async function loadProfilesInfo(){
     return null;
   }
 }
+
+function profileCopyButtons(targetId, profiles){
+  const other = (profiles||[]).filter(x=>x.id!==targetId);
+  const disabled = other.length ? '' : 'disabled';
+  const options = other.map(x=>`<option value="${esc(x.id)}">${esc(x.name||x.id)} (${esc(x.id)})</option>`).join('');
+  const kinds = [
+    ['zones','Копировать зоны из'],
+    ['sensors','Копировать датчики из'],
+    ['markers','Копировать расположение маркеров и сенсоров из'],
+    ['rooms','Копировать комнаты из'],
+    ['overview','Копировать общий план из'],
+    ['all','Копировать все настройки из']
+  ];
+  return kinds.map(([kind,label])=>`<div class="profile-copy-action"><button type="button" data-profile-copy-kind="${kind}" data-profile-copy-target="${esc(targetId)}" ${disabled}>${label}</button><select data-profile-copy-source="${esc(targetId)}:${kind}" ${disabled}>${options}</select></div>`).join('');
+}
+function describeCopyKind(kind){
+  return ({zones:'зоны',sensors:'стандартные датчики комнат',markers:'расположение маркеров и сенсоров',rooms:'комнаты',overview:'общий план',all:'все настройки активного уровня профиля'})[kind] || kind;
+}
+function mismatchWarningText(data){
+  const c=data?.comparison || {};
+  const s=c.source || {}, t=c.target || {};
+  return 'Размеры или aspect ratio overview-карт источника и назначения не совпадают. Координаты могут сместиться, после копирования может потребоваться ручное редактирование.\n\nИсточник: '+(s.width&&s.height?`${s.width}×${s.height}, aspect ${s.aspectRatio}`:'карта не найдена')+'\nНазначение: '+(t.width&&t.height?`${t.width}×${t.height}, aspect ${t.aspectRatio}`:'карта не найдена')+'\n\nПродолжить?';
+}
+async function copyProfileDataFromSettings(targetId, kind){
+  if(!canEditLayout()){ showToast('Копирование профилей доступно только в admin mode'); return; }
+  const sel=document.querySelector(`[data-profile-copy-source="${CSS.escape(targetId+':'+kind)}"]`);
+  const sourceProfileId=sel?.value || '';
+  if(!sourceProfileId){ showToast('Выберите профиль-источник'); return; }
+  if(!confirm(`Скопировать ${describeCopyKind(kind)} из профиля ${sourceProfileId} в профиль ${targetId}? Перед операцией будет создан backup профиля назначения.`)) return;
+  try{
+    let res=await apiJson(`api/profiles/${encodeURIComponent(targetId)}/copy-from`,{method:'POST',body:JSON.stringify({kind,sourceProfileId})});
+    if(res.needsConfirmation){
+      if(!confirm(mismatchWarningText(res))) return;
+      res=await apiJson(`api/profiles/${encodeURIComponent(targetId)}/copy-from`,{method:'POST',body:JSON.stringify({kind,sourceProfileId,confirmMismatch:true})});
+    }
+    if(res.profiles) state.profiles=res.profiles; else await loadProfilesInfo();
+    renderProfilesManager();
+    showToast('Копирование выполнено. Backup: '+(res.backup||'—'));
+    if(targetId === (state.profiles?.activeProfileId || 'profile-1')) setTimeout(()=>location.reload(),700);
+  }catch(e){ showToast('Ошибка копирования профиля: '+e.message); }
+}
 function renderProfilesManager(){
   const box=el('profiles-manager');
   if(!box) return;
@@ -2844,7 +2885,11 @@ function renderProfilesManager(){
       `<button type="button" data-profile-rename="${esc(p.id)}">Переименовать</button>`+
       `<button type="button" data-profile-duplicate="${esc(p.id)}" ${canCreate?'':'disabled'}>Дублировать</button>`+
       `<button type="button" class="danger-button small-danger" data-profile-delete="${esc(p.id)}" ${profiles.length<=1?'disabled':''}>Удалить</button>`+
-      `</div></div>`;
+      `</div></div>`+
+      `<details class="profile-copy-tools"><summary>Копирование из другого профиля</summary>`+
+      `<div class="profile-copy-grid">${profileCopyButtons(p.id, profiles)}</div>`+
+      `<p class="muted">Для зон и маркеров приложение сравнит overview-карты источника и назначения. При несовпадении размера или aspect ratio появится предупреждение.</p>`+
+      `</details>`;
   }).join('');
   box.innerHTML=`<div class="profile-summary"><strong>Активный профиль:</strong> ${esc(activeId)} · ${profiles.length}/${data.max||3}</div>`+
     `<div class="profile-create-card"><h4>Создать новый профиль</h4>`+
@@ -2856,7 +2901,7 @@ function renderProfilesManager(){
     `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 5 профилей'}</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
     `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей. После переключения профиль лучше перезагрузить страницу.</p>`;
-  qsa('button,input', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
+  qsa('button,input,select', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
 }
 async function createProfileFromSettings(){
   if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
@@ -3824,7 +3869,11 @@ async function loadDiagnostics(){
   try{ state.diagnostics=await apiJson('api/diagnostics'); renderInfoModal(); }
   catch(e){ if(box) box.textContent='Ошибка диагностики: '+e.message; }
 }
-function infoRow(k,v){ return `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`; }
+function infoRow(k,v,copyable=false){
+  const value = String(v ?? '—');
+  const copyBtn = copyable && value && value !== '—' ? ` <button type="button" class="copy-inline" data-copy-text="${esc(value)}">Копировать</button>` : '';
+  return `<tr><th>${esc(k)}</th><td class="${copyable?'copyable':''}"><span class="copyable-value">${esc(value)}</span>${copyBtn}</td></tr>`;
+}
 function infoSection(title){ return `<tr class="info-section-row"><th colspan="2">${esc(title)}</th></tr>`; }
 function renderInfoModal(){
   const d=state.diagnostics; const box=el('info-content'); if(!box||!d) return;
@@ -3834,18 +3883,20 @@ function renderInfoModal(){
     box.innerHTML=`<table class="info-table">${[
       infoSection('Система'),
       infoRow('Название',d.brand?.name||'ALLHA-2D'),
-      infoRow('Версия add-on',d.version),
+      infoRow('Версия add-on',d.version, true),
       infoRow('Разработчик',d.brand?.developer||'Lepi4'),
       infoRow('HA API',d.ok?'OK':'Ошибка'),
       infoRow('Ошибка HA',d.haError||'—'),
       infoRow('Режим',d.mode),
-      infoRow('DATA_DIR',d.dataDir),
-      infoRow('HA API base',d.haApiBase),
+      infoRow('DATA_DIR',d.dataDir, true),
+      infoRow('HA API base',d.haApiBase, true),
       infoRow('Supervisor token',d.hasSupervisorToken?'есть':'нет'),
       infoSection('Dashboard / proxy'),
-      infoRow('Адрес для дашборда', d.dashboardProxy?.dashboardUrl || 'Откройте add-on через боковое меню HA и обновите диагностику'),
-      infoRow('Direct route', d.dashboardProxy?.directRoute || '/allha-2d-direct/'),
+      infoRow('Адрес для дашборда', d.dashboardProxy?.dashboardUrl || 'Откройте add-on через боковое меню HA и обновите диагностику', true),
+      infoRow('Direct route', d.dashboardProxy?.directRoute || '/allha-2d-direct/', true),
       infoRow('Proxy updated', d.dashboardProxy?.updatedAt || '—'),
+      infoRow('Dashboard candidates', (d.dashboardProxy?.candidates||[]).map(x=>`${x.label}: ${x.url}`).join(' | ') || '—', true),
+      infoRow('Dashboard hint', d.dashboardProxy?.hint || '—'),
       infoSection('Runtime storage'),
       infoRow('layout.json в /data',d.storage?.layoutExists?'есть':'нет'),
       infoRow('ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'),
@@ -3855,11 +3906,11 @@ function renderInfoModal(){
       infoSection('Profiles'),
       infoRow('active profile', d.profiles?.activeProfileId || 'profile-1'),
       infoRow('profiles count', ((d.profiles?.count ?? 1)+' / '+(d.profiles?.max ?? 5))),
-      infoRow('active profile dir', d.profiles?.activePaths?.dir || '—'),
+      infoRow('active profile dir', d.profiles?.activePaths?.dir || '—', true),
       infoSection('Levels / areas'),
       infoRow('active level', d.levels?.activeLevelId || 'level-1'),
       infoRow('levels count', ((d.levels?.count ?? 1)+' / '+(d.levels?.max ?? 12))),
-      infoRow('active level dir', d.levels?.activePaths?.dir || '—'),
+      infoRow('active level dir', d.levels?.activePaths?.dir || '—', true),
       infoSection('Images storage'),
       infoRow('/data/images',d.images?.exists?'есть':'нет'),
       infoRow('/data/images/overview',d.images?.overviewDirExists?'есть':'нет'),
@@ -3959,6 +4010,21 @@ async function cancelSettingsChanges(){
   }
 }
 
+
+async function copyTextToClipboard(text){
+  const value=String(text||'');
+  if(!value){ showToast('Нечего копировать'); return; }
+  try{
+    await navigator.clipboard.writeText(value);
+    showToast('Скопировано');
+  }catch(e){
+    const ta=document.createElement('textarea');
+    ta.value=value; ta.className='copy-fallback-textarea';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    try{ document.execCommand('copy'); showToast('Скопировано'); }catch(err){ showToast('Не удалось скопировать'); }
+    ta.remove();
+  }
+}
 function bindGlobal(){
   loadUiPrefs();
     document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
@@ -4018,6 +4084,7 @@ function bindGlobal(){
   const createZoneBtn=el('btn-create-zone'); if(createZoneBtn) createZoneBtn.onclick=createZoneFromSettings;
   const openPlacementBtn=el('btn-open-device-placement'); if(openPlacementBtn) openPlacementBtn.onclick=openMarkerPlacementFromSettings;
   const profilesManager=el('profiles-manager');
+  document.addEventListener('click', e=>{ const copy=e.target.closest('[data-copy-text]'); if(copy){ copyTextToClipboard(copy.dataset.copyText); } });
   if(profilesManager) profilesManager.addEventListener('click', e=>{
     const setup=e.target.closest('#btn-open-project-setup-wizard'); if(setup){ openProjectSetupWizard(); return; }
     const create=e.target.closest('#btn-create-profile'); if(create){ createProfileFromSettings(); return; }
@@ -4025,6 +4092,7 @@ function bindGlobal(){
     const ren=e.target.closest('[data-profile-rename]'); if(ren){ renameProfileFromSettings(ren.dataset.profileRename); return; }
     const dup=e.target.closest('[data-profile-duplicate]'); if(dup){ duplicateProfileFromSettings(dup.dataset.profileDuplicate); return; }
     const del=e.target.closest('[data-profile-delete]'); if(del){ deleteProfileFromSettings(del.dataset.profileDelete); return; }
+    const copy=e.target.closest('[data-profile-copy-kind]'); if(copy){ copyProfileDataFromSettings(copy.dataset.profileCopyTarget, copy.dataset.profileCopyKind); return; }
   });
   document.addEventListener('click', e=>{ const home=e.target.closest('[data-kiosk-overview-home]'); if(home){ selectRoom('overview'); return; } const q=e.target.closest('[data-quick-level]'); if(q){ activateLevelQuick(q.dataset.quickLevel); } });
   const levelWizardModal=el('level-setup-wizard-modal');
