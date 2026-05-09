@@ -104,6 +104,45 @@ function validateToken(token, device_id) {
   return true;
 }
 
+
+/* ── Short mobile web session ───────────────────────────
+   Used only to let the Capacitor WebView load /index.html after pairing.
+   API requests still use Authorization: Bearer + X-Device-ID. */
+function _b64url(input) {
+  return Buffer.from(String(input), 'utf8').toString('base64url');
+}
+function _unb64url(input) {
+  return Buffer.from(String(input), 'base64url').toString('utf8');
+}
+function _sessionSig(device_id, exp, token) {
+  return crypto.createHmac('sha256', String(token || ''))
+    .update(`${device_id}.${exp}.allha-mobile-session-v1`)
+    .digest('base64url');
+}
+function createWebSession(device_id, token, ttlMs = 24 * 60 * 60_000) {
+  if (!validateToken(token, device_id)) return null;
+  const exp = Date.now() + ttlMs;
+  const sig = _sessionSig(device_id, exp, token);
+  return `${_b64url(device_id)}.${exp}.${sig}`;
+}
+function validateWebSession(session) {
+  try {
+    const parts = String(session || '').split('.');
+    if (parts.length !== 3) return false;
+    const device_id = _unb64url(parts[0]);
+    const exp = Number(parts[1]);
+    const sig = parts[2];
+    if (!device_id || !Number.isFinite(exp) || Date.now() > exp) return false;
+    const d = _devs()[device_id];
+    if (!d || !d.token) return false;
+    const expected = _sessionSig(device_id, exp, d.token);
+    const a = Buffer.from(String(sig));
+    const b = Buffer.from(String(expected));
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+    return true;
+  } catch { return false; }
+}
+
 /* ── Device management ───────────────────────────────── */
 
 function listDevices() {
@@ -136,5 +175,6 @@ function revokeAllDevices() {
 module.exports = {
   generatePairingCode, getPendingCode, cancelPendingCode,
   consumeCode, validateToken,
+  createWebSession, validateWebSession,
   listDevices, renameDevice, revokeDevice, revokeAllDevices
 };

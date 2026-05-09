@@ -44,7 +44,8 @@ setInterval(() => { const now = Date.now(); _rlStore.forEach((e, k) => { if (now
 
 const PORT = process.env.PORT || 8080;
 const MOBILE_PORT = Number(process.env.MOBILE_PORT || 8100);
-const MOBILE_OPEN_PATHS = new Set(['/api/health', '/api/mobile/pair']);
+const MOBILE_OPEN_PATHS = new Set(['/api/health', '/api/mobile/pair', '/mobile-lock.html']);
+const MOBILE_WEB_COOKIE = 'allha_mobile_session';
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const FALLBACK_DATA_DIR = path.join(__dirname, 'data');
 const ADDON_CONFIG_PATH = path.join(DATA_DIR, 'addon_config.json');
@@ -115,27 +116,64 @@ function isLocalIp(req) {
 function mobileAccessEnabled() {
   try { return !!loadAddonConfig().mobileAccess?.enabled; } catch { return false; }
 }
-// Middleware: port 8100 = mobile-only (always requires token); port 8080 = optional mobile auth
+function parseCookies(req){
+  const out = {};
+  String(req.headers.cookie || '').split(';').forEach(part => {
+    const i = part.indexOf('=');
+    if (i > -1) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  });
+  return out;
+}
+function mobileLockHtml(){
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ALLHA-2D Mobile</title><style>
+  body{margin:0;min-height:100vh;background:#0e1013;color:#e8edf4;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}
+  .card{max-width:520px;background:#151922;border:1px solid #283142;border-radius:24px;padding:28px;box-shadow:0 18px 60px rgba(0,0,0,.35);text-align:center}.logo{font-size:48px}.muted{color:#8f9bad;line-height:1.5}.code{font-family:ui-monospace,monospace;background:#0b0e13;border-radius:12px;padding:10px 12px;color:#f0b34b;display:inline-block;margin-top:10px}
+  </style></head><body><div class="card"><div class="logo">⌂</div><h1>ALLHA-2D Mobile Access</h1><p class="muted">Этот порт предназначен для мобильного приложения. Откройте приложение ALLHA-2D и выполните привязку через код из Home Assistant → ALLHA-2D → Настройки → Мобильный доступ.</p><div class="code">Без токена основной интерфейс не открывается</div></div></body></html>`;
+}
+function mobileAuthFromHeaders(req){
+  const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+  const deviceId = (req.headers['x-device-id'] || '').trim();
+  return { token, deviceId, ok: mobileAuth.validateToken(token, deviceId) };
+}
+function buildHashFromQuery(q){
+  const hp = new URLSearchParams();
+  if(q._mt) hp.set('_mt', String(q._mt));
+  if(q._did) hp.set('_did', String(q._did));
+  if(q._local) hp.set('_local', String(q._local));
+  if(q._remote) hp.set('_remote', String(q._remote));
+  return hp.toString();
+}
+// Middleware: port 8100 = protected mobile web entry. Browser without token sees only lock page.
 app.use((req, res, next) => {
   const onMobilePort = req.socket?.localPort === MOBILE_PORT;
   if (onMobilePort) {
-    // Static files (HTML/JS/CSS/images) and whitelisted API paths pass without auth.
-    // All other /api/* routes require a valid Bearer token.
-    if (!req.path.startsWith('/api/') || MOBILE_OPEN_PATHS.has(req.path)) return next();
-    const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
-    const deviceId = (req.headers['x-device-id'] || '').trim();
-    if (mobileAuth.validateToken(token, deviceId)) return next();
-    return res.status(503).json({ error: 'Этот порт доступен только через мобильное приложение ALLHA-2D' });
+    if (MOBILE_OPEN_PATHS.has(req.path)) return next();
+
+    const fromHeader = mobileAuthFromHeaders(req);
+    if (fromHeader.ok) return next();
+
+    const qToken = String(req.query?._mt || '').trim();
+    const qDevice = String(req.query?._did || '').trim();
+    if (qToken && qDevice && mobileAuth.validateToken(qToken, qDevice)) {
+      const session = mobileAuth.createWebSession(qDevice, qToken);
+      if (session) {
+        res.setHeader('Set-Cookie', `${MOBILE_WEB_COOKIE}=${encodeURIComponent(session)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+        const hash = buildHashFromQuery(req.query);
+        return res.redirect(302, `${req.path || '/'}${hash ? '#' + hash : ''}`);
+      }
+    }
+
+    const cookies = parseCookies(req);
+    if (mobileAuth.validateWebSession(cookies[MOBILE_WEB_COOKIE])) return next();
+
+    if (req.path.startsWith('/api/')) {
+      return res.status(401).json({ error: 'Требуется авторизация мобильного устройства' });
+    }
+    res.status(401).type('html').send(mobileLockHtml());
+    return;
   }
-  // Main port: optional mobile access guard for external requests
-  if (!mobileAccessEnabled()) return next();
-  if (isLocalIp(req)) return next();
-  if (MOBILE_OPEN_PATHS.has(req.path)) return next();
-  const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
-  const deviceId = (req.headers['x-device-id'] || '').trim();
-  if (!mobileAuth.validateToken(token, deviceId)) {
-    return res.status(401).json({ error: 'Требуется авторизация мобильного устройства' });
-  }
+
+  // Main port: normal Home Assistant/ LAN UI. Do not block it because mobile access is enabled.
   next();
 });
 function requestHostname(req){
@@ -2639,15 +2677,17 @@ app.delete('/api/mobile/code', (req, res) => {
 // Паринг — открытый эндпоинт (с rate-limit)
 app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res) => {
   try {
-    const { code, device_id, password } = req.body || {};
+    const { code, password } = req.body || {};
+    const device_id = String(req.body?.device_id || req.body?.deviceId || '').trim();
     const cfg = loadAddonConfig();
+    if (!cfg?.mobileAccess?.enabled) return res.status(403).json({ error: 'Мобильный доступ выключен в настройках ALLHA-2D' });
     const requiredPwd = String(cfg?.mobileAccess?.pairingPassword || '').trim();
     if (requiredPwd) {
       const givenPwd = String(password || '').trim();
       if (givenPwd !== requiredPwd) return res.status(403).json({ error: 'Неверный пароль сервера' });
     }
     const token = mobileAuth.consumeCode(code, device_id);
-    res.json({ ok: true, token });
+    res.json({ ok: true, token, deviceId: device_id });
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 

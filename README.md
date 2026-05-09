@@ -864,3 +864,18 @@ The Node.js 20 actions warning in GitHub Actions logs is separate from this buil
 - В `Информация / диагностика → Система → Dashboard / proxy` теперь показывается строка **Адрес для дашборда**.
 - Именно этот адрес нужно вводить в поле URL веб-страницы панели Home Assistant, обычно он выглядит как `/api/hassio_ingress/xxxxxxxx/`.
 - `/allha-2d-direct/` оставлен для внешнего reverse proxy, но штатный HA Webpage dashboard чаще требует обнаруженный `/api/hassio_ingress/.../` адрес.
+
+
+## v4.1.3 — мобильное подключение
+
+Мобильное приложение подключается к защищённому порту `8100`. В поле адреса можно вводить:
+
+```text
+http://192.168.1.50:8100
+192.168.1.50:8100
+https://example.domain
+```
+
+Приложение автоматически проверяет `/api/health`, затем отправляет код и пароль на `/api/mobile/pair`. Обычный браузер без токена на порту `8100` больше не должен видеть карту/устройства — показывается только экран `ALLHA-2D Mobile Access`.
+
+Для Android локальный HTTP-доступ разрешён в `AndroidManifest.xml` и `network_security_config.xml`. Для удалённого доступа всё равно рекомендуется HTTPS/reverse proxy.
