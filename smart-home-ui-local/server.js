@@ -16,10 +16,16 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  // Allow Capacitor mobile app (capacitor://localhost and http://localhost)
+  // Allow Capacitor mobile app WebView origins.
+  // Android Capacitor may use https://localhost, http://localhost, capacitor://localhost
+  // or ionic://localhost depending on Capacitor/WebView version. Missing CORS headers
+  // made the app report “server unavailable” even when http://IP:8100 opened in browser.
   const origin = req.headers.origin || '';
-  if (/^capacitor:\/\/localhost$|^http:\/\/localhost(:\d+)?$/.test(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
+  const allowedMobileOrigins = /^(capacitor|ionic):\/\/localhost$|^https?:\/\/localhost(?::\d+)?$/i;
+  if (!origin || origin === 'null' || allowedMobileOrigins.test(origin)) {
+    if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
+    else res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Device-ID,X-Client-ID');
   }
@@ -2397,7 +2403,7 @@ app.delete('/api/images/rooms/:room_id', (req,res)=>{
   }catch(e){ res.status(500).json({ok:false, error:e.message}); }
 });
 
-app.get('/api/health', (req,res)=> res.json({ ok:true }));
+app.get('/api/health', (req,res)=> res.json({ ok:true, app:'ALLHA-2D', version: ADDON_VERSION, mobilePort: req.socket?.localPort === MOBILE_PORT }));
 app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
 app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });

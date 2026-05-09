@@ -866,7 +866,7 @@ The Node.js 20 actions warning in GitHub Actions logs is separate from this buil
 - `/allha-2d-direct/` оставлен для внешнего reverse proxy, но штатный HA Webpage dashboard чаще требует обнаруженный `/api/hassio_ingress/.../` адрес.
 
 
-## v4.1.3 — мобильное подключение
+## v4.1.4 — мобильное подключение
 
 Мобильное приложение подключается к защищённому порту `8100`. В поле адреса можно вводить:
 
@@ -879,3 +879,10 @@ https://example.domain
 Приложение автоматически проверяет `/api/health`, затем отправляет код и пароль на `/api/mobile/pair`. Обычный браузер без токена на порту `8100` больше не должен видеть карту/устройства — показывается только экран `ALLHA-2D Mobile Access`.
 
 Для Android локальный HTTP-доступ разрешён в `AndroidManifest.xml` и `network_security_config.xml`. Для удалённого доступа всё равно рекомендуется HTTPS/reverse proxy.
+
+
+### v4.1.4: мобильное приложение пишет “Сервер недоступен”
+
+Если адрес `http://IP:8100` открывается в браузере и показывает заглушку `ALLHA-2D Mobile Access`, но Android-приложение пишет “Сервер недоступен”, причина обычно в CORS origin Android WebView. В v4.1.4 сервер разрешает `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost` и `null` origin.
+
+Проверочный адрес для браузера: `http://IP_HOME_ASSISTANT:8100/api/health`. Должен вернуться JSON с `ok: true`.
