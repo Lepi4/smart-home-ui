@@ -2944,7 +2944,7 @@ async function _mobileReconnect(){
     try{
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 3000);
-      const res = await fetch(url + '/api/diagnostics', { signal: ctrl.signal, cache: 'no-store' });
+      const res = await fetch(url + '/api/health', { signal: ctrl.signal, cache: 'no-store' });
       clearTimeout(t);
       return res.ok;
     }catch{ return false; }
@@ -4386,6 +4386,7 @@ async function loadMobileSettings(){
     const chk = el('mobile-access-enabled'); if(chk) chk.checked = !!m.enabled;
     const lu = el('mobile-local-url'); if(lu) lu.value = m.localUrl || '';
     const ru = el('mobile-remote-url'); if(ru) ru.value = m.remoteUrl || '';
+    const pp = el('mobile-pairing-password'); if(pp){ pp.value = ''; pp.placeholder = m.hasPairingPassword ? '••••• (установлен, введите новый чтобы изменить)' : 'Например: МойДом2024'; }
     const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${m.pairedDevices || 0})`;
     await loadMobileDevices();
     startMobileCodePoll();
@@ -4415,11 +4416,14 @@ async function loadMobileDevices(){
 function bindMobileSettings(){
   const saveCfg = el('btn-save-mobile-config');
   if(saveCfg) saveCfg.onclick = async()=>{
-    const payload = { mobileAccess:{
+    const ppVal = (el('mobile-pairing-password')?.value||'').trim();
+    const mobilePayload = {
       enabled: !!el('mobile-access-enabled')?.checked,
       localUrl: el('mobile-local-url')?.value||'',
       remoteUrl: el('mobile-remote-url')?.value||''
-    }};
+    };
+    if(ppVal) mobilePayload.pairingPassword = ppVal;
+    const payload = { mobileAccess: mobilePayload };
     try{ await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)}); showToast('Настройки мобильного доступа сохранены'); }
     catch(e){ showToast('Ошибка: '+e.message); }
   };

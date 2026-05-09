@@ -1,6 +1,6 @@
 name: ALLHA-2D
 slug: smart_home_ui_local
-version: "4.1.0"
+version: "4.1.1"
 description: ALLHA-2D — local 2D floor-plan Smart Home UI for Home Assistant
 url: https://github.com/Lepi4/smart-home-ui
 image: ghcr.io/lepi4/smart-home-ui-{arch}
@@ -18,8 +18,10 @@ homeassistant_api: true
 host_network: false
 ports:
   8080/tcp: 8099
+  8100/tcp: 8100
 ports_description:
-  8080/tcp: ALLHA-2D Direct local dashboard access over LAN only; do not forward this port on the router.
+  8080/tcp: "ALLHA-2D LAN browser access. Do NOT forward this port on the router."
+  8100/tcp: "ALLHA-2D Mobile app port. Forward this port on the router for remote mobile access."
 options:
   pollIntervalMs: 6000
   dashboardPaths: []

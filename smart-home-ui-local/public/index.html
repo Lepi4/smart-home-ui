@@ -350,11 +350,14 @@
       <!-- Мобильный доступ -->
       <div class="settings-section-panel hidden" id="settings-panel-mobile">
         <h3>Мобильный доступ</h3>
-        <p class="muted">Разрешает вход в аддон по токену с мобильного приложения через внешний адрес. Локальная сеть (192.168.x.x) всегда открыта без токена.</p>
-        <label class="settings-check"><input type="checkbox" id="mobile-access-enabled"> Включить мобильный доступ (Bearer token для внешних запросов)</label>
-        <label>Локальный адрес аддона<input id="mobile-local-url" type="text" placeholder="http://192.168.1.45:8099"></label>
-        <label>Внешний адрес (DynDNS / белый IP)<input id="mobile-remote-url" type="text" placeholder="https://haos.dns.keenetic.club:8443"></label>
-        <button type="button" id="btn-save-mobile-config">Сохранить адреса</button>
+        <p class="muted">Мобильное приложение подключается через <strong>порт 8100</strong> — он работает только с токеном. Браузер к этому порту не получит доступ (503). Порт 8099 остаётся для LAN-браузера без пароля.</p>
+        <p class="muted" style="color:#f0b34b">В мобильном приложении: Локальный адрес = <code>http://IP_HA:8100</code> · Внешний = <code>http://ваш-ddns:8100</code></p>
+        <label class="settings-check"><input type="checkbox" id="mobile-access-enabled"> Включить ограничение внешнего доступа на порт 8099 (Bearer token для не-LAN запросов)</label>
+        <label>Локальный адрес для мобильного приложения (порт 8100)<input id="mobile-local-url" type="text" placeholder="http://192.168.1.45:8100"></label>
+        <label>Внешний адрес для мобильного приложения (DynDNS / белый IP, порт 8100)<input id="mobile-remote-url" type="text" placeholder="http://allha2d.korobka.netcraze.club:8100"></label>
+        <label>Пароль паринга (необязательно) — вводится один раз при первом подключении телефона<input id="mobile-pairing-password" type="text" placeholder="Например: МойДом2024" autocomplete="off"></label>
+        <p class="muted">Если задан — без этого пароля добавить новое устройство не получится, даже зная 6-значный код.</p>
+        <button type="button" id="btn-save-mobile-config">Сохранить</button>
 
         <div class="mobile-pair-block">
           <h4>Добавить устройство</h4>

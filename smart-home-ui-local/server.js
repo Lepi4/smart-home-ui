@@ -43,6 +43,8 @@ function makeRateLimit(maxReq, windowMs) {
 setInterval(() => { const now = Date.now(); _rlStore.forEach((e, k) => { if (now > e.resetAt) _rlStore.delete(k); }); }, 300_000).unref();
 
 const PORT = process.env.PORT || 8080;
+const MOBILE_PORT = Number(process.env.MOBILE_PORT || 8100);
+const MOBILE_OPEN_PATHS = new Set(['/api/health', '/api/mobile/pair']);
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const FALLBACK_DATA_DIR = path.join(__dirname, 'data');
 const ADDON_CONFIG_PATH = path.join(DATA_DIR, 'addon_config.json');
@@ -113,11 +115,22 @@ function isLocalIp(req) {
 function mobileAccessEnabled() {
   try { return !!loadAddonConfig().mobileAccess?.enabled; } catch { return false; }
 }
-// Middleware: внешние запросы требуют Bearer token + X-Device-ID когда mobile access включён
+// Middleware: port 8100 = mobile-only (always requires token); port 8080 = optional mobile auth
 app.use((req, res, next) => {
+  const onMobilePort = req.socket?.localPort === MOBILE_PORT;
+  if (onMobilePort) {
+    // Static files (HTML/JS/CSS/images) and whitelisted API paths pass without auth.
+    // All other /api/* routes require a valid Bearer token.
+    if (!req.path.startsWith('/api/') || MOBILE_OPEN_PATHS.has(req.path)) return next();
+    const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+    const deviceId = (req.headers['x-device-id'] || '').trim();
+    if (mobileAuth.validateToken(token, deviceId)) return next();
+    return res.status(503).json({ error: 'Этот порт доступен только через мобильное приложение ALLHA-2D' });
+  }
+  // Main port: optional mobile access guard for external requests
   if (!mobileAccessEnabled()) return next();
   if (isLocalIp(req)) return next();
-  if (req.path === '/api/mobile/pair') return next(); // паринг открыт
+  if (MOBILE_OPEN_PATHS.has(req.path)) return next();
   const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
   const deviceId = (req.headers['x-device-id'] || '').trim();
   if (!mobileAuth.validateToken(token, deviceId)) {
@@ -1869,7 +1882,7 @@ function defaultAddonConfig(){
       haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00
     },
     security: { panelMode:'admin', confirmDangerousServices:true, dangerousRequirePin:false, pinEnabled:false },
-    mobileAccess: { enabled: false, localUrl: '', remoteUrl: '' }
+    mobileAccess: { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '' }
   };
 }
 function normalizeUiConfig(input){
@@ -1998,8 +2011,9 @@ function saveAddonConfig(cfg){
     mobileAccess: cfg?.mobileAccess !== undefined ? {
       enabled: !!cfg.mobileAccess.enabled,
       localUrl: String(cfg.mobileAccess.localUrl || current.mobileAccess?.localUrl || '').trim(),
-      remoteUrl: String(cfg.mobileAccess.remoteUrl || current.mobileAccess?.remoteUrl || '').trim()
-    } : (current.mobileAccess || { enabled: false, localUrl: '', remoteUrl: '' })
+      remoteUrl: String(cfg.mobileAccess.remoteUrl || current.mobileAccess?.remoteUrl || '').trim(),
+      pairingPassword: String(cfg.mobileAccess.pairingPassword ?? current.mobileAccess?.pairingPassword ?? '').trim()
+    } : (current.mobileAccess || { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '' })
   };
   fs.writeFileSync(ADDON_CONFIG_PATH, JSON.stringify(next, null, 2), 'utf8');
   return next;
@@ -2037,6 +2051,7 @@ function publicConfig(cfg){
       enabled: !!cfg?.mobileAccess?.enabled,
       localUrl: String(cfg?.mobileAccess?.localUrl || ''),
       remoteUrl: String(cfg?.mobileAccess?.remoteUrl || ''),
+      hasPairingPassword: !!(String(cfg?.mobileAccess?.pairingPassword || '').trim()),
       pairedDevices: mobileAuth.listDevices().length
     }
   };
@@ -2624,7 +2639,13 @@ app.delete('/api/mobile/code', (req, res) => {
 // Паринг — открытый эндпоинт (с rate-limit)
 app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res) => {
   try {
-    const { code, device_id } = req.body || {};
+    const { code, device_id, password } = req.body || {};
+    const cfg = loadAddonConfig();
+    const requiredPwd = String(cfg?.mobileAccess?.pairingPassword || '').trim();
+    if (requiredPwd) {
+      const givenPwd = String(password || '').trim();
+      if (givenPwd !== requiredPwd) return res.status(403).json({ error: 'Неверный пароль сервера' });
+    }
     const token = mobileAuth.consumeCode(code, device_id);
     res.json({ ok: true, token });
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
@@ -2708,8 +2729,7 @@ app.put('/api/prefs', express.json(), (req, res) => {
 });
 
 const server = app.listen(PORT, () => {
-  console.log(`Smart Home UI HA Add-on listening on http://0.0.0.0:${PORT}`);
-  // Запускаем подписку на state_changed после старта сервера
+  console.log(`[ALLHA-2D] Browser/LAN access on http://0.0.0.0:${PORT}`);
   startHaWsSubscription();
 });
 server.on('error', err => {
@@ -2718,4 +2738,12 @@ server.on('error', err => {
     process.exit(1);
   }
   throw err;
+});
+
+const mobileServer = app.listen(MOBILE_PORT, () => {
+  console.log(`[ALLHA-2D] Mobile-only access on http://0.0.0.0:${MOBILE_PORT}`);
+});
+mobileServer.on('error', err => {
+  if(err && err.code === 'EADDRINUSE') console.error(`Mobile port ${MOBILE_PORT} already in use`);
+  else throw err;
 });
