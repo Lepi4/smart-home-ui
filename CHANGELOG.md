@@ -1,10 +1,20 @@
-## v3.6.0 — Webpage Direct Mode, Backup Manager and Kiosk room tiles
+# CHANGELOG
+
+## v3.6.0.1 — buildx/QEMU Docker build hotfix
+
+- Исправлена ошибка GitHub Actions buildx: `node -e "require('express'); require('ws')"` мог падать с `exit code 132` при cross-arch сборке через QEMU.
+- Dockerfile больше не запускает отдельную node-проверку зависимостей во время сборки; наличие зависимостей проверяется фактом успешного `npm install` и runtime-запуском приложения.
+- Добавлены `npm_config_audit=false` и `npm_config_fund=false`, чтобы сборка была тише и стабильнее.
+- Workflow release packaging закреплён в рабочем формате: корневая папка архива = номер версии, add-on внутри `smart-home-ui-local/`.
+- Workflow принимает теги вида `v3.6.0.1`.
+- Добавлен `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` для подготовки к переходу GitHub Actions на Node.js 24. Предупреждение GitHub может ещё появляться, если сами actions объявлены как Node20, но это не причина падения сборки.
+
 
 - Добавлен direct route `/allha-2d-direct/` для Webpage dashboard/reverse proxy сценариев без привязки к cloud/local домену.
 - Доработан Backup Manager: полный ручной backup проекта и восстановление directory-backup с подтверждением `RESTORE BACKUP`.
 - Перед восстановлением backup автоматически создаётся предоперационный backup текущего состояния.
 - В kiosk mode в режиме плиток внутри комнаты добавлена видимая кнопка `Общий план`.
-- README и FAQ обновлены под v3.6.0.
+- README и FAQ обновлены под v3.6.0.1.
 
 ## 3.5.9.3 — 2026-05-08
 

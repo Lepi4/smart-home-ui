@@ -755,7 +755,7 @@ Kiosk-карточки группируются по комнатам через
 
 Поля стандартных датчиков комнат теперь защищены от live-refresh: ввод `entity_id` не исчезает через несколько секунд, пока пользователь редактирует поле. Значения сохраняются кнопкой “Сохранить датчики” и записываются в `/data/rooms.json`.
 
-## v3.6.0 — Webpage Direct Mode + Backup Manager + Kiosk room tiles
+## v3.6.0.1 — Webpage Direct Mode + Backup Manager + Kiosk room tiles
 
 - Добавлен прямой route `/allha-2d-direct/` для сценариев, где ALLHA-2D открывается как Webpage dashboard или через reverse proxy без привязки к конкретному cloud/local домену.
 - Обычный Home Assistant ingress add-on остаётся основным способом запуска из бокового меню.
@@ -774,3 +774,9 @@ Kiosk-карточки группируются по комнатам через
 
 Путь рассчитан на конфигурацию, где запросы к `/allha-2d-direct/` попадают в web-сервер add-on или проксируются к нему. Это позволяет не указывать конкретный внешний cloud/local адрес.
 
+
+## Buildx / GitHub Actions note for v3.6.0.1
+
+If GitHub Actions fails with `exit code 132` on the Docker build step after `npm install`, update to v3.6.0.1 or newer. The Dockerfile no longer runs a separate `node -e` dependency check during cross-architecture buildx/QEMU builds.
+
+The Node.js 20 actions warning in GitHub Actions logs is separate from this build failure. It is a GitHub runner/runtime migration warning and does not by itself mean the Docker image failed to build.

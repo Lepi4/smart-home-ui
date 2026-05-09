@@ -4,13 +4,16 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV DATA_DIR=/data
+ENV npm_config_audit=false
+ENV npm_config_fund=false
 
 # Install production dependencies first so Docker cache works correctly.
-# The node -e check makes the build fail immediately if express/ws were not installed.
+# Do not run node-based dependency checks during cross-arch buildx/QEMU builds:
+# on some arm64 emulated builders a simple `node -e ...` exits with code 132
+# even when npm install completed successfully.
 COPY package.json ./
 RUN npm install --omit=dev \
-  && npm cache clean --force \
-  && node -e "require('express'); require('ws'); console.log('Dependencies OK')"
+  && npm cache clean --force
 
 COPY . .
 RUN chmod +x /app/start.sh \
