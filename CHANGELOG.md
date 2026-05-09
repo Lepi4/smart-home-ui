@@ -1,4 +1,24 @@
+
+
+## v3.6.0.3
+
+- Добавлен Dashboard proxy helper для сценария Home Assistant Webpage dashboard.
+- В диагностике появилась строка **Адрес для дашборда** с обнаруженным `/api/hassio_ingress/.../` URL.
+- README/FAQ уточняют, что `/allha-2d-direct/` подходит для внешнего reverse proxy, а для HA Webpage dashboard нужен proxy/ingress URL из диагностики.
+
 # CHANGELOG
+
+## v3.6.0.2 — kiosk tile clock/home + Webpage dashboard clarification
+
+### Fixed
+- Kiosk room tile mode now respects the kiosk clock setting; disabled clock stays hidden.
+- Moved the **Общий план** button in room tile mode away from the clock to avoid overlap.
+- Added CSS safeguards so `.hidden` is not overridden by kiosk tile clock styles.
+
+### Documentation
+- Clarified that Home Assistant dashboard URL path is a slug, not the direct add-on route.
+- Clarified that `/allha-2d-direct/` may return 404 inside HA Webpage dashboards if HA does not expose that add-on route at the HA root.
+
 
 ## v3.6.0.1 — buildx/QEMU Docker build hotfix
 

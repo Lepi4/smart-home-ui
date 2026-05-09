@@ -1929,3 +1929,44 @@ body.kiosk-mode:not(.kiosk-tiles-active) .quick-overlay-button:not(.hidden){
 .kiosk-tile-home-btn{min-height:42px;padding:10px 16px;border-radius:16px;background:rgba(30,64,120,.92);border:1px solid rgba(96,165,250,.55);color:#eef6ff;font-weight:900;box-shadow:0 8px 22px rgba(0,0,0,.25)}
 .kiosk-tile-home-btn:active{transform:translateY(1px)}
 @media(max-width:760px){.kiosk-tile-head-actions{top:12px;left:10px}.kiosk-tile-home-btn{min-height:36px;padding:8px 11px;font-size:12px}.kiosk-tile-head h2{padding-left:92px!important}}
+
+
+/* v3.6.0.2 — kiosk room tiles clock/home fixes */
+body.kiosk-tiles-active #kiosk-widget.hidden{
+  display:none!important;
+  visibility:hidden!important;
+  pointer-events:none!important;
+}
+body.kiosk-tiles-active #kiosk-widget:not(.hidden){
+  position:fixed!important;
+  left:18px!important;
+  top:18px!important;
+  z-index:1950!important;
+  visibility:visible!important;
+  display:block!important;
+}
+body.kiosk-tiles-active .kiosk-tile-head-actions{
+  position:fixed!important;
+  left:auto!important;
+  right:18px!important;
+  top:18px!important;
+  z-index:1960!important;
+}
+body.kiosk-tiles-active .kiosk-tile-home-btn{
+  min-height:40px!important;
+  padding:9px 14px!important;
+  border-radius:999px!important;
+}
+body.kiosk-tiles-active .kiosk-tile-head h2{
+  padding-left:0!important;
+  padding-right:140px!important;
+}
+body.kiosk-tiles-active:not(.kiosk-has-clock) .kiosk-tile-head h2{
+  padding-right:140px!important;
+}
+@media(max-width:760px){
+  body.kiosk-tiles-active #kiosk-widget:not(.hidden){left:10px!important;top:10px!important;transform:scale(.82);transform-origin:left top;}
+  body.kiosk-tiles-active .kiosk-tile-head-actions{right:10px!important;top:10px!important;}
+  body.kiosk-tiles-active .kiosk-tile-home-btn{min-height:34px!important;padding:7px 10px!important;font-size:12px!important;}
+  body.kiosk-tiles-active .kiosk-tile-head h2{padding-right:96px!important;}
+}

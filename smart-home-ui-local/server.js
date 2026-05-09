@@ -39,7 +39,7 @@ let ROOMS_SETTINGS_PATH = path.join(ACTIVE_LEVEL_DIR, 'rooms.json');
 let DEVICES_PATH = path.join(ACTIVE_LEVEL_DIR, 'devices.js');
 let LOVELACE_PATH = path.join(ACTIVE_LEVEL_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0.3';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -68,7 +68,51 @@ const DANGEROUS_SERVICES = {
 };
 const ALLOWED_SERVICES = Object.fromEntries([...Object.entries(SAFE_SERVICES), ...Object.entries(DANGEROUS_SERVICES)]);
 const COMMAND_LOG_PATH = path.join(DATA_DIR, 'command_log.json');
+const DASHBOARD_PROXY_STATE_PATH = path.join(DATA_DIR, 'dashboard_proxy.json');
 function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
+
+function normalizeIngressProxyPath(value){
+  const raw = String(value || '').trim();
+  if(!raw) return '';
+  let pathOnly = raw;
+  try{
+    if(/^https?:\/\//i.test(raw)) pathOnly = new URL(raw).pathname;
+  }catch(e){ pathOnly = raw; }
+  if(!pathOnly.startsWith('/')) pathOnly = '/' + pathOnly;
+  const m = pathOnly.match(/^(\/api\/hassio_ingress\/[^/?#]+)\/?/);
+  if(m) return m[1] + '/';
+  return '';
+}
+function getDashboardProxyFromRequest(req){
+  const candidates = [
+    req.headers['x-ingress-path'],
+    req.headers['x-forwarded-prefix'],
+    req.headers['x-forwarded-uri'],
+    req.headers['x-original-uri'],
+    req.headers['referer']
+  ];
+  for(const c of candidates){
+    const p = normalizeIngressProxyPath(c);
+    if(p) return { dashboardUrl: p, source: 'home-assistant-ingress-header' };
+  }
+  return { dashboardUrl: '', source: 'not-detected' };
+}
+function loadDashboardProxyState(){
+  const fallback = { version: 1, dashboardUrl: '', source: 'not-detected', updatedAt: null, hint: 'Откройте add-on через штатный ingress/боковое меню Home Assistant, затем обновите диагностику.' };
+  return { ...fallback, ...readJsonSafe(DASHBOARD_PROXY_STATE_PATH, fallback) };
+}
+function saveDashboardProxyState(info){
+  if(!info || !info.dashboardUrl) return loadDashboardProxyState();
+  const payload = { version: 1, dashboardUrl: info.dashboardUrl, source: info.source || 'home-assistant-ingress-header', updatedAt: new Date().toISOString(), hint: 'Этот адрес можно вводить как URL веб-страницы в Webpage dashboard.' };
+  try{ atomicWriteJson(DASHBOARD_PROXY_STATE_PATH, payload); }catch(e){}
+  return payload;
+}
+function dashboardProxyInfo(req){
+  const fromReq = req ? getDashboardProxyFromRequest(req) : { dashboardUrl: '', source: 'not-detected' };
+  if(fromReq.dashboardUrl) return saveDashboardProxyState(fromReq);
+  return loadDashboardProxyState();
+}
+
 
 
 function attentionDefault(){
@@ -1438,6 +1482,7 @@ async function buildDiagnostics(){
     haApiBase: HA_API_BASE,
     haWsUrl: HA_WS_URL,
     hasSupervisorToken: !!HA_TOKEN,
+    dashboardProxy: dashboardProxyInfo(),
     haError,
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: backupSummary().count },
     images: imagesDiagnostics(),
@@ -1555,9 +1600,17 @@ async function importLovelaceRawForLevel(profileId, levelId, paths){
 
 ensureDataStore();
 
-// v3.6.0: direct web path for Home Assistant Webpage dashboards / reverse proxies.
-// When the app is exposed on the same origin as HA via a proxy path, this prefix
-// opens the ALLHA-2D UI directly instead of the HA /app wrapper.
+// v3.6.0.3: capture the real Home Assistant ingress proxy URL for Webpage dashboards.
+// Home Assistant exposes add-ons through /api/hassio_ingress/<token>/.
+// The token/path is discovered from X-Ingress-Path and shown in diagnostics as "Адрес для дашборда".
+app.use((req, res, next) => {
+  const info = getDashboardProxyFromRequest(req);
+  if (info.dashboardUrl) saveDashboardProxyState(info);
+  next();
+});
+
+// v3.6.0: direct web path for reverse proxies that explicitly map this add-on.
+// Note: HA Webpage dashboards generally need the discovered /api/hassio_ingress/... URL above.
 const DIRECT_WEB_PREFIX = '/allha-2d-direct';
 app.use((req, res, next) => {
   if (req.url === DIRECT_WEB_PREFIX) return res.redirect(302, DIRECT_WEB_PREFIX + '/');
@@ -1568,6 +1621,12 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({limit:'1mb'}));
+app.get('/api/dashboard-info', (req,res)=>{
+  try{
+    const info = dashboardProxyInfo(req);
+    res.json({ ok:true, ...info, directRoute:'/allha-2d-direct/', recommended: info.dashboardUrl || 'Откройте add-on через ingress, затем обновите эту страницу.' });
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
 app.get('/devices.js', (req,res)=>{
   const generated = DEVICES_PATH;
   res.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');

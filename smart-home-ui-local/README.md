@@ -780,3 +780,18 @@ Kiosk-карточки группируются по комнатам через
 If GitHub Actions fails with `exit code 132` on the Docker build step after `npm install`, update to v3.6.0.1 or newer. The Dockerfile no longer runs a separate `node -e` dependency check during cross-architecture buildx/QEMU builds.
 
 The Node.js 20 actions warning in GitHub Actions logs is separate from this build failure. It is a GitHub runner/runtime migration warning and does not by itself mean the Docker image failed to build.
+
+
+## v3.6.0.2 — Kiosk tiles fixes and Webpage dashboard clarification
+
+- Fixed kiosk room tile mode: the clock now respects the kiosk clock setting. If the clock is disabled, it stays hidden in room tiles too.
+- Moved the **Общий план** button in room tile mode away from the clock area so it is not overlapped.
+- Clarified Webpage dashboard behavior: Home Assistant dashboard URL path is only the dashboard slug. A root-relative path like `/allha-2d-direct/` cannot be used as the dashboard slug, and HA may return 404 if that direct add-on route is not exposed by HA itself. The direct route is useful for direct/reverse-proxy add-on access; for a default HA dashboard, use a Webpage dashboard only if the target URL is reachable from HA, otherwise keep the native ingress sidebar/panel_custom route.
+
+
+## v3.6.0.3 — Dashboard proxy URL helper
+
+- Добавлен helper для Webpage dashboard: приложение запоминает реальный Home Assistant ingress proxy path из `X-Ingress-Path`.
+- В `Информация / диагностика → Система → Dashboard / proxy` теперь показывается строка **Адрес для дашборда**.
+- Именно этот адрес нужно вводить в поле URL веб-страницы панели Home Assistant, обычно он выглядит как `/api/hassio_ingress/xxxxxxxx/`.
+- `/allha-2d-direct/` оставлен для внешнего reverse proxy, но штатный HA Webpage dashboard чаще требует обнаруженный `/api/hassio_ingress/.../` адрес.
