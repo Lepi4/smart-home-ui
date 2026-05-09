@@ -754,3 +754,23 @@ Kiosk-карточки группируются по комнатам через
 ### v3.5.9.12 — fix standard room sensor input stability
 
 Поля стандартных датчиков комнат теперь защищены от live-refresh: ввод `entity_id` не исчезает через несколько секунд, пока пользователь редактирует поле. Значения сохраняются кнопкой “Сохранить датчики” и записываются в `/data/rooms.json`.
+
+## v3.6.0 — Webpage Direct Mode + Backup Manager + Kiosk room tiles
+
+- Добавлен прямой route `/allha-2d-direct/` для сценариев, где ALLHA-2D открывается как Webpage dashboard или через reverse proxy без привязки к конкретному cloud/local домену.
+- Обычный Home Assistant ingress add-on остаётся основным способом запуска из бокового меню.
+- Backup Manager доработан: ручной backup сохраняет профили, уровни, картинки, layout, rooms, devices, Lovelace sources, UI state, security/PIN, Attention и command log.
+- В Backup Manager добавлено восстановление полного directory-backup с обязательным вводом `RESTORE BACKUP`; перед восстановлением создаётся предоперационный backup.
+- В kiosk mode в режиме плиток, когда открыта комната, добавлена явная кнопка `Общий план` в верхней части экрана карточек.
+- Сохранён режим навигации kiosk: `Карты`, `Плитки`, `Переключаемый`.
+
+### Webpage dashboard
+
+Для обычного add-on рекомендуется использовать встроенный ingress-пункт меню Home Assistant. Если нужен dashboard типа Webpage, используйте прямой путь:
+
+```text
+/allha-2d-direct/
+```
+
+Путь рассчитан на конфигурацию, где запросы к `/allha-2d-direct/` попадают в web-сервер add-on или проксируются к нему. Это позволяет не указывать конкретный внешний cloud/local адрес.
+

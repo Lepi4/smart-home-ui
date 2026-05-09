@@ -1089,7 +1089,7 @@ function renderKioskTiles(){
   const roomFilter=normalizedRoomId(state.kioskTileRoomFilter||'');
   const head=view?.querySelector('.kiosk-tile-head');
   if(head){
-    head.innerHTML=`<h2>${esc(roomGroupLabel(state.selectedRoom))}</h2><p>Карточки устройств этой комнаты. “Общий план” возвращает на основную карту.</p>`;
+    head.innerHTML=`<div class="kiosk-tile-head-actions"><button type="button" class="kiosk-tile-home-btn" data-kiosk-overview-home="1">Общий план</button></div><h2>${esc(roomGroupLabel(state.selectedRoom))}</h2><p>Карточки устройств этой комнаты. “Общий план” возвращает на основную карту.</p>`;
   }
   if(!groups.length){ pages.innerHTML='<div class="kiosk-tile-empty">В этой комнате нет устройств для отображения. Проверьте источники Lovelace/HA Area или назначение комнаты.</div>'; if(pager) pager.innerHTML=''; return; }
 
@@ -3591,6 +3591,19 @@ async function deleteBackup(name){
   try{ state.backups=await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name})}); renderBackupManager(); showToast('Backup удалён'); }
   catch(e){ showToast('Ошибка удаления backup: '+e.message); }
 }
+
+async function restoreFullBackup(name){
+  if(!confirm('Восстановить backup '+name+'? Текущие данные будут сохранены в предоперационный backup, затем заменены содержимым выбранного backup.')) return;
+  const word=window.prompt('Для восстановления введите RESTORE BACKUP');
+  if(word!=='RESTORE BACKUP'){ showToast('Восстановление отменено'); return; }
+  try{
+    const res=await apiJson('api/backups/restore-full',{method:'POST',body:JSON.stringify({name,confirm:word})});
+    state.backups={ok:true,backups:res.backups};
+    renderBackupManager();
+    showToast('Backup восстановлен. Перезагрузка...');
+    setTimeout(()=>location.reload(),900);
+  }catch(e){ showToast('Ошибка восстановления backup: '+e.message); }
+}
 async function deleteOldBackups(){
   if(!confirm('Удалить старые backup-и, оставив последние 10?')) return;
   try{ state.backups=await apiJson('api/backups/delete-old',{method:'POST',body:JSON.stringify({keep:10})}); renderBackupManager(); showToast('Старые backup-и очищены'); }
@@ -4042,6 +4055,7 @@ function bindGlobal(){
     if(e.target.closest('#btn-create-manual-backup')){ createManualBackup(); return; }
     if(e.target.closest('#btn-delete-old-backups')){ deleteOldBackups(); return; }
     if(e.target.closest('#btn-delete-all-backups')){ deleteAllBackups(); return; }
+    const restore=e.target.closest('[data-restore-full-backup]'); if(restore){ restoreFullBackup(restore.dataset.restoreFullBackup); return; }
     const del=e.target.closest('[data-delete-backup]'); if(del){ deleteBackup(del.dataset.deleteBackup); return; }
   });
   const roomsManager=el('rooms-zones-manager');

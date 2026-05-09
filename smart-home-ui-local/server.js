@@ -39,7 +39,7 @@ let ROOMS_SETTINGS_PATH = path.join(ACTIVE_LEVEL_DIR, 'rooms.json');
 let DEVICES_PATH = path.join(ACTIVE_LEVEL_DIR, 'devices.js');
 let LOVELACE_PATH = path.join(ACTIVE_LEVEL_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.5.8.1';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -810,6 +810,35 @@ function createManualBackup(reason='manual'){
   }
   return { name:path.basename(dst), type:'directory', copied, path:dst };
 }
+
+function restoreManualBackup(name, confirmWord){
+  const rel = String(name||'').replace(/\\/g,'/');
+  if(!rel || rel.includes('..') || path.isAbsolute(rel)) throw new Error('Некорректное имя backup');
+  if(String(confirmWord||'') !== 'RESTORE BACKUP') throw new Error('Для восстановления backup требуется RESTORE BACKUP');
+  const srcDir = path.join(LAYOUT_BACKUP_DIR, rel);
+  if(!pathInside(LAYOUT_BACKUP_DIR, srcDir) || !fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) throw new Error('Backup не найден или не является директорией');
+  const before = createManualBackup('before-restore');
+  const restoreMap = [
+    ['profiles.json', PROFILES_META_PATH],
+    ['profiles', PROFILES_DIR],
+    ['addon_config.json', ADDON_CONFIG_PATH],
+    ['attention_rules.json', ATTENTION_RULES_PATH],
+    ['security_rules.json', SECURITY_RULES_PATH],
+    ['command_log.json', COMMAND_LOG_PATH]
+  ];
+  const restored=[];
+  for(const [name0, dst] of restoreMap){
+    const src = path.join(srcDir, name0);
+    if(!fs.existsSync(src)) continue;
+    try{
+      if(fs.existsSync(dst)) fs.rmSync(dst, {recursive:true, force:true});
+      copyPathRecursive(src, dst);
+      restored.push(name0);
+    }catch(e){ console.warn('[ALLHA-2D] restore backup failed:', name0, e.message); }
+  }
+  updateActiveProfilePaths();
+  return { ok:true, restored, preRestoreBackup: before.name, backups: backupSummary(), reloadRecommended:true };
+}
 function deleteBackupItem(name){
   const rel = String(name||'').replace(/\\/g,'/');
   if(!rel || rel.includes('..') || path.isAbsolute(rel)) throw new Error('Некорректное имя backup');
@@ -1525,6 +1554,19 @@ async function importLovelaceRawForLevel(profileId, levelId, paths){
 
 
 ensureDataStore();
+
+// v3.6.0: direct web path for Home Assistant Webpage dashboards / reverse proxies.
+// When the app is exposed on the same origin as HA via a proxy path, this prefix
+// opens the ALLHA-2D UI directly instead of the HA /app wrapper.
+const DIRECT_WEB_PREFIX = '/allha-2d-direct';
+app.use((req, res, next) => {
+  if (req.url === DIRECT_WEB_PREFIX) return res.redirect(302, DIRECT_WEB_PREFIX + '/');
+  if (req.url.startsWith(DIRECT_WEB_PREFIX + '/')) {
+    req.url = req.url.slice(DIRECT_WEB_PREFIX.length) || '/';
+    res.setHeader('X-ALLHA-Direct-Path', DIRECT_WEB_PREFIX);
+  }
+  next();
+});
 app.use(express.json({limit:'1mb'}));
 app.get('/devices.js', (req,res)=>{
   const generated = DEVICES_PATH;
@@ -2423,6 +2465,7 @@ app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutB
 app.post('/api/backups/delete', (req,res)=> { try { deleteBackupItem(req.body?.name); res.json({ok:true, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/backups/delete-old', (req,res)=> { try { res.json({ok:true, backups:deleteOldBackups(req.body?.keep||10)}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/backups/delete-all', (req,res)=> { try { res.json({ok:true, backups:deleteAllBackups(req.body?.confirm)}); } catch(e){ res.status(400).json({error:e.message}); } });
+app.post('/api/backups/restore-full', (req,res)=> { try { res.json(restoreManualBackup(req.body?.name, req.body?.confirm)); } catch(e){ res.status(400).json({error:e.message}); } });
 
 app.post('/api/ha/dashboard-paths/normalize', (req,res)=>{
   try { res.json({ ok:true, dashboardPaths: normalizeDashboardPaths(req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? '') }); }

@@ -1,3 +1,11 @@
+## v3.6.0 — Webpage Direct Mode, Backup Manager and Kiosk room tiles
+
+- Добавлен direct route `/allha-2d-direct/` для Webpage dashboard/reverse proxy сценариев без привязки к cloud/local домену.
+- Доработан Backup Manager: полный ручной backup проекта и восстановление directory-backup с подтверждением `RESTORE BACKUP`.
+- Перед восстановлением backup автоматически создаётся предоперационный backup текущего состояния.
+- В kiosk mode в режиме плиток внутри комнаты добавлена видимая кнопка `Общий план`.
+- README и FAQ обновлены под v3.6.0.
+
 ## 3.5.9.3 — 2026-05-08
 
 ### v3.5.9.12 — стандартные датчики комнат: фиксация ввода
