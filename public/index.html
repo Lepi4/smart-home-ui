@@ -3,7 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ALLHA-2D HA Add-on v3.6.0.4</title>
+  <title>ALLHA-2D</title>
+  <meta name="theme-color" content="#a16a1e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -56,6 +60,8 @@
         <button type="button" id="btn-edit">Редактировать</button>
         <button type="button" id="btn-save-edit" class="hidden">Сохранить изменения</button>
         <button type="button" id="btn-cancel-edit" class="hidden">Отменить изменения</button>
+        <button type="button" id="btn-undo" class="hidden" title="Отменить (Ctrl+Z)">↩ Отмена</button>
+        <button type="button" id="btn-redo" class="hidden" title="Повторить (Ctrl+Y)">↪ Повтор</button>
         <span id="edit-mode-badge" class="edit-mode-badge">Просмотр</span>
         <label class="range-label">Шрифт устройств <input id="card-font-size" type="range" min="10" max="18" value="13"></label>
       </div>
@@ -175,6 +181,14 @@
         <label class="settings-check"><input type="checkbox" id="pref-auto-hide"> Автоскрытие меню в мобильной версии</label>
         <label class="settings-check"><input type="checkbox" id="pref-compact-mode"> Компактные панели</label>
         <label class="settings-check"><input type="checkbox" id="pref-dark-theme"> Тёмная тема</label>
+        <label>Тема оформления
+          <select id="pref-theme">
+            <option value="dark">Тёмная (по умолчанию)</option>
+            <option value="light">Светлая</option>
+            <option value="midnight">Midnight (AMOLED)</option>
+            <option value="sepia">Сепия</option>
+          </select>
+        </label>
         <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
         <label class="settings-check"><input type="checkbox" id="pref-debug-mode"> Debug mode: показывать координатные окна</label>
         <label class="settings-check"><input type="checkbox" id="pref-invisible-zones"> Невидимые зоны: кликабельны, но не видны</label>
@@ -277,6 +291,17 @@
             <button type="button" id="btn-open-device-placement">Открыть размещение устройств</button>
           </div>
         </details>
+        <div class="layout-service-card">
+          <div>
+            <strong>Экспорт / Импорт планировки</strong>
+            <p class="muted">Экспорт сохраняет текущий layout.json (позиции маркеров, зоны, метрики). Импорт загружает ранее экспортированный файл и перезагружает приложение.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" id="btn-export-layout">⬇ Экспортировать</button>
+            <button type="button" id="btn-import-layout">⬆ Импортировать</button>
+            <input type="file" id="import-layout-file" accept=".json" class="hidden">
+          </div>
+        </div>
         <p id="layout-maintenance-status" class="muted">Доступно только в admin mode. Перед очисткой создаётся backup layout.json.</p>
         <div class="layout-service-card factory-reset-card">
           <div>
@@ -524,9 +549,33 @@
     </div>
   </div>
 
+  <!-- Camera stream modal -->
+  <div id="camera-modal" class="modal hidden">
+    <div class="modal-card camera-modal-card">
+      <div class="modal-head">
+        <h2 id="camera-modal-title">Камера</h2>
+        <button type="button" id="btn-close-camera" class="close-word">× Закрыть</button>
+      </div>
+      <div class="camera-modal-body">
+        <img id="camera-stream-img" src="" alt="Камера" class="camera-stream-img">
+        <div class="camera-modal-footer">
+          <span id="camera-modal-entity" class="muted"></span>
+          <button type="button" id="btn-camera-refresh">↺ Обновить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="config.js"></script>
   <script src="lovelace-source.js"></script>
   <script src="devices.js"></script>
   <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>

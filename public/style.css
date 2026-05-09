@@ -1994,3 +1994,61 @@ body.kiosk-tiles-active:not(.kiosk-has-clock) .kiosk-tile-head h2{
 .copyable-value{white-space:pre-wrap;}
 .copy-inline{margin-left:8px;padding:4px 8px;border-radius:9px;font-size:12px;vertical-align:middle;}
 .copy-fallback-textarea{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:.01;}
+
+/* ── Темы оформления ────────────────────────────────────────── */
+body[data-theme="light"]{--bg:#f4f6fa;--text:#1a1f28;--muted:#6a7280;background:#f4f6fa;color:#1a1f28}
+body[data-theme="light"] .sidebar{background:#ffffff;color:#1a1f28;border-right:1px solid #e2e6ed}
+body[data-theme="light"] .canvas-card{background:rgba(255,255,255,.9);border-color:rgba(0,0,0,.1)}
+body[data-theme="light"] .device-panel{background:#f8fafc;color:#1a1f28}
+body[data-theme="light"] .device-card{background:#fff;border-color:#dde3ec;color:#1a1f28}
+body[data-theme="light"] .device-card .name{color:#1a1f28}
+body[data-theme="light"] .device-card .meta,.body[data-theme="light"] .device-card .state{color:#6a7280}
+body[data-theme="light"] button{background:#e8ecf2;color:#1a1f28}
+body[data-theme="light"] button:hover{background:#d6dce7}
+body[data-theme="light"] .room-btn{background:#f0f3f8;border-color:#dde3ec;color:#1a1f28}
+body[data-theme="light"] .room-btn.active{background:#fff3e0;border-color:#a16a1e;color:#a16a1e}
+body[data-theme="light"] .modal-card{background:#fff;color:#1a1f28;border-color:#dde3ec}
+body[data-theme="light"] .detail-card,.body[data-theme="light"] .room-image-wrap{background:rgba(255,255,255,.95);border-color:#dde3ec;color:#1a1f28}
+body[data-theme="light"] .muted{color:#6a7280}
+body[data-theme="light"] .toolbar{background:#fff;border-bottom:1px solid #e2e6ed}
+
+body[data-theme="midnight"]{--bg:#000000;--text:#e8edf5;--muted:#8a94a2;background:#000;color:#e8edf5}
+body[data-theme="midnight"] .sidebar{background:#0a0a0a;color:#e8edf5}
+body[data-theme="midnight"] .canvas-card{background:rgba(10,10,10,.9);border-color:rgba(255,255,255,.06)}
+body[data-theme="midnight"] .device-panel{background:#050505;color:#e8edf5}
+body[data-theme="midnight"] .device-card{background:#0d0d0d;border-color:#1a1a1a}
+body[data-theme="midnight"] button{background:#111;color:#e8edf5}
+body[data-theme="midnight"] button:hover{background:#1a1a1a}
+body[data-theme="midnight"] .room-btn{background:#0a0a0a;border-color:#1a1a1a}
+body[data-theme="midnight"] .modal-card{background:#080808;color:#e8edf5;border-color:#1a1a1a}
+
+body[data-theme="sepia"]{--bg:#f5ead0;--text:#3b2a14;--muted:#7a6540;background:#f5ead0;color:#3b2a14}
+body[data-theme="sepia"] .sidebar{background:#2a1f0e;color:#d4b88a}
+body[data-theme="sepia"] .canvas-card{background:rgba(255,248,232,.85);border-color:rgba(120,80,30,.15)}
+body[data-theme="sepia"] .device-panel{background:#f0e0b8;color:#3b2a14}
+body[data-theme="sepia"] .device-card{background:#fdf5e2;border-color:#d4b870}
+body[data-theme="sepia"] .device-card .name{color:#3b2a14}
+body[data-theme="sepia"] button{background:#d4a855;color:#2a1a06}
+body[data-theme="sepia"] button:hover{background:#c49540}
+body[data-theme="sepia"] .room-btn{background:#e8d49a;border-color:#c4a048;color:#3b2a14}
+body[data-theme="sepia"] .room-btn.active{background:#c49040;border-color:#a07028;color:#fff}
+body[data-theme="sepia"] .modal-card{background:#fdf5e2;color:#3b2a14;border-color:#d4b870}
+
+/* ── Камера ──────────────────────────────────────────────────── */
+.camera-modal-card{max-width:720px}
+.camera-modal-body{padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center}
+.camera-stream-img{max-width:100%;max-height:60vh;border-radius:12px;object-fit:contain;background:#000;display:block}
+.camera-modal-footer{display:flex;align-items:center;justify-content:space-between;width:100%;gap:10px}
+.camera-error{color:#db4437;font-size:13px;text-align:center;padding:20px}
+.device-marker.camera-visual,.device-card.camera-visual .dev-icon,.quick-action.camera-visual .quick-icon{background:#1a2535;color:#6eb8f0}
+
+/* ── Undo / Redo ─────────────────────────────────────────────── */
+#btn-undo,#btn-redo{background:rgba(255,178,63,.14);border:1px solid rgba(255,178,63,.4);color:#ffe2b0}
+#btn-undo:hover,#btn-redo:hover{background:rgba(255,178,63,.26)}
+#btn-undo:disabled,#btn-redo:disabled{opacity:.35;cursor:not-allowed}
+
+/* ── Свайп-анимация ──────────────────────────────────────────── */
+.plan-stage.swipe-left{animation:swipeOutLeft .18s ease forwards}
+.plan-stage.swipe-right{animation:swipeOutRight .18s ease forwards}
+@keyframes swipeOutLeft{to{opacity:0;transform:translateX(-8%)}}
+@keyframes swipeOutRight{to{opacity:0;transform:translateX(8%)}}

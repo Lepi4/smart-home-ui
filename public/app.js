@@ -7,12 +7,14 @@ const state = {
   layout: { version: 8, coordinateSpace: 'room-content-box', overviewRoomSync: false, roomCoordinateMigrated: {}, overviewMarkers: {}, roomMarkers: {}, overviewMetrics: {}, roomMetrics: {}, zones: {}, customNames: {} },
   edit: false,
   editSnapshot: null,
+  undoStack: [],
+  redoStack: [],
   layoutDirty: false,
   selectedEdit: null,
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
 };
@@ -52,7 +54,7 @@ function refreshRuntimeRooms(){
   ROOMS=[{id:'overview',label:'Общий план'}, ...[...byId.values()].sort((a,b)=>(a.label||a.id).localeCompare(b.label||b.id,'ru'))];
   rebuildRoomMap();
 }
-const TYPE_ICONS = { light:'💡', switch:'🔌', cover:'▤', climate:'❄️', media_player:'▶️', humidifier:'💧', sensor:'📟', binary_sensor:'●', valve:'🚰', lock:'🔒', scene:'✨', fan:'💨', input_boolean:'✅', input_number:'🔢', input_select:'▾', button:'⏺', script:'▶', automation:'⚙', person:'👤' };
+const TYPE_ICONS = { light:'💡', switch:'🔌', cover:'▤', climate:'❄️', media_player:'▶️', humidifier:'💧', sensor:'📟', binary_sensor:'●', valve:'🚰', lock:'🔒', scene:'✨', fan:'💨', input_boolean:'✅', input_number:'🔢', input_select:'▾', button:'⏺', script:'▶', automation:'⚙', person:'👤', camera:'📷' };
 const TOGGLE_DOMAINS = new Set(['light','switch','fan','input_boolean','cover','media_player','climate','humidifier','valve']);
 const IMPORTANT_DOMAINS = new Set(['light','switch','cover','climate','media_player','humidifier','fan','sensor','binary_sensor','input_boolean','input_number','input_select','valve','lock','button','script','automation']);
 const LONG_PRESS_MS = 560;
@@ -62,7 +64,7 @@ const DRAG_SUPPRESS_MS = 420;
 // v3.4.13: global settings live in /data/addon_config.json and must be identical
 // on PC, phone and kiosk panels. Device UI state is local per browser/screen.
 const GLOBAL_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','weatherEntity','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','debugMode']);
-const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors']);
+const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors','theme']);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
   const src = (cfg && cfg.ui) ? cfg.ui : cfg || {};
@@ -389,7 +391,9 @@ function applyUiPrefs(){
   document.body.classList.toggle('mobile-mode', !!state.ui.mobileMode);
   document.body.classList.toggle('auto-hide-menus', !!state.ui.autoHide);
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
-  document.body.classList.toggle('dark-theme', !!state.ui.darkTheme);
+  const activeTheme = state.ui.theme || (state.ui.darkTheme ? 'dark' : 'light');
+  document.body.dataset.theme = activeTheme;
+  document.body.classList.toggle('dark-theme', activeTheme === 'dark' || activeTheme === 'midnight');
   document.body.classList.toggle('kiosk-mode', !!state.ui.kioskMode);
   document.body.classList.toggle('debug-mode', !!state.ui.debugMode);
   document.body.classList.toggle('can-edit', canEditLayout());
@@ -415,6 +419,7 @@ function applyUiPrefs(){
   const pa=el('pref-auto-hide'); if(pa) pa.checked=!!state.ui.autoHide;
   const pc=el('pref-compact-mode'); if(pc) pc.checked=!!state.ui.compact;
   const dt=el('pref-dark-theme'); if(dt) dt.checked=!!state.ui.darkTheme;
+  const pt=el('pref-theme'); if(pt) pt.value=state.ui.theme||'dark';
   const kw=el('pref-kiosk-widget'); if(kw) kw.checked=!!state.ui.kioskWidget;
   const km=el('pref-kiosk-mode'); if(km) km.checked=!!state.ui.kioskMode;
   const ktm=el('pref-kiosk-navigation-mode'); if(ktm) ktm.value=String(state.ui.kioskNavigationMode || (state.ui.kioskTileMode?'tiles':'switchable'));
@@ -544,6 +549,9 @@ function iconMarkup(d){
       light:`<path d="M9 14a5 5 0 1 1 6 0c-.8.7-1 1.3-1 2h-4c0-.7-.2-1.3-1-2Z"/><path d="M10 19h4"/>`
     };
     return `<svg class="icon-svg light-${k}" viewBox="0 0 24 24" aria-hidden="true">${paths[k]||paths.light}</svg>`;
+  }
+  if(d.domain==='camera'){
+    return `<svg class="icon-svg camera-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`;
   }
   return `<span class="emoji-icon">${esc(d.emoji || TYPE_ICONS[d.domain] || '•')}</span>`;
 }
@@ -881,6 +889,61 @@ function resumeLiveDashboard(){
   loadStates().catch(()=>{});
 }
 function cloneLayout(layout){ return JSON.parse(JSON.stringify(layout || {})); }
+
+/* ── Undo / Redo ─────────────────────────────────────────────── */
+function pushUndo(){
+  if(!state.edit) return;
+  state.undoStack.push(cloneLayout(state.layout));
+  if(state.undoStack.length > 40) state.undoStack.shift();
+  state.redoStack = [];
+  updateUndoRedoButtons();
+}
+function doUndo(){
+  if(!state.edit || !state.undoStack.length) return;
+  state.redoStack.push(cloneLayout(state.layout));
+  state.layout = state.undoStack.pop();
+  setLayoutDirty(true);
+  render();
+  updateUndoRedoButtons();
+  showToast('Отменено');
+}
+function doRedo(){
+  if(!state.edit || !state.redoStack.length) return;
+  state.undoStack.push(cloneLayout(state.layout));
+  state.layout = state.redoStack.pop();
+  setLayoutDirty(true);
+  render();
+  updateUndoRedoButtons();
+  showToast('Повторено');
+}
+function updateUndoRedoButtons(){
+  const u=el('btn-undo'), r=el('btn-redo');
+  if(u){ u.classList.toggle('hidden',!state.edit); u.disabled=!state.undoStack.length; }
+  if(r){ r.classList.toggle('hidden',!state.edit); r.disabled=!state.redoStack.length; }
+}
+
+/* ── Камера ──────────────────────────────────────────────────── */
+function openCameraStream(d){
+  const modal=el('camera-modal');
+  const img=el('camera-stream-img');
+  const title=el('camera-modal-title');
+  const entityLabel=el('camera-modal-entity');
+  if(!modal||!img) return;
+  title.textContent=displayName(d);
+  entityLabel.textContent=d.entity_id;
+  img.dataset.entity=d.entity_id;
+  img.alt='';
+  img.src='';
+  img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
+  img.onerror=()=>{ img.alt='Камера недоступна или стрим не поддерживается'; };
+  modal.classList.remove('hidden');
+}
+function closeCameraModal(){
+  const modal=el('camera-modal');
+  if(modal) modal.classList.add('hidden');
+  const img=el('camera-stream-img');
+  if(img) img.src='';
+}
 function setLayoutDirty(value=true){
   state.layoutDirty=!!value;
   updateEditButtons();
@@ -892,6 +955,7 @@ function updateEditButtons(){
   if(editBtn) editBtn.classList.toggle('hidden', state.edit || !allowed);
   if(saveBtn){ saveBtn.classList.toggle('hidden', !state.edit || !allowed); saveBtn.disabled=false; saveBtn.textContent='Сохранить изменения'; }
   if(cancelBtn) cancelBtn.classList.toggle('hidden', !state.edit || !allowed);
+  updateUndoRedoButtons();
   renderLayoutMaintenanceTools();
 }
 function enterEditMode(){
@@ -1308,6 +1372,40 @@ function markerEl(d,p,scope){
   anchor.appendChild(b);
   return anchor;
 }
+/* ── Точечное обновление маркера без пересоздания DOM ────────── */
+function patchMarkerForEntity(entity_id){
+  if(state.edit) return false;
+  const d=devices().find(x=>x.entity_id===entity_id);
+  if(!d) return false; // нет на плане
+  let patched=false;
+  qsa(`.marker-anchor[data-entity="${CSS.escape(entity_id)}"]`).forEach(anchor=>{
+    const scope=anchor.dataset.scope||'overview';
+    const btn=anchor.querySelector('.device-marker');
+    if(!btn) return;
+    const isSensor=shouldRenderSensorTextMarker(d, scope);
+    btn.className='device-marker '+visualClass(d)+(isSensor?' text-marker sensor-readout':'');
+    // Обновляем только CSS-переменные ореола — всё остальное в таблице стилей
+    const vs=visualStyle(d);
+    const am=vs.match(/--halo-alpha:([\d.]+)/);
+    const sm=vs.match(/--halo-scale:([\d.]+)/);
+    if(am) btn.style.setProperty('--halo-alpha',am[1]); else btn.style.removeProperty('--halo-alpha');
+    if(sm) btn.style.setProperty('--halo-scale',sm[1]); else btn.style.removeProperty('--halo-scale');
+    btn.innerHTML=markerInnerHtml(d, scope);
+    btn.title=`${displayName(d)}\n${entity_id}`;
+    patched=true;
+  });
+  // Обновляем строку метрик комнаты (стандартные датчики)
+  if(state.selectedRoom!=='overview'){
+    const rClimate=el('room-climate-line');
+    const r=room(state.selectedRoom);
+    if(rClimate && r){
+      const html=metricContent(r);
+      rClimate.innerHTML=html||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>';
+    }
+  }
+  return patched;
+}
+
 function attachEditMarkerActions(b,d,scope){
   let timer=null, sx=0, sy=0, longFired=false;
   const clear=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
@@ -1610,7 +1708,7 @@ function renderDevices(){
 }
 
 function openDevice(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} openDeviceModal(d); }
-function shortDeviceAction(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(canPrimaryAction(d)) return toggleDevice(d); openDeviceModal(d); }
+function shortDeviceAction(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(d.domain==='camera'){ openCameraStream(d); return; } if(canPrimaryAction(d)) return toggleDevice(d); openDeviceModal(d); }
 function attachPressActions(node,d,opts={}){
   let timer=null, longFired=false, sx=0, sy=0, pointerId=null;
   const cancelTimer=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
@@ -2263,6 +2361,7 @@ function nudgePlacementEditor(dx,dy){
 }
 function applyPlacementEditor(){
   if(!state.edit || !state.placementEditor) return;
+  pushUndo();
   const pe=state.placementEditor;
   const kind=pe.kind, p={x:pe.x,y:pe.y};
   if(pe.targetType==='zone'){
@@ -2327,13 +2426,17 @@ function deletePlacementEditorZone(){
   const rid=normalizedRoomId(state.placementEditor.zoneRoomId);
   if(!rid) return;
   if(!confirm('Удалить выбранную зону?')) return;
+  pushUndo();
   if(state.layout.zones) delete state.layout.zones[rid];
-  closePlacementEditor();
   setLayoutDirty(true);
   renderOverviewZones();
   state.selectedEdit=null;
   renderEditSheet();
   showToast('Зона удалена');
+  // Остаёмся в редакторе — сбрасываем в пустое состояние для той же комнаты
+  state.placementEditor={ ...state.placementEditor, x:50, y:50, wPct:20, hPct:20, angleDeg:0, points:[], drawing:false };
+  renderZoneDrawPath();
+  renderPlacementEditorExistingZones();
 }
 
 function openZoneLayoutEditor(roomId){
@@ -2444,6 +2547,7 @@ function deleteSelectedEditObject(){
   const s=state.selectedEdit;
   if(!state.edit || !s) return;
   if(s.kind!=='marker'){ showToast('Удалять можно только маркеры устройств'); return; }
+  pushUndo();
   removeMarker(s.id, s.scope);
   state.selectedEdit=null;
   setLayoutDirty(true);
@@ -2452,6 +2556,7 @@ function deleteSelectedEditObject(){
 function resetSelectedEditObject(){
   const s=state.selectedEdit;
   if(!state.edit || !s) return;
+  pushUndo();
   if(s.kind==='marker'){
     removeMarker(s.id, s.scope);
     state.selectedEdit=null;
@@ -3791,7 +3896,89 @@ async function clearConfig(){
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
 async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused) render();setConnection(true,state.edit?'Редактор · live paused':'Подключено')}catch(e){setConnection(false,'Ошибка обновления');console.error(e)}}
-function startPolling(){if(state.pollTimer)clearInterval(state.pollTimer); if(state.edit || state.livePaused) return; state.pollTimer=setInterval(loadStates,state.config?.pollIntervalMs||6000)}
+function startPolling(){
+  if(state.pollTimer)clearInterval(state.pollTimer);
+  if(state.edit || state.livePaused) return;
+  // Если SSE активен — поллинг раз в 60 с (страховка), иначе — по настройке
+  // readyState 1 = OPEN; если SSE работает — поллинг только как fallback раз в 60 с
+  const interval = (state._sseSource && state._sseSource.readyState===1) ? 60_000 : (state.config?.pollIntervalMs||6000);
+  state.pollTimer=setInterval(loadStates, interval);
+}
+
+/* ── SSE подписка (real-time state_changed от сервера) ─────────── */
+(function(){
+  let retryTimer=null;
+  // Батч-рендер: если несколько state_changed подряд — рендерим один раз
+  let pendingRender=false;
+  let renderTimer=null;
+  function scheduleRender(){
+    pendingRender=true;
+    clearTimeout(renderTimer);
+    renderTimer=setTimeout(()=>{
+      if(!pendingRender) return;
+      pendingRender=false;
+      applySourceConfig(); refreshRuntimeRooms(); updateAttentionFromStates();
+      if(!state.edit && !state.livePaused) render();
+    }, 80);
+  }
+
+  function connectSse(){
+    if(state._sseSource){ try{state._sseSource.close();}catch(e){} state._sseSource=null; }
+    if(typeof EventSource==='undefined') return; // SSR/old browser fallback
+    const es=new EventSource('api/ha/events');
+    state._sseSource=es;
+
+    es.addEventListener('initial_states', e=>{
+      try{
+        const states=JSON.parse(e.data);
+        if(!Array.isArray(states)||!states.length) return;
+        states.forEach(s=>{ state.states[s.entity_id]=s; });
+        applySourceConfig(); refreshRuntimeRooms(); updateAttentionFromStates();
+        if(!state.edit && !state.livePaused) render();
+        setConnection(true, state.edit?'Редактор · live paused':'Live ●');
+        // Перезапускаем поллинг с длинным интервалом (fallback)
+        startPolling();
+      }catch(err){ console.error('SSE initial_states',err); }
+    });
+
+    es.addEventListener('state_changed', e=>{
+      try{
+        const s=JSON.parse(e.data);
+        if(!s?.entity_id) return;
+        const wasKnown=!!state.states[s.entity_id];
+        state.states[s.entity_id]=s;
+        if(state.livePaused) return;
+        if(wasKnown && !state.edit){
+          // Точечный патч: обновляем только маркер изменившейся entity
+          const patched=patchMarkerForEntity(s.entity_id);
+          updateAttentionFromStates();
+          // Entity не на плане (не patched) — достаточно обновить панель устройств
+          if(!patched) scheduleRender();
+        } else {
+          // Новая entity или режим редактирования → полный ре-рендер
+          scheduleRender();
+        }
+      }catch(err){ console.error('SSE state_changed',err); }
+    });
+    es.addEventListener('state_removed', e=>{
+      try{
+        const {entity_id}=JSON.parse(e.data);
+        if(entity_id){ delete state.states[entity_id]; scheduleRender(); }
+      }catch(err){}
+    });
+
+    es.onerror=()=>{
+      state._sseSource=null; es.close();
+      // Возврат к нормальному поллингу
+      startPolling();
+      clearTimeout(retryTimer);
+      retryTimer=setTimeout(connectSse, 8000);
+    };
+  }
+
+  // Экспортируем для вызова из initialHaSync
+  state._connectSse=connectSse;
+})();
 
 function defaultSourceConfig(){return{version:1,selectedCards:{},defaultInclude:true,excludedCards:{'Физические устройства::Системные':true,'Вирт.устройства::Вирт.устройства':true},includeUnknownFromApi:false}}
 function isSourceKeyEnabled(sourceKey){const cfg=state.sourceConfig||defaultSourceConfig(); if(Object.prototype.hasOwnProperty.call(cfg.selectedCards||{},sourceKey))return!!cfg.selectedCards[sourceKey]; if((cfg.excludedCards||{})[sourceKey])return false; return cfg.defaultInclude!==false}
@@ -3889,14 +4076,16 @@ function renderInfoModal(){
       infoRow('Ошибка HA',d.haError||'—'),
       infoRow('Режим',d.mode),
       infoRow('DATA_DIR',d.dataDir, true),
-      infoRow('HA API base',d.haApiBase, true),
       infoRow('Supervisor token',d.hasSupervisorToken?'есть':'нет'),
-      infoSection('Dashboard / proxy'),
-      infoRow('Адрес для дашборда', d.dashboardProxy?.dashboardUrl || 'Откройте add-on через боковое меню HA и обновите диагностику', true),
-      infoRow('Direct route', d.dashboardProxy?.directRoute || '/allha-2d-direct/', true),
+      infoRow('States в кэше',String(d.liveStatesCache??'—')),
+      infoSection('Dashboard / доступ'),
+      infoRow('Локальный адрес без Home Assistant', d.dashboardProxy?.directLocal?.url || 'http://IP_HOME_ASSISTANT:8099/', true),
+      infoRow('Direct local port', String(d.dashboardProxy?.directLocal?.port || 8099), true),
+      infoRow('Direct local candidates', (d.dashboardProxy?.directLocal?.candidates||[]).map(x=>`${x.label}: ${x.url}`).join(' | ') || 'http://IP_HOME_ASSISTANT:8099/', true),
+      infoRow('Ingress для карточки', d.dashboardProxy?.dashboardUrl || 'Используйте ingress-aware Lovelace card / Addon Iframe Card', true),
+      infoRow('Direct route для reverse proxy', d.dashboardProxy?.directRoute || '/allha-2d-direct/', true),
       infoRow('Proxy updated', d.dashboardProxy?.updatedAt || '—'),
-      infoRow('Dashboard candidates', (d.dashboardProxy?.candidates||[]).map(x=>`${x.label}: ${x.url}`).join(' | ') || '—', true),
-      infoRow('Dashboard hint', d.dashboardProxy?.hint || '—'),
+      infoRow('Dashboard hint', d.dashboardProxy?.directLocal?.hint || d.dashboardProxy?.hint || '—'),
       infoSection('Runtime storage'),
       infoRow('layout.json в /data',d.storage?.layoutExists?'есть':'нет'),
       infoRow('ui_state.json в /data',d.storage?.uiStateExists?'есть':'нет'),
@@ -4292,15 +4481,101 @@ function bindGlobal(){
   el('btn-fullscreen').onclick=async()=>{try{ if(!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen(); }catch(e){showToast('Полный экран недоступен: '+e.message)}};
   el('btn-quick-overlay').onclick=()=>{state.quickOverlayOpen=true; el('quick-overlay').classList.remove('hidden'); renderQuickActions();};
   el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
+
+  /* ── Тема оформления ─────────────────────────────────────────── */
+  const ptSel=el('pref-theme');
+  if(ptSel) ptSel.onchange=e=>{
+    state.ui.theme=e.target.value;
+    state.ui.darkTheme=['dark','midnight'].includes(e.target.value);
+    applyUiPrefs();
+    saveUiPrefs();
+  };
+
+  /* ── Undo / Redo кнопки ──────────────────────────────────────── */
+  const undoBtn=el('btn-undo'); if(undoBtn) undoBtn.onclick=()=>doUndo();
+  const redoBtn=el('btn-redo'); if(redoBtn) redoBtn.onclick=()=>doRedo();
+
+  /* ── Ctrl+Z / Ctrl+Y ─────────────────────────────────────────── */
+  document.addEventListener('keydown', e=>{
+    if(e.target.closest('input,textarea,select')) return;
+    if((e.ctrlKey||e.metaKey) && e.key==='z' && !e.shiftKey){ e.preventDefault(); doUndo(); }
+    if((e.ctrlKey||e.metaKey) && (e.key==='y' || (e.key==='z' && e.shiftKey))){ e.preventDefault(); doRedo(); }
+  });
+
+  /* ── Камера: закрытие и обновление ──────────────────────────── */
+  const closeCamBtn=el('btn-close-camera'); if(closeCamBtn) closeCamBtn.onclick=closeCameraModal;
+  const camModal=el('camera-modal'); if(camModal) camModal.addEventListener('click',e=>{ if(e.target.id==='camera-modal') closeCameraModal(); });
+  const camRefresh=el('btn-camera-refresh');
+  if(camRefresh) camRefresh.onclick=()=>{
+    const img=el('camera-stream-img');
+    if(img && img.dataset.entity){ img.src=''; img.src='api/camera/stream/'+encodeURIComponent(img.dataset.entity)+'?t='+Date.now(); }
+  };
+
+  /* ── Свайп между комнатами (мобильный) ──────────────────────── */
+  (function bindSwipe(){
+    let sx=0, sy=0, sTime=0;
+    const MIN_DIST=60, MAX_Y_RATIO=0.6, MAX_MS=400;
+    function onSwipeStart(e){
+      if(state.edit || state.quickOverlayOpen) return;
+      const t=e.touches?.[0]||e;
+      sx=t.clientX; sy=t.clientY; sTime=Date.now();
+    }
+    function onSwipeEnd(e){
+      if(state.edit || state.quickOverlayOpen) return;
+      if(!sTime) return;
+      const t=e.changedTouches?.[0]||e;
+      const dx=t.clientX-sx, dy=t.clientY-sy, dt=Date.now()-sTime;
+      sTime=0;
+      if(dt>MAX_MS || Math.abs(dx)<MIN_DIST || Math.abs(dy/dx)>MAX_Y_RATIO) return;
+      const idx=ROOMS.findIndex(r=>r.id===state.selectedRoom);
+      if(dx<0){ const next=ROOMS[idx+1]; if(next) selectRoom(next.id); }
+      else { const prev=ROOMS[idx-1]; if(prev) selectRoom(prev.id); }
+    }
+    [el('overview-stage'),el('room-stage')].forEach(s=>{
+      if(!s) return;
+      s.addEventListener('touchstart',onSwipeStart,{passive:true});
+      s.addEventListener('touchend',onSwipeEnd,{passive:true});
+    });
+  })();
+
+  /* ── Экспорт / Импорт планировки ────────────────────────────── */
+  const exportBtn=el('btn-export-layout');
+  if(exportBtn) exportBtn.onclick=async()=>{
+    try{
+      const res=await fetch('api/export/layout');
+      if(!res.ok) throw new Error(await res.text());
+      const blob=await res.blob();
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download='allha2d-layout.json'; a.click();
+      URL.revokeObjectURL(url);
+    }catch(e){ showToast('Экспорт: '+e.message); }
+  };
+  const importBtn=el('btn-import-layout');
+  const importFile=el('import-layout-file');
+  if(importBtn && importFile){
+    importBtn.onclick=()=>importFile.click();
+    importFile.onchange=async e=>{
+      const file=e.target.files?.[0]; e.target.value='';
+      if(!file) return;
+      try{
+        const text=await file.text();
+        const data=JSON.parse(text);
+        const res=await apiJson('api/import/layout',{method:'POST',body:JSON.stringify(data)});
+        if(res.ok){ showToast('Планировка импортирована, перезагрузка…'); setTimeout(()=>location.reload(),1200); }
+      }catch(e){ showToast('Импорт: '+e.message); }
+    };
+  }
 }
 
 async function initialHaSync(){
   try{
     await testConnection({keepModal:true});
-    startPolling();
+    if(state._connectSse) state._connectSse(); // запускаем WS-подписку через SSE
   }catch(e){
     console.error('initial HA sync failed', e);
     setConnection(false,'Ошибка подключения');
+    startPolling(); // fallback если SSE недоступен
   }
 }
 

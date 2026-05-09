@@ -1,19 +1,42 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const WebSocket = require('ws');
+const { Readable } = require('stream');
 const crypto = require('crypto');
+const { HA_API_BASE, HA_WS_URL, HA_TOKEN, haFetch, haWsCommand, statesCache, sseClients, broadcastSseEvent, startHaWsSubscription } = require('./src/ha');
 let sharp = null;
 try { sharp = require('sharp'); } catch (e) { sharp = null; }
 
 const app = express();
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// Simple rate limiter (no external deps) — max 30 service calls per minute per IP
+const _rlStore = new Map();
+function makeRateLimit(maxReq, windowMs) {
+  return (req, res, next) => {
+    const ip = req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    let e = _rlStore.get(ip);
+    if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + windowMs }; _rlStore.set(ip, e); }
+    if (++e.count > maxReq) return res.status(429).json({ error: 'Слишком много запросов, подождите немного' });
+    next();
+  };
+}
+// Clean up stale entries every 5 minutes
+setInterval(() => { const now = Date.now(); _rlStore.forEach((e, k) => { if (now > e.resetAt) _rlStore.delete(k); }); }, 300_000).unref();
+
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const FALLBACK_DATA_DIR = path.join(__dirname, 'data');
 const ADDON_CONFIG_PATH = path.join(DATA_DIR, 'addon_config.json');
-const HA_API_BASE = (process.env.HA_API_BASE || 'http://supervisor/core/api').replace(/\/$/, '');
-const HA_WS_URL = process.env.HA_WS_URL || HA_API_BASE.replace(/^http/i, 'ws').replace(/\/api$/, '/websocket');
-const HA_TOKEN = process.env.SUPERVISOR_TOKEN || process.env.HA_TOKEN || '';
 const LAYOUT_BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PROFILES_DIR = path.join(DATA_DIR, 'profiles');
 const PROFILES_META_PATH = path.join(DATA_DIR, 'profiles.json');
@@ -39,7 +62,7 @@ let ROOMS_SETTINGS_PATH = path.join(ACTIVE_LEVEL_DIR, 'rooms.json');
 let DEVICES_PATH = path.join(ACTIVE_LEVEL_DIR, 'devices.js');
 let LOVELACE_PATH = path.join(ACTIVE_LEVEL_DIR, 'lovelace-source.js');
 const FALLBACK_DEVICES_PATH = path.join(__dirname, 'public', 'devices.js');
-const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0.4';
+const ADDON_VERSION = process.env.BUILD_VERSION || require('./package.json').version || '3.6.0.5';
 const APP_BRAND = 'ALLHA-2D';
 const APP_DEVELOPER = 'Lepi4';
 const APP_GITHUB = 'https://github.com/Lepi4/smart-home-ui';
@@ -69,7 +92,28 @@ const DANGEROUS_SERVICES = {
 const ALLOWED_SERVICES = Object.fromEntries([...Object.entries(SAFE_SERVICES), ...Object.entries(DANGEROUS_SERVICES)]);
 const COMMAND_LOG_PATH = path.join(DATA_DIR, 'command_log.json');
 const DASHBOARD_PROXY_STATE_PATH = path.join(DATA_DIR, 'dashboard_proxy.json');
+const DIRECT_DASHBOARD_PORT = Number(process.env.DIRECT_DASHBOARD_PORT || process.env.ALLHA_DIRECT_PORT || 8099);
 function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
+function requestHostname(req){
+  const raw = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim();
+  if(!raw) return '';
+  try{ return new URL(/^https?:\/\//i.test(raw) ? raw : 'http://' + raw).hostname; }catch(e){ return raw.replace(/:\d+$/, ''); }
+}
+function directLocalDashboardInfo(req){
+  const host = requestHostname(req);
+  const candidates = [];
+  if(host && !/ui\.nabu\.casa$/i.test(host)){
+    candidates.push({ label:'Direct local dashboard', url:`http://${host}:${DIRECT_DASHBOARD_PORT}/`, status:'lan-only' });
+  }
+  candidates.push({ label:'Direct local dashboard template', url:`http://IP_HOME_ASSISTANT:${DIRECT_DASHBOARD_PORT}/`, status:'replace-ip' });
+  return {
+    enabled:true,
+    port:DIRECT_DASHBOARD_PORT,
+    url:candidates[0]?.url || `http://IP_HOME_ASSISTANT:${DIRECT_DASHBOARD_PORT}/`,
+    candidates,
+    hint:'Локальный direct-доступ работает по LAN через проброшенный порт add-on. Не открывайте этот порт на роутере. Для удалённой стартовой панели используйте ingress-aware Lovelace card, а для локального киоска — Direct local dashboard.'
+  };
+}
 
 function normalizeIngressProxyPath(value){
   const raw = String(value || '').trim();
@@ -1592,7 +1636,7 @@ function imagesDiagnostics(){
   };
 }
 
-async function buildDiagnostics(){
+async function buildDiagnostics(req=null){
   const devices=loadAllDevicesForDiagnostics();
   let haStates=[]; let haError=null;
   try{ haStates=await haFetch('/states'); }catch(e){ haError=e.message; }
@@ -1613,10 +1657,9 @@ async function buildDiagnostics(){
     brand: { name: APP_BRAND, developer: APP_DEVELOPER, github: APP_GITHUB, copyright: APP_COPYRIGHT },
     mode: 'home-assistant-addon',
     dataDir: DATA_DIR,
-    haApiBase: HA_API_BASE,
-    haWsUrl: HA_WS_URL,
     hasSupervisorToken: !!HA_TOKEN,
-    dashboardProxy: dashboardProxyInfo(),
+    liveStatesCache: statesCache.size,
+    dashboardProxy: { ...dashboardProxyInfo(req), directLocal: directLocalDashboardInfo(req) },
     haError,
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: backupSummary().count },
     images: imagesDiagnostics(),
@@ -1758,7 +1801,7 @@ app.use(express.json({limit:'1mb'}));
 app.get('/api/dashboard-info', (req,res)=>{
   try{
     const info = dashboardProxyInfo(req);
-    res.json({ ok:true, ...info, directRoute:'/allha-2d-direct/', recommended: info.dashboardUrl || 'Откройте add-on через ingress, затем обновите эту страницу.', candidates: info.candidates || dashboardUrlCandidates(info.dashboardUrl) });
+    res.json({ ok:true, ...info, directRoute:'/allha-2d-direct/', directLocal: directLocalDashboardInfo(req), recommended: info.dashboardUrl || directLocalDashboardInfo(req).url || 'Откройте add-on через ingress, затем обновите эту страницу.', candidates: info.candidates || dashboardUrlCandidates(info.dashboardUrl) });
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 app.get('/devices.js', (req,res)=>{
@@ -1951,59 +1994,10 @@ function publicConfig(cfg){
     security: publicSecurityConfig(cfg?.security||{})
   };
 }
-async function haFetch(endpoint, init={}){
-  if(!HA_TOKEN) throw new Error('SUPERVISOR_TOKEN недоступен. Проверь config.yaml: homeassistant_api: true');
-  const url = HA_API_BASE + endpoint;
-  const res = await fetch(url, { ...init, headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json', ...(init.headers||{}) } });
-  if(!res.ok){
-    const text = await res.text().catch(()=> '');
-    throw new Error(`HA API ${res.status}${text ? ': '+text.slice(0,300) : ''}`);
-  }
-  const ct = res.headers.get('content-type') || '';
-  if(ct.includes('application/json')) return res.json();
-  return res.text();
-}
-
-function haWebSocketUrl(haUrl){
-  const u = new URL(haUrl);
-  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
-  u.pathname = u.pathname.replace(/\/$/, '') + '/api/websocket';
-  u.search = '';
-  u.hash = '';
-  return u.toString();
-}
 function splitDashboardPath(raw){
   const s = normalizeDashboardPathEntry(raw);
   const parts = s.split('/').filter(Boolean);
   return { raw:s, dashboardPath: parts[0] || 'lovelace', viewPath: parts.slice(1).join('/') };
-}
-function haWsCommand(type, payload={}){
-  if(!HA_TOKEN) return Promise.reject(new Error('SUPERVISOR_TOKEN недоступен'));
-  return new Promise((resolve,reject)=>{
-    const ws = new WebSocket(HA_WS_URL);
-    const timer = setTimeout(()=>{ try{ws.close();}catch(e){} reject(new Error('Timeout WebSocket Home Assistant')); }, 15000);
-    let authed = false;
-    const done = (err,data)=>{ clearTimeout(timer); try{ws.close();}catch(e){} err ? reject(err) : resolve(data); };
-    ws.on('error', err=>done(err));
-    ws.on('message', buf=>{
-      let msg;
-      try{ msg = JSON.parse(buf.toString()); }catch(e){ return; }
-      if(msg.type === 'auth_required'){
-        ws.send(JSON.stringify({type:'auth', access_token: HA_TOKEN}));
-        return;
-      }
-      if(msg.type === 'auth_invalid') return done(new Error(msg.message || 'HA auth invalid'));
-      if(msg.type === 'auth_ok' && !authed){
-        authed = true;
-        ws.send(JSON.stringify({id:1, type, ...payload}));
-        return;
-      }
-      if(msg.id === 1){
-        if(msg.success === false) return done(new Error(msg.error?.message || JSON.stringify(msg.error || msg)));
-        return done(null, msg.result ?? msg);
-      }
-    });
-  });
 }
 
 async function loadHaEntityAreaMap(){
@@ -2566,7 +2560,7 @@ app.post('/api/config', (req,res)=> {
 });
 app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:6000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', haApiBase:HA_API_BASE, haWsUrl:HA_WS_URL, hasSupervisorToken:!!HA_TOKEN, dataDir:DATA_DIR }); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', hasSupervisorToken:!!HA_TOKEN }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ui-state', (req,res)=> { try { res.json(loadUiState()); } catch(e){ res.status(500).json({error:e.message}); } });
 
 
@@ -2652,7 +2646,7 @@ app.post('/api/attention/clear', async (req,res)=> {
 });
 
 app.post('/api/ui-state', (req,res)=> { try { res.json({ok:true, state: saveUiState(req.body || {})}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics()); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics(req)); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/backups/create', (req,res)=> { try { const item=createManualBackup(req.body?.reason||'manual'); res.json({ok:true, backup:item, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutBackup(req.body?.name); res.json({ok:true, layout}); } catch(e){ res.status(500).json({error:e.message}); } });
@@ -2686,8 +2680,31 @@ app.post('/api/ha/lovelace/import-stored', async (req,res)=>{
   try { res.json(await importStoredLovelaceRaw()); }
   catch(e){ res.status(500).json({error:e.message}); }
 });
-app.get('/api/ha/states', async (req,res)=> { try { const states = await haFetch('/states'); res.json({ ok:true, states }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/ha/service', async (req,res)=> {
+/* SSE: браузер подписывается → получает initial_states + живые state_changed */
+app.get('/api/ha/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  sseClients.add(res);
+  // Отправляем текущий кэш сразу при подключении
+  const states = [...statesCache.values()];
+  if (states.length) res.write(`event: initial_states\ndata: ${JSON.stringify(states)}\n\n`);
+  // keepalive каждые 25 с
+  const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) { sseClients.delete(res); clearInterval(hb); } }, 25_000);
+  req.on('close', () => { sseClients.delete(res); clearInterval(hb); });
+});
+
+app.get('/api/ha/states', async (req, res) => {
+  try {
+    if (statesCache.size > 0) return res.json({ ok: true, states: [...statesCache.values()] });
+    // fallback: прямой запрос к HA пока кэш не прогрелся
+    const states = await haFetch('/states');
+    states.forEach(s => statesCache.set(s.entity_id, s));
+    res.json({ ok: true, states });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/ha/service', makeRateLimit(30, 60_000), async (req,res)=> {
   const {domain, service, data, confirmDangerous, pin} = req.body || {};
   const entity_id = data?.entity_id || '';
   try {
@@ -2719,7 +2736,65 @@ app.post('/api/ha/service', async (req,res)=> {
   } catch(e){ appendCommandLog({domain,service,entity_id,result:'error:'+e.message}); res.status(500).json({error:e.message}); }
 });
 
-const server = app.listen(PORT, ()=> console.log(`Smart Home UI HA Add-on listening on http://0.0.0.0:${PORT}`));
+/* ── Camera proxies ───────────────────────────────────────────── */
+// MJPEG live stream: браузер показывает в <img> нативно
+app.get('/api/camera/stream/:entity_id', makeRateLimit(20, 60_000), async (req, res) => {
+  const entity_id = req.params.entity_id;
+  if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).end();
+  if(!HA_TOKEN) return res.status(503).end();
+  try {
+    const camRes = await fetch(`${HA_API_BASE}/camera_proxy_stream/${entity_id}`, {
+      headers: { 'Authorization': `Bearer ${HA_TOKEN}` },
+      signal: AbortSignal.timeout(10_000)
+    });
+    if(!camRes.ok) return res.status(camRes.status).end();
+    res.setHeader('Content-Type', camRes.headers.get('content-type') || 'multipart/x-mixed-replace; boundary=--frame');
+    res.setHeader('Cache-Control', 'no-store');
+    const nodeStream = Readable.fromWeb(camRes.body);
+    nodeStream.pipe(res);
+    req.on('close', () => nodeStream.destroy());
+  } catch(e) { if(!res.headersSent) res.status(500).end(); }
+});
+
+// Одиночный кадр (fallback / кнопка «Обновить»)
+app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req, res) => {
+  const entity_id = req.params.entity_id;
+  if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).json({error:'Некорректный entity_id'});
+  if(!HA_TOKEN) return res.status(503).json({error:'SUPERVISOR_TOKEN недоступен'});
+  try {
+    const camRes = await fetch(`${HA_API_BASE}/camera_proxy/${entity_id}`, {
+      headers: { 'Authorization': `Bearer ${HA_TOKEN}` }
+    });
+    if(!camRes.ok) return res.status(camRes.status).json({error:`HA camera ${camRes.status}`});
+    res.setHeader('Content-Type', camRes.headers.get('content-type') || 'image/jpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(Buffer.from(await camRes.arrayBuffer()));
+  } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+/* ── Layout export / import ───────────────────────────────────── */
+app.get('/api/export/layout', (req, res) => {
+  try {
+    const layout = loadLayout();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="allha2d-layout.json"');
+    res.json(layout);
+  } catch(e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/import/layout', express.json({limit:'5mb'}), (req, res) => {
+  try {
+    const { layout } = normalizeLayoutPayload(req.body, {strict:true});
+    const backup = saveLayout(layout);
+    res.json({ok:true, backup: backup ? path.basename(backup) : null});
+  } catch(e) { res.status(400).json({error: e.message}); }
+});
+
+const server = app.listen(PORT, () => {
+  console.log(`Smart Home UI HA Add-on listening on http://0.0.0.0:${PORT}`);
+  // Запускаем подписку на state_changed после старта сервера
+  startHaWsSubscription();
+});
 server.on('error', err => {
   if(err && err.code === 'EADDRINUSE'){
     console.error(`Port ${PORT} is already in use. Set another PORT, e.g. PORT=8105`);
