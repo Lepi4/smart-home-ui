@@ -1,25 +1,26 @@
+# Stage 1: install deps on the native build platform to avoid QEMU SIGILL crashes.
+# express and ws are pure JS so node_modules are cross-arch safe.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS deps
+WORKDIR /app
+ENV npm_config_audit=false
+ENV npm_config_fund=false
+COPY package.json ./
+RUN npm install --omit=dev --ignore-optional \
+  && npm cache clean --force
+
+# Stage 2: final image for the target arch
 FROM node:20-alpine
 
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV DATA_DIR=/data
-ENV npm_config_audit=false
-ENV npm_config_fund=false
 
-# Install production dependencies first so Docker cache works correctly.
-# Do not run node-based dependency checks during cross-arch buildx/QEMU builds:
-# on some arm64 emulated builders a simple `node -e ...` exits with code 132
-# even when npm install completed successfully.
-COPY package.json ./
-# --ignore-optional skips sharp (native addon, crashes QEMU arm64 builds via SIGILL).
-# sharp is optional: server.js has try/catch fallback; image upload works without WebP conversion.
-RUN npm install --omit=dev --ignore-optional \
-  && npm cache clean --force
-
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN chmod +x /app/start.sh \
   && mkdir -p /data/backups
 
 EXPOSE 8080
+EXPOSE 8100
 CMD ["/app/start.sh"]
