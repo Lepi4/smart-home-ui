@@ -4364,6 +4364,8 @@ function mobileCodeTick(){
       timer.textContent = '';
       if(_mobileCodeTimer){ clearInterval(_mobileCodeTimer); _mobileCodeTimer = null; }
     }
+    const active = document.activeElement;
+    if(!active || !active.classList?.contains('mobile-device-name')) loadMobileDevices();
   }).catch(()=>{});
 }
 
@@ -4401,15 +4403,19 @@ async function loadMobileDevices(){
     const devs = data.devices || [];
     const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${devs.length})`;
     if(!devs.length){ list.innerHTML = '<p class="muted">Нет привязанных устройств</p>'; return; }
-    list.innerHTML = devs.map(d=>`
+    list.innerHTML = devs.map(d=>{
+      const details = [d.model, d.manufacturer, d.platform, d.osVersion, d.screen].filter(Boolean).join(' · ');
+      return `
       <div class="mobile-device-row" data-did="${esc(d.device_id)}">
         <input type="text" class="mobile-device-name" value="${esc(d.name)}" placeholder="Имя устройства">
-        <span class="muted" style="font-size:11px">Привязано: ${d.paired_at?.slice(0,10)||'—'} · Был: ${d.last_seen?.slice(0,10)||'—'}</span>
+        <span class="muted" style="font-size:11px">${esc(details || 'Информация о модели недоступна')} · ID: ${esc(String(d.device_id||'').slice(0,8))}</span>
+        <span class="muted" style="font-size:11px">Привязано: ${d.paired_at?.slice(0,10)||'—'} · Был: ${d.last_seen?.slice(0,19).replace('T',' ')||'—'}</span>
         <div style="display:flex;gap:6px;margin-top:4px">
           <button type="button" class="btn-mobile-rename" data-did="${esc(d.device_id)}">Переименовать</button>
           <button type="button" class="btn-mobile-revoke" data-did="${esc(d.device_id)}">Отозвать</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }catch(e){ list.innerHTML = `<p class="muted">Ошибка: ${esc(e.message)}</p>`; }
 }
 
@@ -4432,6 +4438,19 @@ function bindMobileSettings(){
   if(genCode) genCode.onclick = async()=>{
     try{ await apiJson('api/mobile/code/new',{method:'POST'}); startMobileCodePoll(); }
     catch(e){ showToast('Ошибка генерации кода: '+e.message); }
+  };
+
+  const copyCode = el('btn-mobile-copy-code');
+  if(copyCode) copyCode.onclick = async()=>{
+    const code = (el('mobile-code-display')?.textContent || '').replace(/[^A-Z0-9]/gi,'').trim();
+    if(!code || code.length < 6){ showToast('Нет активного кода'); return; }
+    try{
+      if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(code);
+      else {
+        const ta = document.createElement('textarea'); ta.value = code; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      }
+      showToast('Код скопирован');
+    }catch(e){ showToast('Не удалось скопировать: '+e.message); }
   };
 
   const cancelCode = el('btn-mobile-cancel-code');

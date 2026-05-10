@@ -350,7 +350,7 @@
       <!-- Мобильный доступ -->
       <div class="settings-section-panel hidden" id="settings-panel-mobile">
         <h3>Мобильный доступ</h3>
-        <p class="muted">Мобильное приложение подключается через <strong>порт 32457</strong> — он работает только с токеном. Браузер к этому порту не получит доступ (503). Порт 8099 остаётся для LAN-браузера без пароля.</p>
+        <p class="muted">Мобильное приложение подключается через <strong>порт 32457</strong> — он работает только с токеном. Браузер к этому порту без токена увидит только заглушку Mobile Access. Порт 8099 остаётся для LAN-браузера без пароля.</p>
         <p class="muted" style="color:#f0b34b">В мобильном приложении: Локальный адрес = <code>http://IP_HA:32457</code> · Внешний = <code>http://ваш-ddns:32457</code></p>
         <label class="settings-check"><input type="checkbox" id="mobile-access-enabled"> Включить ограничение внешнего доступа на порт 8099 (Bearer token для не-LAN запросов)</label>
         <label>Локальный адрес для мобильного приложения (порт 32457)<input id="mobile-local-url" type="text" placeholder="http://192.168.1.45:32457"></label>
@@ -368,6 +368,7 @@
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
             <button type="button" id="btn-mobile-gen-code">Создать код</button>
+            <button type="button" id="btn-mobile-copy-code">Скопировать код</button>
             <button type="button" id="btn-mobile-cancel-code">Отменить код</button>
           </div>
         </div>

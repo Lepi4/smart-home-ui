@@ -57,7 +57,26 @@ function cancelPendingCode() {
 
 /* ── Pairing ─────────────────────────────────────────── */
 
-function consumeCode(code, device_id) {
+function _cleanText(value, max = 120) {
+  return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function _deviceDefaultName(device_id, meta = {}) {
+  const explicit = _cleanText(meta.deviceName || meta.name, 64);
+  if (explicit) return explicit;
+  const model = _cleanText(meta.model || meta.deviceModel, 64);
+  if (model) return model;
+  const ua = _cleanText(meta.userAgent, 180);
+  const androidModel = ua.match(/Android\s+[0-9.]+;\s*([^;)]+?)\s+Build/i)?.[1]
+    || ua.match(/Android\s+[0-9.]+;\s*([^;)]+)/i)?.[1];
+  if (androidModel && !/wv|mobile|linux/i.test(androidModel)) return androidModel.slice(0, 64);
+  const platform = _cleanText(meta.platform, 32);
+  if (/android/i.test(platform || ua)) return `Android ${String(device_id).slice(0, 6)}`;
+  if (/iphone|ipad|ios/i.test(platform || ua)) return `iOS ${String(device_id).slice(0, 6)}`;
+  return `Устройство ${Object.keys(_devs()).length + 1}`;
+}
+
+function consumeCode(code, device_id, meta = {}) {
   if (!code || !device_id) {
     throw Object.assign(new Error('Не указан код или device_id'), { status: 400 });
   }
@@ -77,12 +96,21 @@ function consumeCode(code, device_id) {
 
   const token = crypto.randomBytes(32).toString('hex');
   const devs = _devs();
-  const existingName = devs[device_id]?.name;
+  const existing = devs[device_id] || {};
+  const now = new Date().toISOString();
   devs[device_id] = {
+    ...existing,
     token,
-    name: existingName || `Устройство ${Object.keys(devs).length + 1}`,
-    paired_at: new Date().toISOString(),
-    last_seen: new Date().toISOString()
+    name: existing.name || _deviceDefaultName(device_id, meta),
+    platform: _cleanText(meta.platform, 32),
+    model: _cleanText(meta.model || meta.deviceModel, 64),
+    manufacturer: _cleanText(meta.manufacturer, 64),
+    osVersion: _cleanText(meta.osVersion || meta.os_version, 32),
+    appVersion: _cleanText(meta.appVersion || meta.app_version, 32),
+    userAgent: _cleanText(meta.userAgent, 240),
+    screen: _cleanText(meta.screen, 32),
+    paired_at: existing.paired_at || now,
+    last_seen: now
   };
   _saveDevices();
   return token;
@@ -149,6 +177,13 @@ function listDevices() {
   return Object.entries(_devs()).map(([device_id, d]) => ({
     device_id,
     name: d.name || device_id,
+    platform: d.platform || '',
+    model: d.model || '',
+    manufacturer: d.manufacturer || '',
+    osVersion: d.osVersion || '',
+    appVersion: d.appVersion || '',
+    screen: d.screen || '',
+    userAgent: d.userAgent || '',
     paired_at: d.paired_at,
     last_seen: d.last_seen
   }));

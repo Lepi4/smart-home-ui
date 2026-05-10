@@ -1,12 +1,20 @@
+## v4.1.9
+
+- Mobile pairing UI: added “Copy code”.
+- Mobile access settings now refresh the paired device list automatically after pairing.
+- Mobile token revocation is detected before opening the protected UI; revoked devices return to pairing.
+- Mobile fallback local→web no longer shows a transient fatal error when local is unavailable but remote works.
+- Pairing sends available device info: platform, model, manufacturer, OS version, screen and user-agent.
+
 # CHANGELOG
 
 
-## v4.1.8
+## v4.1.9
 
 - Mobile app connection logic aligned with the working Sonnet build supplied by the user.
 - Server/add-on remains compatible with v4.1.5+ mobile endpoints: `/api/health`, `/api/mobile/debug`, `/api/mobile/pair`.
 - Release split is preserved: add-on/server archive, mobile source archive, signed APK, roadmap file.
-- README/FAQ clarify that v4.1.8 APK is based on the working mobile connection implementation.
+- README/FAQ clarify that v4.1.9 APK is based on the working mobile connection implementation.
 
 ## v4.1.6
 

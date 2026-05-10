@@ -148,8 +148,8 @@ function parseCookies(req){
 function mobileLockHtml(){
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ALLHA-2D Mobile</title><style>
   body{margin:0;min-height:100vh;background:#0e1013;color:#e8edf4;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box}
-  .card{max-width:520px;background:#151922;border:1px solid #283142;border-radius:24px;padding:28px;box-shadow:0 18px 60px rgba(0,0,0,.35);text-align:center}.logo{font-size:48px}.muted{color:#8f9bad;line-height:1.5}.code{font-family:ui-monospace,monospace;background:#0b0e13;border-radius:12px;padding:10px 12px;color:#f0b34b;display:inline-block;margin-top:10px}
-  </style></head><body><div class="card"><div class="logo">⌂</div><h1>ALLHA-2D Mobile Access</h1><p class="muted">Этот порт предназначен для мобильного приложения. Откройте приложение ALLHA-2D и выполните привязку через код из Home Assistant → ALLHA-2D → Настройки → Мобильный доступ.</p><div class="code">Без токена основной интерфейс не открывается</div></div></body></html>`;
+  .card{max-width:560px;background:#151922;border:1px solid #283142;border-radius:24px;padding:28px;box-shadow:0 18px 60px rgba(0,0,0,.35);text-align:center}.logo{font-size:48px}.muted{color:#8f9bad;line-height:1.5}.code{font-family:ui-monospace,monospace;background:#0b0e13;border-radius:12px;padding:10px 12px;color:#f0b34b;display:inline-block;margin-top:10px}.actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:18px}.btn{display:inline-block;text-decoration:none;border:1px solid #334055;background:#202838;color:#e8edf4;border-radius:12px;padding:12px 16px;font-weight:800}.btn.primary{background:#f0b34b;color:#160d00;border-color:#f0b34b}
+  </style></head><body><div class="card"><div class="logo">⌂</div><h1>ALLHA-2D Mobile Access</h1><p class="muted">Этот порт предназначен для мобильного приложения. Откройте приложение ALLHA-2D и выполните привязку через код из Home Assistant → ALLHA-2D → Настройки → Мобильный доступ.</p><div class="code">Без токена основной интерфейс не открывается</div><div class="actions"><a class="btn primary" href="https://localhost/?reset=1">Открыть вход в приложении</a><a class="btn" href="http://localhost/?reset=1">Сбросить вход</a></div><p class="muted" style="font-size:12px;margin-top:14px">Если устройство было отозвано на сервере, нажмите кнопку входа или очистите настройки приложения.</p></div></body></html>`;
 }
 function mobileAuthFromHeaders(req){
   const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
@@ -2721,9 +2721,27 @@ app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res
       const givenPwd = String(password || '').trim();
       if (givenPwd !== requiredPwd) return res.status(403).json({ error: 'Неверный пароль сервера' });
     }
-    const token = mobileAuth.consumeCode(code, device_id);
-    res.json({ ok: true, token, deviceId: device_id });
+    const meta = {
+      deviceName: req.body?.deviceName || req.body?.name,
+      platform: req.body?.platform,
+      model: req.body?.model || req.body?.deviceModel,
+      manufacturer: req.body?.manufacturer,
+      osVersion: req.body?.osVersion || req.body?.os_version,
+      appVersion: req.body?.appVersion || req.body?.app_version || ADDON_VERSION,
+      userAgent: req.body?.userAgent || req.headers['user-agent'],
+      screen: req.body?.screen
+    };
+    const token = mobileAuth.consumeCode(code, device_id, meta);
+    res.json({ ok: true, token, deviceId: device_id, devices: mobileAuth.listDevices() });
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
+// Проверка мобильной сессии — используется APK перед переходом в основной UI.
+app.get('/api/mobile/session', (req, res) => {
+  const auth = mobileAuthFromHeaders(req);
+  if (!auth.ok) return res.status(401).json({ ok:false, error:'Токен устройства отозван или недействителен' });
+  const device = mobileAuth.listDevices().find(d => d.device_id === auth.deviceId) || null;
+  res.json({ ok:true, device });
 });
 
 // Список устройств — только локально
