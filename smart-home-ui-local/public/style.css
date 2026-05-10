@@ -2086,3 +2086,7 @@ body[data-theme="sepia"] .modal-card{background:#fdf5e2;color:#3b2a14;border-col
 .mobile-app-runtime .ha-back-link,
 .mobile-app-runtime .mobile-back-link,
 .mobile-app-runtime .toolbar-back{display:none!important}
+
+
+.settings-mobile-access-hint{margin:10px 0 14px;padding:10px 12px;border:1px solid #315f8f;background:rgba(40,111,190,.14);border-radius:12px;color:#d9ecff;font-weight:800}
+.mobile-access-locked #pref-panel-mode{opacity:.75;cursor:not-allowed}

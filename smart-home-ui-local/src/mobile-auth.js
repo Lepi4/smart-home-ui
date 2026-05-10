@@ -217,6 +217,27 @@ function listDevices() {
   }));
 }
 
+function getDevice(device_id) {
+  const d = _devs()[device_id];
+  if (!d) return null;
+  return {
+    device_id,
+    name: d.name || device_id,
+    platform: d.platform || '',
+    model: d.model || '',
+    manufacturer: d.manufacturer || '',
+    osVersion: d.osVersion || '',
+    appVersion: d.appVersion || '',
+    screen: d.screen || '',
+    userAgent: d.userAgent || '',
+    paired_at: d.paired_at,
+    last_seen: d.last_seen,
+    accessMode: d.accessMode || 'viewer',
+    profileAccess: d.profileAccess || { mode: 'all', profileIds: [] },
+    settings: _normalizeDeviceSettings(d.settings || {})
+  };
+}
+
 function renameDevice(device_id, name) {
   const d = _devs()[device_id];
   if (!d) throw Object.assign(new Error('Устройство не найдено'), { status: 404 });
@@ -251,7 +272,7 @@ function revokeAllDevices() {
 
 module.exports = {
   generatePairingCode, getPendingCode, cancelPendingCode,
-  consumeCode, validateToken,
+  consumeCode, validateToken, getDevice,
   createWebSession, validateWebSession,
   listDevices, renameDevice, updateDevice, revokeDevice, revokeAllDevices
 };

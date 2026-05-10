@@ -3,6 +3,7 @@ const state = {
   states: {},
   pollTimer: null,
   config: null,
+  mobileSession: null,
   sourceConfig: null,
   layout: { version: 8, coordinateSpace: 'room-content-box', overviewRoomSync: false, roomCoordinateMigrated: {}, overviewMarkers: {}, roomMarkers: {}, overviewMetrics: {}, roomMetrics: {}, zones: {}, customNames: {} },
   edit: false,
@@ -79,7 +80,9 @@ function applyGlobalConfig(cfg){
 // В глобальный конфиг отправляем только действительно общие ключи
 function buildGlobalConfigPayload(){ return { ui: pickKeys(state.ui, GLOBAL_UI_KEYS) }; }
 function buildSecurityConfigPayload(){ return { security:{panelMode:el('pref-panel-mode')?.value||state.config?.security?.panelMode||'admin',confirmDangerousServices:!!el('pref-confirm-dangerous')?.checked,dangerousRequirePin:!!el('pref-dangerous-pin')?.checked,pinEnabled:!!state.config?.security?.pinEnabled} }; }
-function panelMode(){ const m=state.config?.security?.panelMode || 'admin'; return m==='user'?'viewer':m; }
+function mobileAccessMode(){ return _mobileAuth.active ? (state.mobileSession?.accessMode || state.mobileSession?.device?.accessMode || 'viewer') : null; }
+function panelMode(){ const mm=mobileAccessMode(); if(mm) return mm==='user'?'viewer':mm; const m=state.config?.security?.panelMode || 'admin'; return m==='user'?'viewer':m; }
+function isMobileAccessLocked(){ return !!_mobileAuth.active; }
 function canEditLayout(){ return panelMode()==='admin'; }
 function panelModeRank(mode){ return ({viewer:0,control:1,admin:2})[mode==='user'?'viewer':mode] ?? 2; }
 async function verifyPinPrompt(message='Введите PIN для повышения режима'){
@@ -101,16 +104,31 @@ async function saveGlobalPrefs(){
 
 async function loadClientPrefs(){
   try{
+    if(_mobileAuth.active){
+      try{
+        const sess = await apiJson('api/mobile/session');
+        state.mobileSession = sess || null;
+        if(state.config?.security) state.config.security.panelMode = sess?.accessMode || 'viewer';
+      }catch(e){
+        console.warn('[mobile-session] invalid', e);
+        localStorage.removeItem('_mobile_token');
+        localStorage.removeItem('_mobile_did');
+        location.href = location.origin + '/?reset=1';
+        return;
+      }
+    }
     const prefs = await apiJson('api/prefs');
+    if(_mobileAuth.active && prefs.mobileDevice){ state.mobileSession = { ...(state.mobileSession||{}), device:prefs.mobileDevice, accessMode:prefs.panelMode || state.mobileSession?.accessMode || 'viewer' }; }
     // Применяем per-device UI настройки (перекрывают глобальные дефолты)
     if(prefs.ui){
       const over = pickKeys(prefs.ui, CLIENT_UI_KEYS);
       if(Object.keys(over).length){ state.ui={...state.ui,...over}; applyUiPrefs(); renderKioskWidget(); }
     }
-    // Применяем режим доступа для этого устройства
-    if(prefs.panelMode && state.config?.security){
-      state.config.security.panelMode = prefs.panelMode;
-      const pm = el('pref-panel-mode'); if(pm) pm.value = prefs.panelMode;
+    // Применяем режим доступа для этого устройства. В APK он только серверный.
+    if((prefs.panelMode || state.mobileSession?.accessMode) && state.config?.security){
+      const lockedMode = _mobileAuth.active ? (state.mobileSession?.accessMode || prefs.panelMode || 'viewer') : prefs.panelMode;
+      if(lockedMode) state.config.security.panelMode = lockedMode;
+      const pm = el('pref-panel-mode'); if(pm){ pm.value = state.config.security.panelMode; pm.disabled = isMobileAccessLocked(); }
     }
     // Активный профиль (применяется в renderProfilesManager после загрузки)
     if(prefs.activeProfileId !== undefined) state._clientActiveProfileId = prefs.activeProfileId;
@@ -118,10 +136,8 @@ async function loadClientPrefs(){
 }
 
 async function saveClientPrefs(){
-  const prefs = {
-    ui: pickKeys(state.ui, CLIENT_UI_KEYS),
-    panelMode: el('pref-panel-mode')?.value || state.config?.security?.panelMode || 'admin',
-  };
+  const prefs = { ui: pickKeys(state.ui, CLIENT_UI_KEYS) };
+  if(!isMobileAccessLocked()) prefs.panelMode = el('pref-panel-mode')?.value || state.config?.security?.panelMode || 'admin';
   if(state._clientActiveProfileId !== undefined) prefs.activeProfileId = state._clientActiveProfileId;
   await apiJson('api/prefs', {method:'PUT', body:JSON.stringify(prefs)});
 }
@@ -478,11 +494,12 @@ function applyUiPrefs(){
   const rls=el('pref-room-label-scale'); if(rls){ rls.value=String(Math.round(Number(state.ui.roomLabelScale ?? 1)*100)); const rv=el('pref-room-label-scale-value'); if(rv) rv.textContent=rls.value+'%'; }
   const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 0)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
   const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 0)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
-  const pmode=el('pref-panel-mode'); if(pmode && state.config?.security?.panelMode) pmode.value=state.config.security.panelMode;
-  const cd=el('pref-confirm-dangerous'); if(cd) cd.checked=state.config?.security?.confirmDangerousServices!==false;
-  const dp=el('pref-dangerous-pin'); if(dp) dp.checked=!!state.config?.security?.dangerousRequirePin;
+  const pmode=el('pref-panel-mode'); if(pmode && state.config?.security?.panelMode){ pmode.value=state.config.security.panelMode; pmode.disabled=isMobileAccessLocked(); pmode.title=isMobileAccessLocked()?'Режим доступа задаётся на сервере для этого мобильного устройства':''; }
+  const cd=el('pref-confirm-dangerous'); if(cd){ cd.checked=state.config?.security?.confirmDangerousServices!==false; cd.disabled=isMobileAccessLocked() && panelMode()!=='admin'; }
+  const dp=el('pref-dangerous-pin'); if(dp){ dp.checked=!!state.config?.security?.dangerousRequirePin; dp.disabled=isMobileAccessLocked() && panelMode()!=='admin'; }
   const pinBadge=el('pin-status'); if(pinBadge) pinBadge.textContent=state.config?.security?.pinEnabled?'PIN установлен':'PIN не установлен';
   const resetPinBtn=el('btn-reset-pin'); if(resetPinBtn) resetPinBtn.disabled=!state.config?.security?.pinEnabled;
+  updateMobileLockedSettingsUI();
   updateEditButtons();
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
@@ -1838,6 +1855,7 @@ async function requestPin(message='Введите PIN-код'){
   return String(pin).trim();
 }
 async function callService(domain,service,data,opts={}){
+  if(panelMode()==='viewer'){ throw new Error('Устройство в режиме viewer: управление запрещено'); }
   const payload={domain,service,data,confirmDangerous:!!opts.confirmDangerous};
   if(opts.pin) payload.pin=opts.pin;
   try{
@@ -2621,6 +2639,7 @@ function removeMarker(entityId,scope){
   if(state.layout.roomMarkers?.[rid]) delete state.layout.roomMarkers[rid][entityId];
 }
 async function toggleDevice(d){
+  if(panelMode()==='viewer'){ showToast('Устройство в режиме viewer: управление недоступно'); return; }
   const s=getState(d.entity_id); const st=String(s?.state||'').toLowerCase();
   let domain=d.domain, service='toggle', data={entity_id:d.entity_id};
   if(['light','switch','fan','input_boolean'].includes(domain)) service=st==='on'?'turn_off':'turn_on';
@@ -4552,6 +4571,7 @@ function bindMobileSettings(){
 }
 
 function openSettingsPanel(name){
+  if(isMobileAccessLocked() && panelMode()!=='admin' && ['images','layout','rooms','sources','profiles','levels','backups','mobile'].includes(name)){ showToast('Этот раздел доступен только admin-устройствам'); return; }
   const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels', backups:'settings-panel-backups', mobile:'settings-panel-mobile'};
   const id=map[name]||name;
   qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));

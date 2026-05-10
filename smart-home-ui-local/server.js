@@ -154,7 +154,24 @@ function mobileLockHtml(){
 function mobileAuthFromHeaders(req){
   const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
   const deviceId = (req.headers['x-device-id'] || '').trim();
-  return { token, deviceId, ok: mobileAuth.validateToken(token, deviceId) };
+  const ok = mobileAuth.validateToken(token, deviceId);
+  const device = ok ? mobileAuth.getDevice(deviceId) : null;
+  return { token, deviceId, ok, device };
+}
+function isMobileApiRequest(req){
+  return !!((req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim() && (req.headers['x-device-id'] || '').trim());
+}
+function effectivePanelModeForRequest(req, security){
+  const auth = mobileAuthFromHeaders(req);
+  if(auth.ok && auth.device) return auth.device.accessMode || 'viewer';
+  return (security?.panelMode === 'user' ? 'viewer' : (security?.panelMode || 'admin'));
+}
+function requireMobileAdminForWrite(req, res, next){
+  if(!isMobileApiRequest(req)) return next();
+  const auth = mobileAuthFromHeaders(req);
+  if(!auth.ok) return res.status(401).json({ error:'Токен устройства отозван или недействителен' });
+  if((auth.device?.accessMode || 'viewer') !== 'admin') return res.status(403).json({ error:'Мобильное устройство не имеет admin-доступа' });
+  return next();
 }
 function buildHashFromQuery(q){
   const hp = new URLSearchParams();
@@ -197,6 +214,21 @@ app.use((req, res, next) => {
   // Main port: normal Home Assistant/ LAN UI. Do not block it because mobile access is enabled.
   next();
 });
+
+// Mobile devices must not bypass their per-device access mode. Viewer/control devices may read,
+// and control devices may call safe services through /api/ha/service, but admin-only writes stay blocked.
+const MOBILE_ADMIN_WRITE_PREFIXES = [
+  '/api/config','/api/config/clear','/api/source-config','/api/layout','/api/factory-reset',
+  '/api/profiles','/api/levels','/api/images','/api/rooms','/api/backups','/api/security',
+  '/api/mobile/devices','/api/mobile/code','/api/ha/lovelace','/api/import'
+];
+app.use((req, res, next) => {
+  if(req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if(!isMobileApiRequest(req)) return next();
+  if(MOBILE_ADMIN_WRITE_PREFIXES.some(p => req.path === p || req.path.startsWith(p + '/'))) return requireMobileAdminForWrite(req, res, next);
+  return next();
+});
+
 function requestHostname(req){
   const raw = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim();
   if(!raw) return '';
@@ -2607,8 +2639,9 @@ app.post('/api/ha/service', makeRateLimit(30, 60_000), async (req,res)=> {
     if(!domain || !service) return res.status(400).json({error:'domain and service are required'});
     const cfg = loadAddonConfig();
     const security = normalizeSecurityConfig(cfg.security);
+    const effectiveMode = effectivePanelModeForRequest(req, security);
     const category = commandCategory(domain, service, entity_id);
-    if(security.panelMode === 'viewer'){
+    if(effectiveMode === 'viewer'){
       appendCommandLog({domain,service,entity_id,result:'blocked-viewer'});
       return res.status(403).json({error:'Панель в режиме viewer: управление запрещено'});
     }
@@ -2618,7 +2651,7 @@ app.post('/api/ha/service', makeRateLimit(30, 60_000), async (req,res)=> {
       return res.status(403).json({error:`Service ${domain}.${service} запрещён allowlist`});
     }
     if(category === 'dangerous'){
-      if(security.panelMode === 'control' && security.dangerousRequirePin && security.pinEnabled && !verifySecurityPin(pin, security)){
+      if(effectiveMode === 'control' && security.dangerousRequirePin && security.pinEnabled && !verifySecurityPin(pin, security)){
         appendCommandLog({domain,service,entity_id,result:'pin-required',category});
         return res.status(409).json({requiresPin:true, message:`Введите PIN для опасной команды ${domain}.${service}${entity_id ? ' для '+entity_id : ''}`});
       }
@@ -2740,7 +2773,7 @@ app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res
 app.get('/api/mobile/session', (req, res) => {
   const auth = mobileAuthFromHeaders(req);
   if (!auth.ok) return res.status(401).json({ ok:false, error:'Токен устройства отозван или недействителен' });
-  const device = mobileAuth.listDevices().find(d => d.device_id === auth.deviceId) || null;
+  const device = auth.device || mobileAuth.getDevice(auth.deviceId) || null;
   res.json({ ok:true, device, accessMode: device?.accessMode || 'viewer', profileAccess: device?.profileAccess || { mode:'all', profileIds:[] }, settings: device?.settings || {} });
 });
 
@@ -2804,11 +2837,19 @@ function clientLevelPaths(req) {
 
 app.get('/api/prefs', (req, res) => {
   const cid = sanitizeClientId(req.headers['x-client-id'] || '');
-  if (!cid) return res.json({});
+  const auth = mobileAuthFromHeaders(req);
+  if (!cid) return res.json(auth.ok ? { panelMode: auth.device?.accessMode || 'viewer', mobileDevice: auth.device } : {});
   try {
     const data = JSON.parse(fs.readFileSync(path.join(CLIENT_PREFS_DIR, `${cid}.json`), 'utf8'));
+    if(auth.ok){
+      data.panelMode = auth.device?.accessMode || 'viewer';
+      data.mobileDevice = auth.device;
+      data.mobileAccessLocked = true;
+    }
     res.json(data);
-  } catch { res.json({}); }
+  } catch {
+    res.json(auth.ok ? { panelMode: auth.device?.accessMode || 'viewer', mobileDevice: auth.device, mobileAccessLocked:true } : {});
+  }
 });
 
 app.put('/api/prefs', express.json(), (req, res) => {
@@ -2817,12 +2858,15 @@ app.put('/api/prefs', express.json(), (req, res) => {
   try {
     fs.mkdirSync(CLIENT_PREFS_DIR, { recursive: true });
     const body = req.body || {};
-    const prefs = {};
+    const auth = mobileAuthFromHeaders(req);
+    const existing = getClientPrefs(cid);
+    const prefs = { ...existing };
     if (body.ui && typeof body.ui === 'object') prefs.ui = body.ui;
-    if (body.panelMode !== undefined) prefs.panelMode = String(body.panelMode);
+    // For APK/mobile access, panelMode is server-controlled per device. Do not let the app promote itself.
+    if (!auth.ok && body.panelMode !== undefined) prefs.panelMode = String(body.panelMode);
     if (body.activeProfileId !== undefined) prefs.activeProfileId = body.activeProfileId;
     fs.writeFileSync(path.join(CLIENT_PREFS_DIR, `${cid}.json`), JSON.stringify(prefs, null, 2), 'utf8');
-    res.json({ ok: true });
+    res.json({ ok: true, mobileAccessLocked: !!auth.ok });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
