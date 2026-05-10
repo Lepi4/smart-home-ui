@@ -2901,7 +2901,18 @@ const _mobileAuth = (()=>{
     const deviceId = localStorage.getItem('_mobile_did')    || '';
     const localUrl = localStorage.getItem('_mobile_local')  || '';
     const remoteUrl= localStorage.getItem('_mobile_remote') || '';
-    return { token, deviceId, localUrl, remoteUrl, active: !!(token && deviceId) };
+
+    // v4.1.12: не включаем mobile-token режим внутри обычного HA/Ingress/Web UI.
+    // Иначе desktop/browser, где случайно остался _mobile_token в localStorage,
+    // получает viewer-права мобильного устройства, перестаёт реагировать и скрывает часть UI.
+    // Mobile auth активен только на реальном mobile endpoint/origin или при прямом входе из APK по hash.
+    const sameOrigin = (u) => { try { return !!u && new URL(u).origin === location.origin; } catch { return false; } };
+    const mobilePort = location.port === '32457';
+    const nativeOrigin = location.protocol === 'capacitor:' || location.protocol === 'ionic:';
+    const hashLogin = hash.includes('_mt=');
+    const savedMobileOrigin = sameOrigin(localUrl) || sameOrigin(remoteUrl);
+    const active = !!(token && deviceId && (mobilePort || nativeOrigin || hashLogin || savedMobileOrigin));
+    return { token, deviceId, localUrl, remoteUrl, active };
   }catch{ return { token:'', deviceId:'', localUrl:'', remoteUrl:'', active:false }; }
 })();
 
