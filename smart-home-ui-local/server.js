@@ -565,8 +565,33 @@ function ensureProfileDirs(id){
   fs.mkdirSync(path.join(pp.images,'originals','rooms'), {recursive:true});
   return pp;
 }
+function assignedArrayCount(file, name){
+  try{ return parseJsAssignedArray(file, name).length; }catch(e){ return 0; }
+}
+function jsonArrayCount(file){
+  try{ const v=readJsonSafe(file, []); return Array.isArray(v) ? v.length : 0; }catch(e){ return 0; }
+}
+function shouldReplaceEmptyMigratedFile(src, dst){
+  try{
+    if(!fs.existsSync(src) || !fs.existsSync(dst)) return false;
+    if(path.basename(src)==='devices.js' && path.basename(dst)==='devices.js'){
+      return assignedArrayCount(src, 'ALL_DEVICES') > 0 && assignedArrayCount(dst, 'ALL_DEVICES') === 0;
+    }
+    if(path.basename(src)==='devices.json' && path.basename(dst)==='devices.json'){
+      return jsonArrayCount(src) > 0 && jsonArrayCount(dst) === 0;
+    }
+    if(path.basename(src)==='lovelace-source.js' && path.basename(dst)==='lovelace-source.js'){
+      const srcTxt=fs.readFileSync(src,'utf8'); const dstTxt=fs.readFileSync(dst,'utf8');
+      return /views\s*"?\s*:\s*\[\s*\{/.test(srcTxt) && !/views\s*"?\s*:\s*\[\s*\{/.test(dstTxt);
+    }
+  }catch(e){ return false; }
+  return false;
+}
 function copyIfExists(src, dst){
-  try{ if(fs.existsSync(src) && !fs.existsSync(dst)) copyPathRecursive(src, dst); }catch(e){ console.warn('[ALLHA-2D] profile migration copy failed:', src, e.message); }
+  try{
+    if(!fs.existsSync(src)) return;
+    if(!fs.existsSync(dst) || shouldReplaceEmptyMigratedFile(src, dst)) copyPathRecursive(src, dst);
+  }catch(e){ console.warn('[ALLHA-2D] profile migration copy failed:', src, e.message); }
 }
 function initializeProfilesStorage(){
   fs.mkdirSync(DATA_DIR, {recursive:true});

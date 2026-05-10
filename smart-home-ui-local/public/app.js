@@ -441,6 +441,29 @@ function closeMobilePanels(){
   }
 }
 
+
+function updateMobileLockedSettingsUI(){
+  const locked = isMobileAccessLocked();
+  const mode = panelMode();
+  document.body.classList.toggle('mobile-access-locked', locked);
+  document.body.dataset.panelMode = mode;
+  const hint = el('mobile-locked-settings-hint') || el('mobile-access-mode-hint');
+  if(hint){
+    hint.classList.toggle('hidden', !locked);
+    hint.textContent = locked ? `Режим доступа этого мобильного устройства задан на сервере: ${mode}.` : '';
+  }
+  const pm = el('pref-panel-mode');
+  if(pm){
+    pm.disabled = locked;
+    pm.title = locked ? 'Режим доступа задаётся на сервере для этого мобильного устройства' : '';
+  }
+  // Viewer/control должны блокировать только управление и admin-разделы, но не просмотр,
+  // навигацию, список устройств, карточки и датчики.
+  document.querySelectorAll('[data-admin-only="true"], .admin-only').forEach(node=>{
+    node.classList.toggle('hidden', locked && mode !== 'admin');
+  });
+}
+
 function applyUiPrefs(){
   document.body.classList.toggle('touch-capable', !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
   document.body.classList.toggle('hide-sidebar', !!state.ui.hideSidebar);
@@ -1355,7 +1378,7 @@ function safeMetricPoint(stored, fallback){
   return {x:clamp(x,0,100), y:clamp(y,0,100)};
 }
 function renderOverviewMetrics(){
-  const layer=el('overview-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return;
+  const layer=el('overview-metrics'); layer.innerHTML=''; if(state.ui.showSensors===false)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
     const fallback=defaultMetricPos(r); if(!fallback) return;
@@ -1365,7 +1388,7 @@ function renderOverviewMetrics(){
   })
 }
 function renderOverviewMarkers(){
-  const layer=el('overview-markers'); layer.innerHTML=''; if(!el('toggle-devices').checked)return;
+  const layer=el('overview-markers'); layer.innerHTML=''; if(state.ui.showMarkers===false)return;
   Object.entries(state.layout.overviewMarkers||{}).forEach(([id,p])=>{
     const d=devices().find(x=>x.entity_id===id); if(!d)return;
     layer.appendChild(markerEl(d,p,'overview'));
@@ -1390,14 +1413,14 @@ function renderRoom(){
   el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>';
 }
 function renderRoomMetrics(){
-  const layer=el('room-metrics'); layer.innerHTML=''; if(!el('toggle-sensors')?.checked)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
+  const layer=el('room-metrics'); layer.innerHTML=''; if(state.ui.showSensors===false)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
   const stored=safeMetricPoint(state.layout.roomMetrics?.[r.id], {x:16,y:16});
   const p=roomStoredToImagePos(r.id, stored);
   const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
   b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
 }
 function renderRoomMarkers(){
-  const layer=el('room-markers'); layer.innerHTML=''; if(!el('toggle-devices').checked)return;
+  const layer=el('room-markers'); layer.innerHTML=''; if(state.ui.showMarkers===false)return;
   Object.entries(state.layout.roomMarkers?.[state.selectedRoom]||{}).forEach(([id,p])=>{
     const d=devices().find(x=>x.entity_id===id); if(!d)return;
     layer.appendChild(markerEl(d,p,'room'));
@@ -1519,7 +1542,7 @@ function deviceCardHtml(d, showAllInRoom=false){
   const title = canPlace ? `${d.entity_id}
 Редактирование через SVG Layout Editor` : `${d.entity_id}
 Устройство из другой комнаты. Перенос между комнатами отключён.`;
-  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div>${panelMode()==='viewer'?`<button class="state" type="button" disabled title="Режим просмотра: управление недоступно">${esc(stateText(d))}</button>`:`<button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button>`}</div>`;
+  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div>${panelMode()==='viewer'?`<span class="state readonly" title="Режим просмотра: управление недоступно">${esc(stateText(d))}</span>`:`<button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button>`}</div>`;
 }
 function bindDeviceCards(list){
   qsa('.device-card',list).forEach(card=>{
