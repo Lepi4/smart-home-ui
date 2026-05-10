@@ -1,3 +1,7 @@
+# ALLHA-2D v4.1.8
+
+Этот релиз использует рабочую логику мобильного подключения из приложенных пользователем файлов Sonnet. Серверная часть совместима с мобильным доступом v4.1.5+: `/api/health`, `/api/mobile/debug`, `/api/mobile/pair`.
+
 # ALLHA-2D Local — v3.6.0.5
 
 ## v3.6.0.5 — Dual Access Mode: локальный direct-доступ + ingress для Home Assistant
@@ -234,7 +238,7 @@ images/
 Переключить профиль
 ```
 
-Ограничение: максимум 5 профилей. Профиль хранит собственные `layout`, `rooms`, `images`, `source_config`, `ui_state`, устройства и данные Lovelace. Security/PIN, dangerous rules, Attention Monitor и command log остаются общими.
+Ограничение: максимум 10 профилей. Профиль хранит собственные `layout`, `rooms`, `images`, `source_config`, `ui_state`, устройства и данные Lovelace. Security/PIN, dangerous rules, Attention Monitor и command log остаются общими.
 
 При создании нового профиля можно включить:
 
@@ -868,29 +872,29 @@ The Node.js 20 actions warning in GitHub Actions logs is separate from this buil
 
 ## v4.1.4 — мобильное подключение
 
-Мобильное приложение подключается к защищённому порту `8100`. В поле адреса можно вводить:
+Мобильное приложение подключается к защищённому порту `32457`. В поле адреса можно вводить:
 
 ```text
-http://192.168.1.50:8100
-192.168.1.50:8100
+http://192.168.1.50:32457
+192.168.1.50:32457
 https://example.domain
 ```
 
-Приложение автоматически проверяет `/api/health`, затем отправляет код и пароль на `/api/mobile/pair`. Обычный браузер без токена на порту `8100` больше не должен видеть карту/устройства — показывается только экран `ALLHA-2D Mobile Access`.
+Приложение автоматически проверяет `/api/health`, затем отправляет код и пароль на `/api/mobile/pair`. Обычный браузер без токена на порту `32457` больше не должен видеть карту/устройства — показывается только экран `ALLHA-2D Mobile Access`.
 
 Для Android локальный HTTP-доступ разрешён в `AndroidManifest.xml` и `network_security_config.xml`. Для удалённого доступа всё равно рекомендуется HTTPS/reverse proxy.
 
 
 ### v4.1.4: мобильное приложение пишет “Сервер недоступен”
 
-Если адрес `http://IP:8100` открывается в браузере и показывает заглушку `ALLHA-2D Mobile Access`, но Android-приложение пишет “Сервер недоступен”, причина обычно в CORS origin Android WebView. В v4.1.4 сервер разрешает `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost` и `null` origin.
+Если адрес `http://IP:32457` открывается в браузере и показывает заглушку `ALLHA-2D Mobile Access`, но Android-приложение пишет “Сервер недоступен”, причина обычно в CORS origin Android WebView. В v4.1.4 сервер разрешает `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost` и `null` origin.
 
-Проверочный адрес для браузера: `http://IP_HOME_ASSISTANT:8100/api/health`. Должен вернуться JSON с `ok: true`.
+Проверочный адрес для браузера: `http://IP_HOME_ASSISTANT:32457/api/health`. Должен вернуться JSON с `ok: true`.
 
 
-## v4.1.5 — mobile CORS / pairing diagnostics
+## v4.1.6 — mobile CORS / pairing diagnostics
 
 - Усилен CORS для Android/Capacitor WebView (`https://localhost`, `capacitor://localhost`, Private Network Access).
 - Добавлена диагностика мобильного подключения `/api/mobile/debug`.
 - APK показывает точный URL и ошибку подключения вместо общего сообщения.
-- Порт 8100 по-прежнему не отдаёт полный web UI без токена.
+- Порт 32457 по-прежнему не отдаёт полный web UI без токена.

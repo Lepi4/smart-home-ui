@@ -22,5 +22,5 @@ RUN chmod +x /app/start.sh \
   && mkdir -p /data/backups
 
 EXPOSE 8080
-EXPOSE 8100
+EXPOSE 32457
 CMD ["/app/start.sh"]

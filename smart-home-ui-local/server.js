@@ -20,7 +20,7 @@ app.use((req, res, next) => {
   // Mobile app / Capacitor CORS.
   // Capacitor 6 on Android commonly sends Origin: https://localhost.
   // Chrome/WebView may also send a Private Network Access preflight when
-  // https://localhost calls http://192.168.x.x:8100. This must be answered
+  // https://localhost calls http://192.168.x.x:32457. This must be answered
   // before mobile auth middleware, otherwise the APK only reports "server unavailable".
   const origin = req.headers.origin || '';
   const allowedOrigins = /^(capacitor|ionic):\/\/localhost$|^https?:\/\/localhost(?::\d+)?$/i;
@@ -54,7 +54,7 @@ function makeRateLimit(maxReq, windowMs) {
 setInterval(() => { const now = Date.now(); _rlStore.forEach((e, k) => { if (now > e.resetAt) _rlStore.delete(k); }); }, 300_000).unref();
 
 const PORT = process.env.PORT || 8080;
-const MOBILE_PORT = Number(process.env.MOBILE_PORT || 8100);
+const MOBILE_PORT = Number(process.env.MOBILE_PORT || 32457);
 const MOBILE_OPEN_PATHS = new Set(['/api/health', '/api/mobile/debug', '/api/mobile/pair', '/mobile-lock.html']);
 const MOBILE_WEB_COOKIE = 'allha_mobile_session';
 const DATA_DIR = process.env.DATA_DIR || '/data';
@@ -124,6 +124,16 @@ function isLocalIp(req) {
   const ip = req.socket?.remoteAddress || req.ip || '';
   return LOCAL_IP_RE.test(ip);
 }
+
+function isMobilePortRequest(req) {
+  return req.socket?.localPort === MOBILE_PORT;
+}
+function allowMobileManagement(req) {
+  // Main HA/ingress/LAN UI may manage paired devices. The protected mobile port
+  // must not expose management endpoints unless the request is local.
+  return !isMobilePortRequest(req) || isLocalIp(req);
+}
+
 function mobileAccessEnabled() {
   try { return !!loadAddonConfig().mobileAccess?.enabled; } catch { return false; }
 }
@@ -154,7 +164,7 @@ function buildHashFromQuery(q){
   if(q._remote) hp.set('_remote', String(q._remote));
   return hp.toString();
 }
-// Middleware: port 8100 = protected mobile web entry. Browser without token sees only lock page.
+// Middleware: port 32457 = protected mobile web entry. Browser without token sees only lock page.
 app.use((req, res, next) => {
   const onMobilePort = req.socket?.localPort === MOBILE_PORT;
   if (onMobilePort) {
@@ -363,7 +373,7 @@ function normalizeProfilesMeta(raw){
       createdAt: p.createdAt || new Date().toISOString(),
       updatedAt: p.updatedAt || null
     });
-    if(profiles.length >= 5) break;
+    if(profiles.length >= 10) break;
   }
   if(!profiles.length) profiles.push(def.profiles[0]);
   const active = sanitizeProfileId(raw?.activeProfileId || profiles[0].id);
@@ -553,7 +563,7 @@ function profilesDiagnostics(){
     metaPath: PROFILES_META_PATH,
     activeProfileId: meta.activeProfileId,
     count: meta.profiles.length,
-    max: 5,
+    max: 10,
     profiles: meta.profiles.map(p=>({
       ...p,
       dir: profilePaths(p.id).dir,
@@ -735,7 +745,7 @@ function deleteLevel(levelId){
 
 function createProfile(payload={}){
   const meta = loadProfilesMeta();
-  if(meta.profiles.length >= 5) throw new Error('Можно создать максимум 5 профилей');
+  if(meta.profiles.length >= 10) throw new Error('Можно создать максимум 10 профилей');
   let n = 1; let id;
   do { id = 'profile-' + (++n); } while(meta.profiles.some(p=>p.id===id) && n < 20);
   const now = new Date().toISOString();
@@ -772,7 +782,7 @@ function createProfile(payload={}){
 }
 function duplicateProfile(id, payload={}){
   const meta = loadProfilesMeta();
-  if(meta.profiles.length >= 5) throw new Error('Можно создать максимум 5 профилей');
+  if(meta.profiles.length >= 10) throw new Error('Можно создать максимум 10 профилей');
   const srcId = sanitizeProfileId(id || meta.activeProfileId);
   const srcMeta = meta.profiles.find(p=>p.id===srcId);
   if(!srcMeta) throw new Error('Исходный профиль не найден');
@@ -2718,13 +2728,13 @@ app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res
 
 // Список устройств — только локально
 app.get('/api/mobile/devices', (req, res) => {
-  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
-  res.json({ devices: mobileAuth.listDevices() });
+  if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
+  res.json({ ok:true, devices: mobileAuth.listDevices() });
 });
 
 // Переименование
 app.patch('/api/mobile/devices/:id', express.json(), (req, res) => {
-  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
   try {
     mobileAuth.renameDevice(req.params.id, req.body?.name);
     res.json({ ok: true, devices: mobileAuth.listDevices() });
@@ -2733,7 +2743,7 @@ app.patch('/api/mobile/devices/:id', express.json(), (req, res) => {
 
 // Отзыв токена
 app.delete('/api/mobile/devices/:id', (req, res) => {
-  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
   try {
     mobileAuth.revokeDevice(req.params.id);
     res.json({ ok: true, devices: mobileAuth.listDevices() });
@@ -2742,7 +2752,7 @@ app.delete('/api/mobile/devices/:id', (req, res) => {
 
 // Отзыв всех токенов
 app.delete('/api/mobile/devices', (req, res) => {
-  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
   mobileAuth.revokeAllDevices();
   res.json({ ok: true, devices: [] });
 });

@@ -1,6 +1,22 @@
 # CHANGELOG
 
-## v4.1.5
+
+## v4.1.8
+
+- Mobile app connection logic aligned with the working Sonnet build supplied by the user.
+- Server/add-on remains compatible with v4.1.5+ mobile endpoints: `/api/health`, `/api/mobile/debug`, `/api/mobile/pair`.
+- Release split is preserved: add-on/server archive, mobile source archive, signed APK, roadmap file.
+- README/FAQ clarify that v4.1.8 APK is based on the working mobile connection implementation.
+
+## v4.1.6
+
+- Mobile app connection fix: endpoint diagnostics no longer treats a reachable server as unavailable when normal CORS fetch is blocked.
+- Added Capacitor native HTTP fallback for `/api/health`, `/api/mobile/debug` and `/api/mobile/pair`, so Android WebView can complete pairing even when browser CORS/PNA blocks `fetch`.
+- Added clearer mobile connection statuses: reachable but unreadable, readable OK, HTTP error, network error.
+- APK and mobile sources updated together with the add-on/server release.
+
+
+## v4.1.6
 
 - Исправлена проверка доступности сервера из Android/Capacitor WebView.
 - CORS теперь разрешает `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost`, `null` и отвечает на Private Network Access preflight.
@@ -8,21 +24,21 @@
 - Добавлен открытый endpoint `/api/mobile/debug` для проверки готовности мобильного доступа и паринга.
 - В мобильном приложении добавлена кнопка «Проверить сервер».
 - Ошибка «Сервер недоступен» заменена на подробную диагностику URL, HTTP status, CORS/no-cors/network.
-- Сохранена защита порта 8100: без токена браузер видит только заглушку, не полный интерфейс.
+- Сохранена защита порта 32457: без токена браузер видит только заглушку, не полный интерфейс.
 
 ## v4.1.4
 
 - Исправлена диагностика “сервер недоступен” в Android-приложении: сервер теперь отдаёт CORS-заголовки для `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost` и `null` origin.
 - `/api/health` на мобильном порту возвращает версию и признак mobile-port, чтобы приложение могло проверить доступность сервера.
-- Полный web UI на порту 8100 без токена по-прежнему закрыт заглушкой Mobile Access.
+- Полный web UI на порту 32457 без токена по-прежнему закрыт заглушкой Mobile Access.
 - Android APK синхронизирован и собран с dev-подписью.
 
 ## v4.1.4
 
 - Исправлено подключение мобильного приложения: адреса теперь нормализуются автоматически, можно вводить IP:порт без `http://`, полный `/api/health` или базовый адрес.
 - Исправлена Android-сборка мобильного приложения: JS-файлы из `mobile-app/www/js` синхронизированы в `android/app/src/main/assets/public/js`.
-- Для Android включён cleartext-доступ к локальным HTTP-адресам, чтобы `http://IP_HOME_ASSISTANT:8100` работал в LAN.
-- Порт `8100` больше не отдаёт полный интерфейс обычному браузеру без токена: показывается экран Mobile Access.
+- Для Android включён cleartext-доступ к локальным HTTP-адресам, чтобы `http://IP_HOME_ASSISTANT:32457` работал в LAN.
+- Порт `32457` больше не отдаёт полный интерфейс обычному браузеру без токена: показывается экран Mobile Access.
 - После успешной привязки приложение передаёт токен через защищённый одноразовый вход, получает web-session cookie и открывает основной UI.
 - `/api/mobile/pair` теперь возвращает понятные ошибки и проверяет, что мобильный доступ включён.
 
@@ -99,7 +115,6 @@
 - В диагностике появилась строка **Адрес для дашборда** с обнаруженным `/api/hassio_ingress/.../` URL.
 - README/FAQ уточняют, что `/allha-2d-direct/` подходит для внешнего reverse proxy, а для HA Webpage dashboard нужен proxy/ingress URL из диагностики.
 
-# CHANGELOG
 
 ## v3.6.0.2 — kiosk tile clock/home + Webpage dashboard clarification
 
@@ -342,7 +357,7 @@
 ## v3.5.7 — profile UI: create / duplicate / delete / switch
 
 - Добавлен UI управления профилями в настройках: `Настройки → Профили`.
-- Можно создать до 5 профилей, переименовать профиль, переключить активный профиль и удалить профиль с backup.
+- Можно создать до 10 профилей, переименовать профиль, переключить активный профиль и удалить профиль с backup.
 - Добавлено дублирование текущего профиля целиком.
 - При создании нового профиля добавлены опции `Дублировать зоны` и `Дублировать значки/маркеры`, чтобы перенести координаты из текущего профиля.
 - Удаление профиля требует подтверждение `DELETE`; последний профиль удалить нельзя.
