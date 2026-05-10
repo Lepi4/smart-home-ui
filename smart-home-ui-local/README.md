@@ -1,4 +1,4 @@
-# ALLHA-2D v4.1.9
+# ALLHA-2D v4.1.10
 
 Этот релиз использует рабочую логику мобильного подключения из приложенных пользователем файлов Sonnet. Серверная часть совместима с мобильным доступом v4.1.5+: `/api/health`, `/api/mobile/debug`, `/api/mobile/pair`.
 
@@ -900,10 +900,17 @@ https://example.domain
 - Порт 32457 по-прежнему не отдаёт полный web UI без токена.
 
 
-## v4.1.9 — mobile pairing polish
+## v4.1.10 — mobile pairing polish
 
 - После сопряжения список мобильных устройств обновляется автоматически, без перезагрузки браузера.
 - Добавлена кнопка «Скопировать код» для pairing-кода.
 - При отзыве токена приложение должно вернуться на экран привязки, а не зависать на заглушке Mobile Access.
 - Если локальный сервер недоступен, а web-сервер доступен, приложение переключается на web без промежуточной красной ошибки.
 - При сопряжении приложение передаёт сведения устройства: модель/platform/user-agent/screen, если Android/WebView позволяет их получить.
+
+
+## v4.1.10 notes
+
+- Mobile device management now stores per-device access settings: viewer/control/admin, profile access, server mode and app options.
+- Live updates remain the primary mechanism; polling is treated as fallback if live/SSE/WebSocket is unavailable.
+- Mobile APK hides Home Assistant back buttons in standalone runtime.

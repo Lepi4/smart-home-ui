@@ -61,6 +61,28 @@ function _cleanText(value, max = 120) {
   return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+function _normalizeDeviceSettings(raw = {}) {
+  const settings = raw && typeof raw === 'object' ? raw : {};
+  const serverMode = ['both','local','web'].includes(String(settings.serverMode || '')) ? String(settings.serverMode) : 'both';
+  const scale = Math.min(1.5, Math.max(0.7, Number(settings.scale || 1)));
+  return {
+    serverMode,
+    keepScreenOn: !!settings.keepScreenOn,
+    stayInBackground: !!settings.stayInBackground,
+    autoStart: !!settings.autoStart,
+    scale
+  };
+}
+
+function _normalizeDeviceAccess(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const accessMode = ['viewer','control','admin'].includes(String(source.accessMode || '')) ? String(source.accessMode) : 'viewer';
+  const profileAccess = source.profileAccess && typeof source.profileAccess === 'object' ? source.profileAccess : {};
+  const mode = profileAccess.mode === 'selected' ? 'selected' : 'all';
+  const profileIds = Array.isArray(profileAccess.profileIds) ? profileAccess.profileIds.map(x=>String(x||'').trim()).filter(Boolean).slice(0,10) : [];
+  return { accessMode, profileAccess: { mode, profileIds } };
+}
+
 function _deviceDefaultName(device_id, meta = {}) {
   const explicit = _cleanText(meta.deviceName || meta.name, 64);
   if (explicit) return explicit;
@@ -110,7 +132,10 @@ function consumeCode(code, device_id, meta = {}) {
     userAgent: _cleanText(meta.userAgent, 240),
     screen: _cleanText(meta.screen, 32),
     paired_at: existing.paired_at || now,
-    last_seen: now
+    last_seen: now,
+    accessMode: existing.accessMode || 'viewer',
+    profileAccess: existing.profileAccess || { mode: 'all', profileIds: [] },
+    settings: _normalizeDeviceSettings(existing.settings || {})
   };
   _saveDevices();
   return token;
@@ -185,7 +210,10 @@ function listDevices() {
     screen: d.screen || '',
     userAgent: d.userAgent || '',
     paired_at: d.paired_at,
-    last_seen: d.last_seen
+    last_seen: d.last_seen,
+    accessMode: d.accessMode || 'viewer',
+    profileAccess: d.profileAccess || { mode: 'all', profileIds: [] },
+    settings: _normalizeDeviceSettings(d.settings || {})
   }));
 }
 
@@ -194,6 +222,20 @@ function renameDevice(device_id, name) {
   if (!d) throw Object.assign(new Error('Устройство не найдено'), { status: 404 });
   d.name = String(name || '').trim().slice(0, 64) || d.name;
   _saveDevices();
+}
+
+function updateDevice(device_id, patch = {}) {
+  const d = _devs()[device_id];
+  if (!d) throw Object.assign(new Error('Устройство не найдено'), { status: 404 });
+  if (patch.name !== undefined) d.name = _cleanText(patch.name, 64) || d.name;
+  if (patch.accessMode !== undefined || patch.profileAccess !== undefined) {
+    const access = _normalizeDeviceAccess({ accessMode: patch.accessMode || d.accessMode, profileAccess: patch.profileAccess || d.profileAccess });
+    d.accessMode = access.accessMode;
+    d.profileAccess = access.profileAccess;
+  }
+  if (patch.settings !== undefined) d.settings = _normalizeDeviceSettings({ ...(d.settings || {}), ...(patch.settings || {}) });
+  _saveDevices();
+  return listDevices().find(x => x.device_id === device_id) || null;
 }
 
 function revokeDevice(device_id) {
@@ -211,5 +253,5 @@ module.exports = {
   generatePairingCode, getPendingCode, cancelPendingCode,
   consumeCode, validateToken,
   createWebSession, validateWebSession,
-  listDevices, renameDevice, revokeDevice, revokeAllDevices
+  listDevices, renameDevice, updateDevice, revokeDevice, revokeAllDevices
 };

@@ -3000,7 +3000,7 @@ function migrateLayout(){
   state.layout.overviewRoomSync=false;
 }
 async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
-async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const pi=el('poll-interval'); if(pi) pi.value=Math.round((cfg.pollIntervalMs||6000)/1000);return cfg}
+async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const pi=el('poll-interval'); if(pi) pi.value=Math.round((cfg.pollIntervalMs||30000)/1000);return cfg}
 
 
 
@@ -4014,7 +4014,7 @@ async function saveConfig(){
     saveUiPrefs();
     const sec = buildSecurityConfigPayload();
     if(sec.security) delete sec.security.panelMode; // per-client
-    const payload={pollIntervalMs:Math.max(2000,Number(el('poll-interval')?.value||6)*1000),...buildGlobalConfigPayload(),...sec};
+    const payload={pollIntervalMs:Math.max(10000,Number(el('poll-interval')?.value||30)*1000),...buildGlobalConfigPayload(),...sec};
     const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
     saveClientPrefs().catch(()=>{});
@@ -4075,7 +4075,7 @@ function startPolling(){
   if(state.edit || state.livePaused) return;
   // Если SSE активен — поллинг раз в 60 с (страховка), иначе — по настройке
   // readyState 1 = OPEN; если SSE работает — поллинг только как fallback раз в 60 с
-  const interval = (state._sseSource && state._sseSource.readyState===1) ? 60_000 : (state.config?.pollIntervalMs||6000);
+  const interval = (state._sseSource && state._sseSource.readyState===1) ? 60_000 : (state.config?.pollIntervalMs||30000);
   state.pollTimer=setInterval(loadStates, interval);
 }
 
@@ -4400,17 +4400,58 @@ async function loadMobileDevices(){
   if(!list) return;
   try{
     const data = await apiJson('api/mobile/devices');
+    let profiles=[];
+    try{ profiles = (await apiJson('api/profiles')).profiles || []; }catch{}
     const devs = data.devices || [];
     const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${devs.length})`;
     if(!devs.length){ list.innerHTML = '<p class="muted">Нет привязанных устройств</p>'; return; }
+    const profileOptions = profiles.map(p=>`<option value="${esc(p.id)}">${esc(p.name||p.id)}</option>`).join('');
     list.innerHTML = devs.map(d=>{
       const details = [d.model, d.manufacturer, d.platform, d.osVersion, d.screen].filter(Boolean).join(' · ');
+      const accessMode = d.accessMode || 'viewer';
+      const pa = d.profileAccess || {mode:'all', profileIds:[]};
+      const selectedIds = new Set(pa.profileIds || []);
+      const settings = d.settings || {};
       return `
       <div class="mobile-device-row" data-did="${esc(d.device_id)}">
         <input type="text" class="mobile-device-name" value="${esc(d.name)}" placeholder="Имя устройства">
         <span class="muted" style="font-size:11px">${esc(details || 'Информация о модели недоступна')} · ID: ${esc(String(d.device_id||'').slice(0,8))}</span>
         <span class="muted" style="font-size:11px">Привязано: ${d.paired_at?.slice(0,10)||'—'} · Был: ${d.last_seen?.slice(0,19).replace('T',' ')||'—'}</span>
-        <div style="display:flex;gap:6px;margin-top:4px">
+        <div class="mobile-device-access-grid">
+          <label>Режим доступа
+            <select class="mobile-device-access-mode">
+              <option value="viewer" ${accessMode==='viewer'?'selected':''}>viewer</option>
+              <option value="control" ${accessMode==='control'?'selected':''}>control panel</option>
+              <option value="admin" ${accessMode==='admin'?'selected':''}>admin</option>
+            </select>
+          </label>
+          <label>Профили
+            <select class="mobile-device-profile-mode">
+              <option value="all" ${pa.mode!=='selected'?'selected':''}>Все профили</option>
+              <option value="selected" ${pa.mode==='selected'?'selected':''}>Только выбранные</option>
+            </select>
+          </label>
+          <label>Выбранные профили
+            <select class="mobile-device-profile-ids" multiple size="${Math.min(5, Math.max(2, profiles.length || 2))}">
+              ${profiles.map(p=>`<option value="${esc(p.id)}" ${selectedIds.has(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('') || profileOptions}
+            </select>
+          </label>
+          <label>Режим серверов
+            <select class="mobile-device-server-mode">
+              <option value="both" ${settings.serverMode!=='local'&&settings.serverMode!=='web'?'selected':''}>оба сервера</option>
+              <option value="local" ${settings.serverMode==='local'?'selected':''}>только local</option>
+              <option value="web" ${settings.serverMode==='web'?'selected':''}>только web</option>
+            </select>
+          </label>
+          <label>Масштаб
+            <input class="mobile-device-scale" type="number" min="0.7" max="1.5" step="0.05" value="${esc(settings.scale || 1)}">
+          </label>
+          <label class="inline-check"><input class="mobile-device-keep-screen" type="checkbox" ${settings.keepScreenOn?'checked':''}> Держать экран включённым</label>
+          <label class="inline-check"><input class="mobile-device-stay-bg" type="checkbox" ${settings.stayInBackground?'checked':''}> Оставаться в фоне</label>
+          <label class="inline-check"><input class="mobile-device-autostart" type="checkbox" ${settings.autoStart?'checked':''}> Автозагрузка</label>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
+          <button type="button" class="btn-mobile-save-device" data-did="${esc(d.device_id)}">Сохранить доступ</button>
           <button type="button" class="btn-mobile-rename" data-did="${esc(d.device_id)}">Переименовать</button>
           <button type="button" class="btn-mobile-revoke" data-did="${esc(d.device_id)}">Отозвать</button>
         </div>
@@ -4468,8 +4509,32 @@ function bindMobileSettings(){
 
   const devList = el('mobile-devices-list');
   if(devList) devList.addEventListener('click', async e=>{
+    const saveDeviceBtn = e.target.closest('.btn-mobile-save-device');
     const renameBtn = e.target.closest('.btn-mobile-rename');
     const revokeBtn = e.target.closest('.btn-mobile-revoke');
+    if(saveDeviceBtn){
+      const did = saveDeviceBtn.dataset.did;
+      const row = devList.querySelector(`[data-did="${did}"]`);
+      const name = row?.querySelector('.mobile-device-name')?.value || '';
+      const profileIds = Array.from(row?.querySelector('.mobile-device-profile-ids')?.selectedOptions || []).map(o=>o.value).filter(Boolean);
+      const payload = {
+        name,
+        accessMode: row?.querySelector('.mobile-device-access-mode')?.value || 'viewer',
+        profileAccess: {
+          mode: row?.querySelector('.mobile-device-profile-mode')?.value === 'selected' ? 'selected' : 'all',
+          profileIds
+        },
+        settings: {
+          serverMode: row?.querySelector('.mobile-device-server-mode')?.value || 'both',
+          scale: Number(row?.querySelector('.mobile-device-scale')?.value || 1),
+          keepScreenOn: !!row?.querySelector('.mobile-device-keep-screen')?.checked,
+          stayInBackground: !!row?.querySelector('.mobile-device-stay-bg')?.checked,
+          autoStart: !!row?.querySelector('.mobile-device-autostart')?.checked
+        }
+      };
+      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'PATCH',body:JSON.stringify(payload)}); await loadMobileDevices(); showToast('Настройки устройства сохранены'); }
+      catch(e){ showToast('Ошибка: '+e.message); }
+    }
     if(renameBtn){
       const did = renameBtn.dataset.did;
       const row = devList.querySelector(`[data-did="${did}"]`);

@@ -2454,7 +2454,7 @@ app.post('/api/config', (req,res)=> {
     res.json({ ok:true, config: publicConfig(cfg) });
   } catch(e){ res.status(500).json({error:e.message}); }
 });
-app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:6000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
+app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:30000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', hasSupervisorToken:!!HA_TOKEN }); } catch(e){ res.status(500).json({error:e.message}); } });
 app.get('/api/ui-state', (req,res)=> { try { const lp=clientLevelPaths(req); res.json(loadUiState(lp.uiState)); } catch(e){ res.status(500).json({error:e.message}); } });
@@ -2741,7 +2741,7 @@ app.get('/api/mobile/session', (req, res) => {
   const auth = mobileAuthFromHeaders(req);
   if (!auth.ok) return res.status(401).json({ ok:false, error:'Токен устройства отозван или недействителен' });
   const device = mobileAuth.listDevices().find(d => d.device_id === auth.deviceId) || null;
-  res.json({ ok:true, device });
+  res.json({ ok:true, device, accessMode: device?.accessMode || 'viewer', profileAccess: device?.profileAccess || { mode:'all', profileIds:[] }, settings: device?.settings || {} });
 });
 
 // Список устройств — только локально
@@ -2754,7 +2754,12 @@ app.get('/api/mobile/devices', (req, res) => {
 app.patch('/api/mobile/devices/:id', express.json(), (req, res) => {
   if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
   try {
-    mobileAuth.renameDevice(req.params.id, req.body?.name);
+    const body = req.body || {};
+    if (body.accessMode !== undefined || body.profileAccess !== undefined || body.settings !== undefined) {
+      mobileAuth.updateDevice(req.params.id, body);
+    } else {
+      mobileAuth.renameDevice(req.params.id, body.name);
+    }
     res.json({ ok: true, devices: mobileAuth.listDevices() });
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });

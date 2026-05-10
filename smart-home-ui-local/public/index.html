@@ -176,7 +176,7 @@
         <input id="ha-url" type="hidden">
         <textarea id="ha-token" class="hidden" rows="1"></textarea>
         <div class="addon-note">Адреса Lovelace/карточек теперь задаются отдельно для каждого уровня: Настройки → Уровни / области → Источники Lovelace этого уровня.</div>
-        <label>Интервал опроса, сек<input id="poll-interval" type="number" value="6" min="2"></label>
+        <label>Резервный опрос при сбое live, сек<input id="poll-interval" type="number" value="30" min="10"></label><p class="hint small">Основной режим обновлений — live через HA WebSocket/SSE. Этот интервал используется как fallback, если live-соединение недоступно.</p>
         <label class="settings-check"><input type="checkbox" id="pref-mobile-mode"> Мобильная версия</label>
         <label class="settings-check"><input type="checkbox" id="pref-auto-hide"> Автоскрытие меню в мобильной версии</label>
         <label class="settings-check"><input type="checkbox" id="pref-compact-mode"> Компактные панели</label>
