@@ -84,6 +84,8 @@ function mobileAccessMode(){ return _mobileAuth.active ? (state.mobileSession?.a
 function panelMode(){ const mm=mobileAccessMode(); if(mm) return mm==='user'?'viewer':mm; const m=state.config?.security?.panelMode || 'admin'; return m==='user'?'viewer':m; }
 function isMobileAccessLocked(){ return !!_mobileAuth.active; }
 function canEditLayout(){ return panelMode()==='admin'; }
+function canControlDevices(){ return panelMode()!=='viewer'; }
+function canOpenViewerSettings(){ return true; }
 function panelModeRank(mode){ return ({viewer:0,control:1,admin:2})[mode==='user'?'viewer':mode] ?? 2; }
 async function verifyPinPrompt(message='Введите PIN для повышения режима'){
   const pin=await requestPin(message);
@@ -93,9 +95,8 @@ async function verifyPinPrompt(message='Введите PIN для повышен
 }
 
 async function saveGlobalPrefs(){
-  // panelMode теперь per-client → убираем из глобального security
+  // v4.1.13: web/ingress panelMode снова сохраняется глобально; mobile mode всё равно задаётся сервером per device.
   const sec = buildSecurityConfigPayload();
-  if(sec.security) delete sec.security.panelMode;
   const res=await apiJson('api/config',{method:'POST',body:JSON.stringify({...buildGlobalConfigPayload(),...sec})});
   state.config=res.config||state.config;
   saveClientPrefs().catch(()=>{});
@@ -124,11 +125,17 @@ async function loadClientPrefs(){
       const over = pickKeys(prefs.ui, CLIENT_UI_KEYS);
       if(Object.keys(over).length){ state.ui={...state.ui,...over}; applyUiPrefs(); renderKioskWidget(); }
     }
-    // Применяем режим доступа для этого устройства. В APK он только серверный.
-    if((prefs.panelMode || state.mobileSession?.accessMode) && state.config?.security){
-      const lockedMode = _mobileAuth.active ? (state.mobileSession?.accessMode || prefs.panelMode || 'viewer') : prefs.panelMode;
-      if(lockedMode) state.config.security.panelMode = lockedMode;
-      const pm = el('pref-panel-mode'); if(pm){ pm.value = state.config.security.panelMode; pm.disabled = isMobileAccessLocked(); }
+    // v4.1.13: режим доступа мобильного устройства применяется только в mobile context.
+    // В обычной HA/Ingress/Web-панели не берём prefs.panelMode/mobileDevice, чтобы старый mobile-token
+    // или per-client prefs не переводили всю панель в viewer и не блокировали клики/оверлеи.
+    if(_mobileAuth.active && (prefs.panelMode || state.mobileSession?.accessMode) && state.config?.security){
+      const lockedMode = state.mobileSession?.accessMode || prefs.panelMode || 'viewer';
+      state.config.security.panelMode = lockedMode;
+      const pm = el('pref-panel-mode'); if(pm){ pm.value = state.config.security.panelMode; pm.disabled = true; }
+    } else if(!_mobileAuth.active && state.config?.security){
+      // Для web/ingress используем глобальный режим панели; если он отсутствует — admin.
+      state.config.security.panelMode = state.config.security.panelMode || 'admin';
+      const pm = el('pref-panel-mode'); if(pm){ pm.value = state.config.security.panelMode; pm.disabled = false; }
     }
     // Активный профиль (применяется в renderProfilesManager после загрузки)
     if(prefs.activeProfileId !== undefined) state._clientActiveProfileId = prefs.activeProfileId;
@@ -137,7 +144,8 @@ async function loadClientPrefs(){
 
 async function saveClientPrefs(){
   const prefs = { ui: pickKeys(state.ui, CLIENT_UI_KEYS) };
-  if(!isMobileAccessLocked()) prefs.panelMode = el('pref-panel-mode')?.value || state.config?.security?.panelMode || 'admin';
+  // v4.1.13: panelMode не сохраняем в per-client prefs для web, чтобы старые viewer prefs не ломали ingress/UI.
+  if(isMobileAccessLocked()) prefs.panelMode = state.mobileSession?.accessMode || state.config?.security?.panelMode || 'viewer';
   if(state._clientActiveProfileId !== undefined) prefs.activeProfileId = state._clientActiveProfileId;
   await apiJson('api/prefs', {method:'PUT', body:JSON.stringify(prefs)});
 }
@@ -1511,7 +1519,7 @@ function deviceCardHtml(d, showAllInRoom=false){
   const title = canPlace ? `${d.entity_id}
 Редактирование через SVG Layout Editor` : `${d.entity_id}
 Устройство из другой комнаты. Перенос между комнатами отключён.`;
-  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div><button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button></div>`;
+  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div>${panelMode()==='viewer'?`<button class="state" type="button" disabled title="Режим просмотра: управление недоступно">${esc(stateText(d))}</button>`:`<button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button>`}</div>`;
 }
 function bindDeviceCards(list){
   qsa('.device-card',list).forEach(card=>{
@@ -1762,7 +1770,7 @@ function renderDevices(){
 }
 
 function openDevice(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} openDeviceModal(d); }
-function shortDeviceAction(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(d.domain==='camera'){ openCameraStream(d); return; } if(canPrimaryAction(d)) return toggleDevice(d); openDeviceModal(d); }
+function shortDeviceAction(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(panelMode()==='viewer'){ openDeviceModal(d); return; } if(d.domain==='camera'){ openCameraStream(d); return; } if(canPrimaryAction(d)) return toggleDevice(d); openDeviceModal(d); }
 function attachPressActions(node,d,opts={}){
   let timer=null, longFired=false, sx=0, sy=0, pointerId=null;
   const cancelTimer=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
@@ -1796,6 +1804,10 @@ function attachPressActions(node,d,opts={}){
 function modalRow(label,value){return `<div class="device-modal-row"><span>${esc(label)}</span><b>${esc(value??'')}</b></div>`}
 function domainControls(d){
   const s=getState(d.entity_id); const a=s?.attributes||{}; const rows=[];
+  if(panelMode()==='viewer'){
+    rows.push('<p class="muted viewer-mode-note">Режим просмотра: управление устройством и изменение параметров недоступны.</p>');
+    return rows.join('');
+  }
   if(canPrimaryAction(d)) rows.push(`<div class="device-modal-actions"><button data-action="toggle">${primaryActionLabel(d,s)}</button></div>`);
   if(d.domain==='light'){
     if(isDimmableLight(d)) rows.push(`<label class="slider-row">Яркость <input type="range" min="1" max="100" value="${currentBrightnessPct(d)}" data-action="brightness"><span id="brightness-value">${currentBrightnessPct(d)}%</span></label>`);
@@ -2902,16 +2914,18 @@ const _mobileAuth = (()=>{
     const localUrl = localStorage.getItem('_mobile_local')  || '';
     const remoteUrl= localStorage.getItem('_mobile_remote') || '';
 
-    // v4.1.12: не включаем mobile-token режим внутри обычного HA/Ingress/Web UI.
-    // Иначе desktop/browser, где случайно остался _mobile_token в localStorage,
-    // получает viewer-права мобильного устройства, перестаёт реагировать и скрывает часть UI.
-    // Mobile auth активен только на реальном mobile endpoint/origin или при прямом входе из APK по hash.
-    const sameOrigin = (u) => { try { return !!u && new URL(u).origin === location.origin; } catch { return false; } };
+    // v4.1.13: mobile-token режим включается только в настоящем мобильном контексте.
+    // Нельзя активировать его по savedMobileOrigin: обычная HA/Ingress/Web-панель может иметь тот же origin
+    // или старые localStorage-ключи и тогда ошибочно получает viewer-права мобильного устройства.
     const mobilePort = location.port === '32457';
     const nativeOrigin = location.protocol === 'capacitor:' || location.protocol === 'ionic:';
     const hashLogin = hash.includes('_mt=');
-    const savedMobileOrigin = sameOrigin(localUrl) || sameOrigin(remoteUrl);
-    const active = !!(token && deviceId && (mobilePort || nativeOrigin || hashLogin || savedMobileOrigin));
+    const mobileQuery = new URLSearchParams(location.search).get('mobile') === '1';
+    const active = !!(token && deviceId && (mobilePort || nativeOrigin || hashLogin || mobileQuery));
+    if(!active && (location.pathname.includes('/app/') || location.pathname.includes('hassio') || location.port !== '32457')){
+      // В web/ingress режиме не удаляем токен полностью, но гарантированно не используем его для прав.
+      sessionStorage.setItem('_allha_web_mode', '1');
+    }
     return { token, deviceId, localUrl, remoteUrl, active };
   }catch{ return { token:'', deviceId:'', localUrl:'', remoteUrl:'', active:false }; }
 })();
@@ -4582,7 +4596,7 @@ function bindMobileSettings(){
 }
 
 function openSettingsPanel(name){
-  if(isMobileAccessLocked() && panelMode()!=='admin' && ['images','layout','rooms','sources','profiles','levels','backups','mobile'].includes(name)){ showToast('Этот раздел доступен только admin-устройствам'); return; }
+  if(isMobileAccessLocked() && panelMode()!=='admin' && ['images','layout','rooms','sources','profiles','levels','backups','mobile'].includes(name)){ showToast('Этот раздел доступен только admin-устройствам. Базовые настройки и PIN доступны в основном окне.'); return; }
   const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels', backups:'settings-panel-backups', mobile:'settings-panel-mobile'};
   const id=map[name]||name;
   qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));
