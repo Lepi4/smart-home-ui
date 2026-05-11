@@ -3809,7 +3809,10 @@ async function loadStandardSensorSuggestions(roomId){
     const data = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensor-suggestions`);
     state.standardSensorSuggestions = state.standardSensorSuggestions || {};
     state.standardSensorSuggestions[rid] = data;
-    renderRoomsZonesManager();
+    // Force re-render here: on mobile/touch browsers the last focused input may keep focus
+    // while the Suggest button is tapped, and the normal render guard would skip
+    // updating the suggestion rows, making the button look broken.
+    renderRoomsZonesManager(true);
     showToast('Предложения датчиков обновлены');
   }catch(e){ showToast('Не удалось подобрать датчики: '+e.message); }
 }
@@ -3837,10 +3840,36 @@ function acceptStandardSensorSuggestion(roomId, key){
   return true;
 }
 
-function renderRoomsZonesManager(){
+
+// Backup delegated handler for dynamically re-rendered standard sensor controls.
+// The primary handler is attached to #rooms-zones-manager in bindControls(), but this
+// document-level guard keeps buttons working even after modal re-renders or if the
+// manager node was not present during initial binding.
+document.addEventListener('click', e=>{
+  const btn=e.target.closest('[data-suggest-standard-sensors],[data-accept-standard-sensor]');
+  if(!btn || !btn.closest('#rooms-zones-manager')) return;
+  if(btn.dataset._standardSensorHandled==='1') return;
+  e.preventDefault();
+  e.stopPropagation();
+  const card=btn.closest('[data-room-manager]');
+  const roomId=btn.dataset.suggestStandardSensors || btn.dataset.roomId || card?.dataset.roomManager || '';
+  if(btn.matches('[data-suggest-standard-sensors]')){
+    btn.dataset._standardSensorHandled='1';
+    setTimeout(()=>{ try{ delete btn.dataset._standardSensorHandled; }catch(_){} }, 400);
+    loadStandardSensorSuggestions(roomId);
+    return;
+  }
+  if(btn.matches('[data-accept-standard-sensor]')){
+    btn.dataset._standardSensorHandled='1';
+    setTimeout(()=>{ try{ delete btn.dataset._standardSensorHandled; }catch(_){} }, 400);
+    acceptStandardSensorSuggestion(roomId, btn.dataset.acceptStandardSensor);
+  }
+}, true);
+
+function renderRoomsZonesManager(force=false){
   const box=el('rooms-zones-manager');
   if(!box) return;
-  if(isEditingStandardSensorInputs()){
+  if(isEditingStandardSensorInputs() && !force){
     rememberAllStandardSensorInputs();
     return;
   }
@@ -5004,8 +5033,8 @@ function bindGlobal(){
     const roomId=card?.dataset.roomManager;
     if(zoneBtn){ if(startEditModeForLayoutTool()){ state.selectedRoom='overview'; closeSettingsModal(); render(); openZoneLayoutEditor(zoneBtn.dataset.roomZoneCreate); } }
     if(delZone){ deleteRoomZoneFromSettings(delZone.dataset.roomZoneDelete); }
-    if(suggestSensors){ e.preventDefault(); e.stopPropagation(); loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); return; }
-    if(acceptSensor){ e.preventDefault(); e.stopPropagation(); acceptStandardSensorSuggestion(acceptSensor.dataset.roomId || roomId, acceptSensor.dataset.acceptStandardSensor); return; }
+    if(suggestSensors){ e.preventDefault(); e.stopPropagation(); if(suggestSensors.dataset._standardSensorHandled!=='1') loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); return; }
+    if(acceptSensor){ e.preventDefault(); e.stopPropagation(); if(acceptSensor.dataset._standardSensorHandled!=='1') acceptStandardSensorSuggestion(acceptSensor.dataset.roomId || roomId, acceptSensor.dataset.acceptStandardSensor); return; }
     if(saveSensors){ e.preventDefault(); e.stopPropagation(); saveRoomStandardSensors(saveSensors.dataset.saveStandardSensors); return; }
     if(clearAllSensors){ e.preventDefault(); e.stopPropagation(); clearAllStandardSensors(clearAllSensors.dataset.clearAllStandardSensors); return; }
     if(clearSensor){ e.preventDefault(); e.stopPropagation(); clearStandardSensorInput(clearSensor.dataset.roomId || roomId, clearSensor.dataset.clearStandardSensor); return; }

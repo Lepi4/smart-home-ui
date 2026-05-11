@@ -1,3 +1,10 @@
+## v4.1.21.2 — hotfix standard sensor suggestions click/render
+
+- Fixed standard sensor suggestion buttons not updating the UI after v4.1.21.1.
+- `renderRoomsZonesManager()` now supports forced render for suggestion updates, bypassing the input-focus render guard only for this explicit action.
+- Added a backup delegated click handler for dynamically re-rendered standard sensor controls inside the rooms/zones manager.
+- APK/mobile sources unchanged.
+
 ## v4.1.21.1 — DB-primary polish / final leftover cleanup
 
 - Imported legacy `/data/client-prefs/<client>.json` into `web_client_settings` on first access when SQLite is available but the DB row is missing.
