@@ -3756,10 +3756,26 @@ async function loadStandardSensorSuggestions(roomId){
   }catch(e){ showToast('Не удалось подобрать датчики: '+e.message); }
 }
 function acceptStandardSensorSuggestion(roomId, key){
-  const card=document.querySelector(`[data-room-manager="${CSS.escape(roomId)}"]`);
-  const s=suggestionForStandardSensor(roomId, key);
-  const input=card?.querySelector(`[data-standard-sensor-input="${CSS.escape(key)}"]`);
-  if(input && s?.entity_id){ input.value=s.entity_id; rememberStandardSensorInput(input); }
+  const rid=normalizedRoomId(roomId);
+  const s=suggestionForStandardSensor(rid, key);
+  if(!s?.entity_id){ showToast('Нет предложенного датчика для принятия'); return false; }
+  const cards=qsa('[data-room-manager]');
+  const card=cards.find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
+  const inputs=card ? qsa('[data-standard-sensor-input]', card) : [];
+  const input=inputs.find(i=>i.dataset.standardSensorInput===key);
+  if(!input){ showToast('Поле датчика не найдено. Откройте комнату заново.'); return false; }
+  input.value=s.entity_id;
+  input.setAttribute('value', s.entity_id);
+  rememberStandardSensorInput(input);
+  input.dispatchEvent(new Event('input', {bubbles:true}));
+  input.dispatchEvent(new Event('change', {bubbles:true}));
+  const field=input.closest('.standard-sensor-field');
+  const current=field?.querySelector('.standard-sensor-current code');
+  if(current) current.textContent=s.entity_id;
+  const btn=field?.querySelector('[data-accept-standard-sensor]');
+  if(btn) btn.disabled=true;
+  showToast('Датчик принят. Нажмите «Сохранить датчики».');
+  return true;
 }
 
 function renderRoomsZonesManager(){
@@ -4872,8 +4888,8 @@ function bindGlobal(){
     const roomId=card?.dataset.roomManager;
     if(zoneBtn){ if(startEditModeForLayoutTool()){ state.selectedRoom='overview'; closeSettingsModal(); render(); openZoneLayoutEditor(zoneBtn.dataset.roomZoneCreate); } }
     if(delZone){ deleteRoomZoneFromSettings(delZone.dataset.roomZoneDelete); }
-    if(suggestSensors){ loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); }
-    if(acceptSensor && roomId){ acceptStandardSensorSuggestion(roomId, acceptSensor.dataset.acceptStandardSensor); }
+    if(suggestSensors){ e.preventDefault(); e.stopPropagation(); loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); return; }
+    if(acceptSensor && roomId){ e.preventDefault(); e.stopPropagation(); acceptStandardSensorSuggestion(roomId, acceptSensor.dataset.acceptStandardSensor); return; }
     if(saveSensors){ saveRoomStandardSensors(saveSensors.dataset.saveStandardSensors); }
     if(clearAllSensors){ clearAllStandardSensors(clearAllSensors.dataset.clearAllStandardSensors); }
     if(clearSensor && roomId){ clearStandardSensorInput(roomId, clearSensor.dataset.clearStandardSensor); }

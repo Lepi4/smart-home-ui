@@ -1,3 +1,11 @@
+
+## v4.1.19.1 — hotfix: standard sensor accept button
+
+- Исправлена кнопка **«Принять»** в UI предложений standardSensors.
+- Теперь нажатие заполняет соответствующее поле `entity_id`, обновляет строку «Текущий», сохраняет draft-state и показывает подсказку «Нажмите Сохранить датчики».
+- Добавлены `preventDefault/stopPropagation` для клика по кнопке внутри label, чтобы браузер не перехватывал событие и не фокусировал поле вместо обработки кнопки.
+- APK и mobile sources не менялись.
+
 # CHANGELOG
 
 ## v4.1.19 — Lovelace sections parser + viewer/dropdown/scroll/standardSensors stabilization
