@@ -1,3 +1,13 @@
+
+window.ALLHA_DIAGNOSTIC_BUILD = true;
+window.ALLHA_CLIENT_TRACE = window.ALLHA_CLIENT_TRACE || [];
+function clientTrace(message, details){
+  const row={ts:new Date().toISOString(), message:String(message||''), details:details||{}};
+  try{ window.ALLHA_CLIENT_TRACE.push(row); if(window.ALLHA_CLIENT_TRACE.length>500) window.ALLHA_CLIENT_TRACE.shift(); }catch(e){}
+  try{ console.debug('[ALLHA-2D][client-trace]', row.message, row.details); }catch(e){}
+  try{ fetch('api/diagnostics/client-trace', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(row)}).catch(()=>{}); }catch(e){}
+}
+
 const state = {
   selectedRoom: 'overview',
   states: {},
@@ -887,8 +897,11 @@ const STANDARD_SENSOR_DEFS = [
   { key:'illuminance', label:'Освещённость', shortLabel:'Свет', icon:'☀', placeholder:'sensor.room_illuminance', unitFallback:' lx', domains:['sensor'] }
 ];
 function standardSensorsForRoom(roomId){
-  const entry = state.roomsSettings?.rooms?.[normalizedRoomId(roomId)];
-  if(entry && entry.standardSensors && typeof entry.standardSensors === 'object') return entry.standardSensors;
+  const rid=normalizedRoomId(roomId);
+  const entry = state.roomsSettings?.rooms?.[rid];
+  if(entry && entry.standardSensors && typeof entry.standardSensors === 'object' && Object.keys(entry.standardSensors).length) return entry.standardSensors;
+  const bindings = state.roomsSettings?.standardSensorBindings?.[rid];
+  if(bindings && typeof bindings === 'object' && Object.keys(bindings).length) return bindings;
   return null;
 }
 function findClimateEntity(r, kind){
@@ -3699,6 +3712,7 @@ async function loadImagesInfo(){
 async function loadRoomsSettings(){
   try{
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson('api/rooms'));
+    clientTrace('loadRoomsSettings api/rooms hydrated', {rooms:Object.keys(state.roomsSettings?.rooms||{}).length, bindingRooms:Object.keys(state.roomsSettings?.standardSensorBindings||{}).length});
     refreshRuntimeRooms();
     renderRooms();
     renderRoomsZonesManager();
@@ -3772,10 +3786,11 @@ function sameStandardSensors(a,b){
 function standardSensorsForSettings(roomId){
   const rid=normalizedRoomId(roomId);
   const fromRoom = state.roomsSettings?.rooms?.[rid]?.standardSensors;
-  if(fromRoom && typeof fromRoom==='object' && Object.keys(canonicalStandardSensorsForCompare(fromRoom)).length) return fromRoom;
   const fromBindings = state.roomsSettings?.standardSensorBindings?.[rid];
-  if(fromBindings && typeof fromBindings==='object') return fromBindings;
-  return {};
+  const merged = { ...(fromRoom && typeof fromRoom==='object' ? fromRoom : {}), ...(fromBindings && typeof fromBindings==='object' ? fromBindings : {}) };
+  const cleanMerged = canonicalStandardSensorsForCompare(merged);
+  clientTrace('standardSensorsForSettings', {roomId:rid, fromRoom, fromBindings, result:cleanMerged});
+  return cleanMerged;
 }
 
 function ensureRoomsSettingsRoom(roomId){
@@ -3889,6 +3904,7 @@ async function acceptStandardSensorSuggestion(roomId, key){
   if(current) current.textContent=s.entity_id;
   const btn=field?.querySelector('[data-accept-standard-sensor]');
   if(btn) btn.disabled=true;
+  clientTrace('acceptStandardSensorSuggestion', {roomId:rid, key, entityId:s.entity_id});
   showToast('Датчик принят. Сохраняю в БД...');
   await saveOneStandardSensor(rid, key, s.entity_id);
   return true;
@@ -3972,6 +3988,7 @@ function renderRoomsZonesManager(force=false){
     const hasZone=!!state.layout?.zones?.[rid];
     const sensors=standardSensorsForSettings(rid);
     const active=STANDARD_SENSOR_DEFS.filter(def=>String(sensors[def.key]||'').trim()).map(def=>def.label).join(', ') || 'не заданы';
+    clientTrace('room manager summary sensors', {roomId:rid, label:r.label||rid, sensors, active});
     const fields=STANDARD_SENSOR_DEFS.map(def=>{
       const value=standardSensorInputValue(rid, def.key, sensors[def.key]||'');
       return `<div class="standard-sensor-field" data-standard-sensor-field="${esc(def.key)}"><span class="standard-sensor-label">${esc(def.label)}</span><input type="text" value="${esc(value)}" placeholder="${esc(def.placeholder)}" data-standard-sensor-input="${esc(def.key)}"><button type="button" data-room-id="${esc(rid)}" data-clear-standard-sensor="${esc(def.key)}">Очистить</button><span class="standard-sensor-suggest-wrap">${renderStandardSensorSuggestion(rid, def, value)}</span></div>`;
@@ -4023,13 +4040,16 @@ async function saveOneStandardSensor(roomId, key, entityId){
   const value=String(entityId||'').trim();
   if(!value){ showToast('entity_id не указан'); return false; }
   try{
-    const prev=state.roomsSettings;
+    clientTrace('saveOneStandardSensor request', {roomId:rid, key, entityId:value});
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/${encodeURIComponent(key)}/save`, { method:'POST', body:JSON.stringify({entity_id:value}) });
+    clientTrace('saveOneStandardSensor response', {roomId:rid, key, verifiedRoomBinding:response?.verifiedRoomBinding, bindingRooms:Object.keys(response?.standardSensorBindings||{})});
     const verified = response?.verifiedRoomBinding && typeof response.verifiedRoomBinding==='object' ? response.verifiedRoomBinding : {};
     if(String(verified?.[key]||'').trim() !== value) throw new Error('Сервер не подтвердил сохранение датчика');
-    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, verified));
+    // Reload canonical server state after confirmed single-field save.
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson('api/rooms'));
     clearLocalStandardSensorDrafts(rid);
     renderRoomsZonesManager(true);
+    renderRooms();
     render();
     showToast('Датчик сохранён и подтверждён БД');
     return true;
@@ -4046,6 +4066,7 @@ async function saveRoomStandardSensors(roomId){
   const rid=normalizedRoomId(roomId);
   const standardSensors=readStandardSensorInputs(rid);
   console.debug('[ALLHA-2D][standardSensors] save payload', {roomId:rid, keys:Object.keys(standardSensors), standardSensors});
+  clientTrace('saveRoomStandardSensors payload', {roomId:rid, keys:Object.keys(standardSensors), standardSensors});
   try{
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });

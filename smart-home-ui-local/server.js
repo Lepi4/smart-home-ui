@@ -153,10 +153,10 @@ function currentLogLevel(){
   if(cachedLogLevel && (now - cachedLogLevelLoadedAt) < 30000) return cachedLogLevel;
   try{
     const cfg = readJsonSafe(ADDON_CONFIG_PATH, {}) || {};
-    cachedLogLevel = String(cfg.logLevel || 'info').toLowerCase();
+    cachedLogLevel = String(cfg.logLevel || 'debug').toLowerCase();
     cachedLogLevelLoadedAt = now;
     return cachedLogLevel;
-  }catch(e){ return cachedLogLevel || 'info'; }
+  }catch(e){ return cachedLogLevel || 'debug'; }
 }
 function setCachedLogLevel(level){
   cachedLogLevel = String(level || 'info').toLowerCase();
@@ -182,7 +182,7 @@ function redactForLog(value){
     }));
   }catch(e){ return value; }
 }
-const LOG_BUFFER_LIMIT = 300;
+const LOG_BUFFER_LIMIT = 2000;
 const logBuffer = [];
 function allhaLog(level, scope, message, details){
   if(!shouldLog(level)) return;
@@ -2244,7 +2244,7 @@ function verifyRoomStandardSensorSave(roomsPath, roomId, expected){
 
 function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId, roomsPath);
-  logInfo('standardSensors', 'save requested', {roomId:id, roomsPath, keys:Object.keys(sensors||{})});
+  logInfo('standardSensors', 'save requested', {roomId:id, roomsPath, keys:Object.keys(sensors||{}), sensors});
   const current = loadRoomsSettings(roomsPath);
   const clean = normalizeStandardSensors(sensors || {}, {strict:true});
   if(!Object.keys(clean).length) throw new Error('Пустой набор датчиков не сохраняется. Для очистки используйте кнопку «Очистить» или «Очистить все».');
@@ -2261,7 +2261,7 @@ function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PAT
   }
   atomicWriteJson(roomsPath, applyDbStandardSensorBindings(current, roomsPath));
   const hydrated = loadRoomsSettings(roomsPath);
-  logInfo('standardSensors', 'save confirmed', {roomId:id, saved:Object.keys(standardSensorBindingsForRoom(roomsPath, id))});
+  logInfo('standardSensors', 'save confirmed', {roomId:id, dbBinding:standardSensorBindingsForRoom(roomsPath, id)});
   return hydrated;
 }
 
@@ -2275,7 +2275,7 @@ function saveSingleRoomStandardSensor(roomId, sensorType, entityId, roomsPath = 
   const existing = normalizeStandardSensors(current.rooms?.[id]?.standardSensors || {}, {strict:false});
   const nextSensors = { ...existing, [key]: value };
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: nextSensors };
-  logInfo('standardSensors', 'save one requested', {roomId:id, sensorType:key, roomsPath});
+  logInfo('standardSensors', 'save one requested', {roomId:id, sensorType:key, entityId:value, roomsPath, before:existing, after:nextSensors});
   try{
     const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
     if(allhaDb.hasDb && allhaDb.hasDb()) {
@@ -2287,7 +2287,7 @@ function saveSingleRoomStandardSensor(roomId, sensorType, entityId, roomsPath = 
     throw e;
   }
   atomicWriteJson(roomsPath, applyDbStandardSensorBindings(current, roomsPath));
-  logInfo('standardSensors', 'save one confirmed', {roomId:id, sensorType:key});
+  logInfo('standardSensors', 'save one confirmed', {roomId:id, sensorType:key, dbBinding:standardSensorBindingsForRoom(roomsPath, id)});
   return loadRoomsSettings(roomsPath);
 }
 
@@ -2643,6 +2643,16 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({limit:'1mb'}));
+
+app.use((req,res,next)=>{
+  try{
+    if(req.path.includes('/standard-sensors') || req.path === '/api/rooms' || req.path === '/api/rooms/debug' || req.path.includes('/diagnostics')){
+      logDebug('http-trace', 'request', {method:req.method, path:req.path, query:req.query, body:req.body});
+    }
+  }catch(e){}
+  next();
+});
+
 app.get('/api/dashboard-info', (req,res)=>{
   try{
     const info = dashboardProxyInfo(req);
@@ -3506,6 +3516,32 @@ function runtimeStorageDiagnostics(){
   }catch(e){ roomsDebug = { error:e.message }; }
   return { ...db, mode:'sqlite-primary-json-mirror', documents, files, audit:{...runtimeAudit}, roomsDebug };
 }
+
+function standardSensorsDiagnosticsSnapshot(roomIdRaw, req){
+  const lp = req ? clientLevelPaths(req) : activeLevelPaths();
+  const rid = roomIdRaw ? assertKnownRoomId(roomIdRaw, lp.rooms) : '';
+  const rawRooms = readJsonSafe(lp.rooms, {rooms:{}});
+  const loadedRooms = loadRoomsSettings(lp.rooms);
+  const bindings = standardSensorBindingsForRoomsPath(lp.rooms);
+  const roomFromRaw = rid ? (rawRooms.rooms?.[rid] || null) : null;
+  const roomFromLoaded = rid ? (loadedRooms.rooms?.[rid] || null) : null;
+  return {
+    ts: new Date().toISOString(),
+    roomId: rid,
+    profileLevel: profileLevelFromRoomsPath(lp.rooms),
+    roomsPath: lp.rooms,
+    devicesPath: lp.devicesJs,
+    devicesSource: runtimeFileSource(lp.devicesJs),
+    roomsSource: runtimeDocumentSource(lp.rooms),
+    rawRoomStandardSensors: normalizeStandardSensors(roomFromRaw?.standardSensors || {}, {strict:false}),
+    loadedRoomStandardSensors: normalizeStandardSensors(roomFromLoaded?.standardSensors || {}, {strict:false}),
+    dbBinding: rid ? normalizeStandardSensors(bindings?.[rid] || {}, {strict:false}) : {},
+    allDbBindingRoomIds: Object.keys(bindings || {}),
+    allLoadedRoomIds: Object.keys(loadedRooms.rooms || {}),
+    knownRoomIds: listKnownRoomIds({roomsPath:lp.rooms, devicesPath:lp.devicesJs})
+  };
+}
+
 app.get('/api/database/info', (req, res) => {
   try { res.json({ ok:true, database: runtimeStorageDiagnostics(), logLevel: currentLogLevel(), recentErrors: logBuffer.filter(x=>x.level==='error').slice(-20) }); }
   catch(e){ res.status(500).json({ error:e.message }); }
@@ -3533,6 +3569,21 @@ app.post('/api/diagnostics/log-level', (req,res)=>{
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 
+
+
+app.post('/api/diagnostics/client-trace', (req,res)=>{
+  try{
+    logDebug('client-trace', req.body?.message || 'client trace', req.body?.details || req.body || {});
+    res.json({ok:true});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+app.get('/api/diagnostics/standard-sensors/full', (req,res)=>{
+  try{
+    const roomId = String(req.query.room_id || req.query.roomId || '');
+    res.json({ok:true, snapshot: standardSensorsDiagnosticsSnapshot(roomId, req)});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
 
 app.get('/api/rooms/debug', (req,res)=>{
   try{
