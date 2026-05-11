@@ -3998,19 +3998,28 @@ function renderRoomsZonesManager(force=false){
   });
 }
 function readStandardSensorInputs(roomId){
-  const card=document.querySelector(`[data-room-manager="${CSS.escape(roomId)}"]`);
+  const rid=normalizedRoomId(roomId);
+  const card=document.querySelector(`[data-room-manager="${CSS.escape(rid)}"]`) ||
+    [...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
   const standardSensors={};
-  if(!card) return standardSensors;
+  const drafts=ensureStandardSensorDrafts();
+  const stateSensors=standardSensorsForSettings(rid) || {};
   STANDARD_SENSOR_DEFS.forEach(def=>{
-    const v=card.querySelector(`[data-standard-sensor-input="${CSS.escape(def.key)}"]`)?.value?.trim() || '';
+    const domValue=card?.querySelector(`[data-standard-sensor-input="${CSS.escape(def.key)}"]`)?.value?.trim() || '';
+    const draftKey=standardSensorDraftKey(rid, def.key);
+    const draftValue=Object.prototype.hasOwnProperty.call(drafts,draftKey) ? String(drafts[draftKey]||'').trim() : '';
+    const stateValue=String(stateSensors?.[def.key]||'').trim();
+    const v=domValue || draftValue || stateValue;
     if(v) standardSensors[def.key]=v;
   });
+  console.debug('[ALLHA-2D][standardSensors] read inputs', {roomId:rid, keys:Object.keys(standardSensors), fromDom:!!card});
   return standardSensors;
 }
 async function saveRoomStandardSensors(roomId){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
   const rid=normalizedRoomId(roomId);
   const standardSensors=readStandardSensorInputs(rid);
+  console.debug('[ALLHA-2D][standardSensors] save payload', {roomId:rid, keys:Object.keys(standardSensors), standardSensors});
   try{
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
