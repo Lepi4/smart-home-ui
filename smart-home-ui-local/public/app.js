@@ -3841,30 +3841,28 @@ function acceptStandardSensorSuggestion(roomId, key){
 }
 
 
-// Backup delegated handler for dynamically re-rendered standard sensor controls.
-// The primary handler is attached to #rooms-zones-manager in bindControls(), but this
-// document-level guard keeps buttons working even after modal re-renders or if the
-// manager node was not present during initial binding.
-document.addEventListener('click', e=>{
-  const btn=e.target.closest('[data-suggest-standard-sensors],[data-accept-standard-sensor]');
-  if(!btn || !btn.closest('#rooms-zones-manager')) return;
-  if(btn.dataset._standardSensorHandled==='1') return;
+// Robust delegated handler for dynamically re-rendered standard sensor controls.
+// This intentionally handles ALL standardSensors buttons at document level because
+// the settings panel can be re-rendered/replaced after DB hydration, focus guards,
+// modal changes or mobile WebView refreshes. The local #rooms-zones-manager handler
+// remains as a secondary path, but this one is the authoritative safety net.
+function handleStandardSensorControlClick(e){
+  const btn=e.target.closest('[data-suggest-standard-sensors],[data-accept-standard-sensor],[data-save-standard-sensors],[data-clear-standard-sensor],[data-clear-all-standard-sensors]');
+  if(!btn || !btn.closest('#rooms-zones-manager')) return false;
+  if(e.__standardSensorHandled) return true;
+  e.__standardSensorHandled=true;
   e.preventDefault();
   e.stopPropagation();
   const card=btn.closest('[data-room-manager]');
-  const roomId=btn.dataset.suggestStandardSensors || btn.dataset.roomId || card?.dataset.roomManager || '';
-  if(btn.matches('[data-suggest-standard-sensors]')){
-    btn.dataset._standardSensorHandled='1';
-    setTimeout(()=>{ try{ delete btn.dataset._standardSensorHandled; }catch(_){} }, 400);
-    loadStandardSensorSuggestions(roomId);
-    return;
-  }
-  if(btn.matches('[data-accept-standard-sensor]')){
-    btn.dataset._standardSensorHandled='1';
-    setTimeout(()=>{ try{ delete btn.dataset._standardSensorHandled; }catch(_){} }, 400);
-    acceptStandardSensorSuggestion(roomId, btn.dataset.acceptStandardSensor);
-  }
-}, true);
+  const roomId=btn.dataset.suggestStandardSensors || btn.dataset.saveStandardSensors || btn.dataset.clearAllStandardSensors || btn.dataset.roomId || card?.dataset.roomManager || '';
+  if(btn.matches('[data-suggest-standard-sensors]')){ loadStandardSensorSuggestions(roomId); return true; }
+  if(btn.matches('[data-accept-standard-sensor]')){ acceptStandardSensorSuggestion(roomId, btn.dataset.acceptStandardSensor); return true; }
+  if(btn.matches('[data-save-standard-sensors]')){ saveRoomStandardSensors(roomId); return true; }
+  if(btn.matches('[data-clear-all-standard-sensors]')){ clearAllStandardSensors(roomId); return true; }
+  if(btn.matches('[data-clear-standard-sensor]')){ clearStandardSensorInput(roomId, btn.dataset.clearStandardSensor); return true; }
+  return false;
+}
+document.addEventListener('click', handleStandardSensorControlClick, true);
 
 function renderRoomsZonesManager(force=false){
   const box=el('rooms-zones-manager');
@@ -3893,7 +3891,10 @@ function renderRoomsZonesManager(force=false){
       `<details class="standard-sensors-details" data-standard-details="${esc(rid)}" ${open?'open':''}><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную или принять предложенный датчик.</p><button type="button" data-suggest-standard-sensors="${esc(rid)}">Предложить все</button> <button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button> <button type="button" class="danger-button small-danger" data-clear-all-standard-sensors="${esc(rid)}">Очистить все датчики комнаты</button></details>`+
       `</div>`;
   }).join('');
-  qsa('button,input', box).forEach(ctrl=>ctrl.disabled=!admin);
+  qsa('button,input', box).forEach(ctrl=>{
+    const standardCtrl = ctrl.matches('[data-standard-sensor-input],[data-suggest-standard-sensors],[data-accept-standard-sensor],[data-save-standard-sensors],[data-clear-standard-sensor],[data-clear-all-standard-sensors]');
+    ctrl.disabled = !admin && !standardCtrl;
+  });
   qsa('[data-standard-details]', box).forEach(d=>d.addEventListener('toggle',()=>{
     if(!(state.openStandardSensorRooms instanceof Set)) state.openStandardSensorRooms=new Set();
     const rid=d.dataset.standardDetails;
@@ -3901,7 +3902,11 @@ function renderRoomsZonesManager(force=false){
   }));
   qsa('[data-standard-sensor-input]', box).forEach(input=>{
     input.addEventListener('input',()=>rememberStandardSensorInput(input));
+    input.addEventListener('change',()=>rememberStandardSensorInput(input));
     input.addEventListener('focus',()=>rememberStandardSensorInput(input));
+  });
+  qsa('[data-suggest-standard-sensors],[data-accept-standard-sensor],[data-save-standard-sensors],[data-clear-standard-sensor],[data-clear-all-standard-sensors]', box).forEach(btn=>{
+    btn.onclick=(ev)=>handleStandardSensorControlClick(ev);
   });
 }
 function readStandardSensorInputs(roomId){
@@ -3923,7 +3928,7 @@ async function saveRoomStandardSensors(roomId){
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
     state.roomsSettings = mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, standardSensors);
     clearLocalStandardSensorDrafts(rid);
-    renderRoomsZonesManager();
+    renderRoomsZonesManager(true);
     render();
     showToast(Object.keys(standardSensors).length ? 'Стандартные датчики сохранены' : 'Все стандартные датчики комнаты очищены');
   }catch(e){ showToast('Ошибка сохранения датчиков: '+e.message); }
@@ -5022,6 +5027,7 @@ function bindGlobal(){
     if(e.target.closest('[data-suggest-standard-sensors],[data-accept-standard-sensor],[data-clear-standard-sensor],[data-clear-all-standard-sensors],[data-save-standard-sensors]')) e.stopPropagation();
   });
   if(roomsManager) roomsManager.addEventListener('click', e=>{
+    if(e.__standardSensorHandled) return;
     const zoneBtn=e.target.closest('[data-room-zone-create]');
     const delZone=e.target.closest('[data-room-zone-delete]');
     const saveSensors=e.target.closest('[data-save-standard-sensors]');
@@ -5033,8 +5039,8 @@ function bindGlobal(){
     const roomId=card?.dataset.roomManager;
     if(zoneBtn){ if(startEditModeForLayoutTool()){ state.selectedRoom='overview'; closeSettingsModal(); render(); openZoneLayoutEditor(zoneBtn.dataset.roomZoneCreate); } }
     if(delZone){ deleteRoomZoneFromSettings(delZone.dataset.roomZoneDelete); }
-    if(suggestSensors){ e.preventDefault(); e.stopPropagation(); if(suggestSensors.dataset._standardSensorHandled!=='1') loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); return; }
-    if(acceptSensor){ e.preventDefault(); e.stopPropagation(); if(acceptSensor.dataset._standardSensorHandled!=='1') acceptStandardSensorSuggestion(acceptSensor.dataset.roomId || roomId, acceptSensor.dataset.acceptStandardSensor); return; }
+    if(suggestSensors){ e.preventDefault(); e.stopPropagation(); loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); return; }
+    if(acceptSensor){ e.preventDefault(); e.stopPropagation(); acceptStandardSensorSuggestion(acceptSensor.dataset.roomId || roomId, acceptSensor.dataset.acceptStandardSensor); return; }
     if(saveSensors){ e.preventDefault(); e.stopPropagation(); saveRoomStandardSensors(saveSensors.dataset.saveStandardSensors); return; }
     if(clearAllSensors){ e.preventDefault(); e.stopPropagation(); clearAllStandardSensors(clearAllSensors.dataset.clearAllStandardSensors); return; }
     if(clearSensor){ e.preventDefault(); e.stopPropagation(); clearStandardSensorInput(clearSensor.dataset.roomId || roomId, clearSensor.dataset.clearStandardSensor); return; }

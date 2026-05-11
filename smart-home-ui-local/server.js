@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { HA_API_BASE, HA_WS_URL, HA_TOKEN, haFetch, haWsCommand, statesCache, sseClients, broadcastSseEvent, startHaWsSubscription } = require('./src/ha');
 const mobileAuth = require('./src/mobile-auth');
 const allhaDb = require('./src/db');
+const { ENTITY_DOMAINS, ENTITY_RE, ROOM_PATTERNS, ROOM_LABELS, DOMAIN_EMOJI, friendlyRoomLabel, domainOf, isEntityId, extractEntityIdsFromString, friendlyFromEntityId, canonicalRoomFromText, asArray, deepClone, deepMerge, variablesToMap, substituteDeclutteringVars, unwrapLovelaceConfig, selectViews, cardTitle, headingTitle, getCardsFromView, resolveButtonCardTemplates, resolveDeclutteringCard, collectEntityRefs, flattenCardForEntityCollection, makeDevice, parseLovelaceRawBundle } = require('./src/lovelace');
 let sharp = null;
 try { sharp = require('sharp'); } catch (e) { sharp = null; }
 
@@ -2034,14 +2035,26 @@ function listKnownRoomIds(options={}){
   }catch(e){}
   return [...ids];
 }
-function assertKnownRoomId(roomId){
+function assertKnownRoomId(roomId, roomsPath = ROOMS_SETTINGS_PATH){
   const id = String(roomId||'').trim();
   if(!id) throw new Error('room_id не указан');
   if(id === 'overview') throw new Error('overview не является комнатой');
-  const known = new Set(listKnownRoomIds());
+  const devicesPath = roomsPath === ROOMS_SETTINGS_PATH ? DEVICES_PATH : path.join(path.dirname(roomsPath), 'devices.js');
+  const known = new Set(listKnownRoomIds({ roomsPath, devicesPath }));
   if(known.size && !known.has(id)) throw new Error(`Комната ${id} не найдена в конфигурации`);
   return id;
 }
+const STANDARD_SENSOR_KEYS = ['temperature','humidity','motion','noise','co2','illuminance'];
+
+function defaultRoomsSettings(){ return { version: 1, rooms: {}, updatedAt: null }; }
+
+function normalizeEntityId(value){
+  const v = String(value || '').trim();
+  if(!v) return '';
+  if(!/^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$/.test(v)) throw new Error(`Некорректный entity_id: ${v}`);
+  return v;
+}
+
 function normalizeStandardSensors(src){
   const out = {};
   if(!isPlainObject(src)) return out;
@@ -2090,7 +2103,7 @@ function saveRoomsSettings(payload, roomsPath = ROOMS_SETTINGS_PATH){
   return withDbSensors;
 }
 function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PATH){
-  const id = assertKnownRoomId(roomId);
+  const id = assertKnownRoomId(roomId, roomsPath);
   const current = loadRoomsSettings(roomsPath);
   const clean = normalizeStandardSensors(sensors || {});
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: clean };
@@ -2102,7 +2115,7 @@ function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PAT
   return loadRoomsSettings(roomsPath);
 }
 function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_PATH){
-  const id = assertKnownRoomId(roomId);
+  const id = assertKnownRoomId(roomId, roomsPath);
   const key = String(sensorType || '').trim();
   if(!STANDARD_SENSOR_KEYS.includes(key)) throw new Error(`Неизвестный тип стандартного датчика: ${key}`);
   const current = loadRoomsSettings(roomsPath);
@@ -2119,7 +2132,7 @@ function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_
   return loadRoomsSettings(roomsPath);
 }
 function clearAllRoomStandardSensors(roomId, roomsPath = ROOMS_SETTINGS_PATH){
-  const id = assertKnownRoomId(roomId);
+  const id = assertKnownRoomId(roomId, roomsPath);
   const current = loadRoomsSettings(roomsPath);
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: {} };
   try{
@@ -2220,9 +2233,11 @@ function standardSensorSuggestionReason(key, entityId, device, stateObj, roomId)
   if(unit) return `найдено по unit ${unit}`;
   return `найдено по entity/name для комнаты ${roomLabel}`;
 }
-function standardSensorSuggestionsForRoom(roomId){
-  const rid = assertKnownRoomId(roomId);
-  const devices = parseJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES');
+function standardSensorSuggestionsForRoom(roomId, options={}){
+  const roomsPath = options.roomsPath || ROOMS_SETTINGS_PATH;
+  const devicesPath = options.devicesPath || (roomsPath === ROOMS_SETTINGS_PATH ? DEVICES_PATH : path.join(path.dirname(roomsPath), 'devices.js'));
+  const rid = assertKnownRoomId(roomId, roomsPath);
+  const devices = parseJsAssignedArray(devicesPath, 'ALL_DEVICES');
   const allStates = statesCache instanceof Map ? [...statesCache.values()] : [];
   const byId = new Map();
   for(const d of devices){ if(d?.entity_id) byId.set(d.entity_id, d); }
@@ -2248,17 +2263,19 @@ function standardSensorSuggestionsForRoom(roomId){
   }
   return { roomId:rid, suggestions:out, totalCandidates:candidates.length };
 }
-function roomSourcesForApi(){
-  const settings = loadRoomsSettings();
+function roomSourcesForApi(options={}){
+  const roomsPath = options.roomsPath || ROOMS_SETTINGS_PATH;
+  const devicesPath = options.devicesPath || (roomsPath === ROOMS_SETTINGS_PATH ? DEVICES_PATH : path.join(path.dirname(roomsPath), 'devices.js'));
+  const settings = loadRoomsSettings(roomsPath);
   const labelByRoom = {};
   try{
-    const devices = parseJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES');
+    const devices = parseJsAssignedArray(devicesPath, 'ALL_DEVICES');
     for(const d of devices){
       const rid = String(d?.room || '').trim();
       if(rid && !labelByRoom[rid]) labelByRoom[rid] = d.roomLabel || d.room_name || rid;
     }
   }catch(e){}
-  return listKnownRoomIds().map(id => ({ id, label: settings.rooms[id]?.alias || labelByRoom[id] || friendlyRoomLabel(id), source: settings.rooms[id]?.source || 'detected', settings: settings.rooms[id] || {} }));
+  return listKnownRoomIds({ roomsPath, devicesPath }).map(id => ({ id, label: settings.rooms[id]?.alias || labelByRoom[id] || friendlyRoomLabel(id), source: settings.rooms[id]?.source || 'detected', settings: settings.rooms[id] || {} }));
 }
 function imagesDiagnostics(){
   const metaOk = (()=>{ try{ loadImagesMeta(); return true; }catch(e){ return false; } })();
@@ -2728,7 +2745,6 @@ async function readLovelaceRawFromHa(paths){
 }
 
 
-const { ENTITY_DOMAINS, ENTITY_RE, ROOM_PATTERNS, ROOM_LABELS, DOMAIN_EMOJI, friendlyRoomLabel, domainOf, isEntityId, extractEntityIdsFromString, friendlyFromEntityId, canonicalRoomFromText, asArray, deepClone, deepMerge, variablesToMap, substituteDeclutteringVars, unwrapLovelaceConfig, selectViews, cardTitle, headingTitle, getCardsFromView, resolveButtonCardTemplates, resolveDeclutteringCard, collectEntityRefs, flattenCardForEntityCollection, makeDevice, parseLovelaceRawBundle } = require('./src/lovelace');
 function writeDeviceOutputs(parsed){
   if(!parsed.devices.length) throw new Error('RAW Lovelace прочитан, но entity_id не найдены. Файлы устройств не перезаписаны.');
   fs.mkdirSync(DATA_DIR,{recursive:true});
@@ -2994,11 +3010,11 @@ app.get('/api/mobile/debug', (req, res) => {
   });
 });
 app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
-app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
-app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id) }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi({ roomsPath: lp.rooms, devicesPath: lp.devicesJs }) }); }catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }) }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });
-app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearAllRoomStandardSensors(req.params.room_id, lp.rooms); res.json({ ok:true, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id).suggestions, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id).suggestions || {}; res.json({ ok:true, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearAllRoomStandardSensors(req.params.room_id, lp.rooms); res.json({ ok:true, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions || {}; res.json({ ok:true, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){res.status(500).json({error:e.message});} });
