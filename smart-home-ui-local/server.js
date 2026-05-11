@@ -2194,18 +2194,50 @@ function saveRoomsSettings(payload, roomsPath = ROOMS_SETTINGS_PATH){
   atomicWriteJson(roomsPath, withDbSensors);
   return withDbSensors;
 }
+
+function standardSensorBindingsForRoom(roomsPath, roomId){
+  try{
+    const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+    if(allhaDb.hasDb && allhaDb.hasDb()){
+      const all = allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {};
+      return normalizeStandardSensors(all[roomId] || {}, {strict:false});
+    }
+  }catch(e){ logError('standardSensors', 'read room bindings failed', {roomId, error:e.message}); }
+  return {};
+}
+
+function verifyRoomStandardSensorSave(roomsPath, roomId, expected){
+  const saved = standardSensorBindingsForRoom(roomsPath, roomId);
+  const want = normalizeStandardSensors(expected || {}, {strict:false});
+  const savedJson = JSON.stringify(saved);
+  const wantJson = JSON.stringify(want);
+  if(savedJson !== wantJson){
+    logError('standardSensors', 'DB verify failed after save', {roomId, expected:want, saved});
+    throw new Error(`Датчики не подтвердились в базе данных для комнаты ${roomId}`);
+  }
+  return saved;
+}
+
 function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId, roomsPath);
   logInfo('standardSensors', 'save requested', {roomId:id, roomsPath, keys:Object.keys(sensors||{})});
   const current = loadRoomsSettings(roomsPath);
-  const clean = normalizeStandardSensors(sensors || {});
+  const clean = normalizeStandardSensors(sensors || {}, {strict:true});
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: clean };
   try{
     const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
-    if(allhaDb.hasDb && allhaDb.hasDb()) allhaDb.replaceRoomStandardSensorBindings(profileId, levelId, id, clean);
-  }catch(e){ console.warn('[standardSensors] DB room save failed:', e.message); }
+    if(allhaDb.hasDb && allhaDb.hasDb()) {
+      allhaDb.replaceRoomStandardSensorBindings(profileId, levelId, id, clean);
+      verifyRoomStandardSensorSave(roomsPath, id, clean);
+    }
+  }catch(e){
+    logError('standardSensors', 'DB room save failed', {roomId:id, error:e.message});
+    throw e;
+  }
   atomicWriteJson(roomsPath, applyDbStandardSensorBindings(current, roomsPath));
-  return loadRoomsSettings(roomsPath);
+  const hydrated = loadRoomsSettings(roomsPath);
+  logInfo('standardSensors', 'save confirmed', {roomId:id, saved:Object.keys(standardSensorBindingsForRoom(roomsPath, id))});
+  return hydrated;
 }
 function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId, roomsPath);
@@ -3107,8 +3139,18 @@ app.get('/api/mobile/debug', (req, res) => {
 });
 app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/rooms', (req,res)=>{ try{ res.json(roomsApiPayloadForRequest(req)); }catch(e){res.status(500).json({error:e.message});} });
+
+app.get('/api/rooms/:room_id/standard-sensors/db', (req,res)=>{
+  try{
+    const lp=clientLevelPaths(req);
+    const rid=assertKnownRoomId(req.params.room_id, lp.rooms);
+    const rooms=loadRoomsSettings(lp.rooms);
+    res.json({ok:true, roomId:rid, dbBinding:standardSensorBindingsForRoom(lp.rooms, rid), roomStandardSensors:normalizeStandardSensors(rooms.rooms?.[rid]?.standardSensors || {}, {strict:false}), roomsPath:lp.rooms});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+
 app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }) }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json(roomsApiPayloadForRequest(req)); }catch(e){res.status(400).json({error:e.message});} });
+app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); const payload=roomsApiPayloadForRequest(req); const rid=assertKnownRoomId(req.params.room_id, lp.rooms); payload.verifiedRoomBinding=standardSensorBindingsForRoom(lp.rooms, rid); res.json(payload); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearAllRoomStandardSensors(req.params.room_id, lp.rooms); const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions || {}; const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){res.status(500).json({error:e.message});} });

@@ -3814,9 +3814,12 @@ function mergeRoomsSettingsPreserveStandardSensors(prev, next, overrideRoomId, o
   return out;
 }
 function standardSensorInputValue(roomId, key, savedValue){
+  const saved = String(savedValue || '').trim();
+  // Saved server/SQLite value always wins. Draft is only for unsaved input.
+  if(saved) return saved;
   const drafts=ensureStandardSensorDrafts();
   const k=standardSensorDraftKey(roomId,key);
-  return Object.prototype.hasOwnProperty.call(drafts,k) ? drafts[k] : (savedValue || '');
+  return Object.prototype.hasOwnProperty.call(drafts,k) ? drafts[k] : '';
 }
 function suggestionForStandardSensor(roomId, key){
   const pack = state.standardSensorSuggestions?.[normalizedRoomId(roomId)]?.suggestions || {};
@@ -3956,12 +3959,19 @@ async function saveRoomStandardSensors(roomId){
   try{
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
-    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, standardSensors));
+    const verified = response?.verifiedRoomBinding && typeof response.verifiedRoomBinding==='object' ? response.verifiedRoomBinding : null;
+    if(JSON.stringify(verified||{}) !== JSON.stringify(standardSensors||{})){
+      throw new Error('Сервер не подтвердил сохранение датчиков в базе данных');
+    }
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, verified));
     clearLocalStandardSensorDrafts(rid);
     renderRoomsZonesManager(true);
     render();
-    showToast(Object.keys(standardSensors).length ? 'Стандартные датчики сохранены' : 'Все стандартные датчики комнаты очищены');
-  }catch(e){ showToast('Ошибка сохранения датчиков: '+e.message); }
+    showToast(Object.keys(verified).length ? 'Стандартные датчики сохранены и подтверждены БД' : 'Все стандартные датчики комнаты очищены');
+  }catch(e){
+    showToast('Ошибка сохранения датчиков: '+e.message);
+    console.error('[ALLHA-2D][standardSensors] save failed', e);
+  }
 }
 async function clearStandardSensorInput(roomId, key){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
