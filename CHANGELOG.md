@@ -1,3 +1,23 @@
+# Changelog
+
+## v4.1.19.2 — hotfix: stable standard sensor clear/save/suggestions
+
+- Исправлена очистка одного стандартного датчика: теперь очищается только выбранный sensor type в выбранной комнате.
+- Исправлена очистка всех стандартных датчиков комнаты: не сбрасывает summary других комнат.
+- После очистки input-поля реально очищаются, а предложения снова отображаются рядом с полем.
+- Добавлена frontend-защита от пустого/неполного ответа API: сохранённые датчики других комнат не затираются случайно.
+- Поля standardSensors больше не обёрнуты в `<label>` с вложенными кнопками, чтобы click по “Предложить / Принять / Очистить” не терялся.
+- Для кнопок standardSensors добавлены `preventDefault/stopPropagation` и явные `return` после обработки.
+- APK и mobile sources не менялись.
+
+
+## v4.1.19.2 — hotfix: standard sensor accept button
+
+- Исправлена кнопка **«Принять»** в UI предложений standardSensors.
+- Теперь нажатие заполняет соответствующее поле `entity_id`, обновляет строку «Текущий», сохраняет draft-state и показывает подсказку «Нажмите Сохранить датчики».
+- Добавлены `preventDefault/stopPropagation` для клика по кнопке внутри label, чтобы браузер не перехватывал событие и не фокусировал поле вместо обработки кнопки.
+- APK и mobile sources не менялись.
+
 # CHANGELOG
 
 ## v4.1.19 — Lovelace sections parser + viewer/dropdown/scroll/standardSensors stabilization

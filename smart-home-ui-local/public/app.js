@@ -3725,6 +3725,60 @@ function isEditingStandardSensorInputs(){
   return !!(active && active.closest && active.closest('#rooms-zones-manager') && active.matches('[data-standard-sensor-input]'));
 }
 function standardSensorsForSettings(roomId){ return state.roomsSettings?.rooms?.[normalizedRoomId(roomId)]?.standardSensors || {}; }
+
+function ensureRoomsSettingsRoom(roomId){
+  const rid=normalizedRoomId(roomId);
+  state.roomsSettings = state.roomsSettings && typeof state.roomsSettings==='object' ? state.roomsSettings : {version:1, rooms:{}};
+  state.roomsSettings.rooms = state.roomsSettings.rooms && typeof state.roomsSettings.rooms==='object' ? state.roomsSettings.rooms : {};
+  state.roomsSettings.rooms[rid] = state.roomsSettings.rooms[rid] && typeof state.roomsSettings.rooms[rid]==='object' ? state.roomsSettings.rooms[rid] : {};
+  state.roomsSettings.rooms[rid].standardSensors = state.roomsSettings.rooms[rid].standardSensors && typeof state.roomsSettings.rooms[rid].standardSensors==='object' ? state.roomsSettings.rooms[rid].standardSensors : {};
+  return state.roomsSettings.rooms[rid];
+}
+function setLocalStandardSensorValue(roomId, key, value){
+  const rid=normalizedRoomId(roomId);
+  const room=ensureRoomsSettingsRoom(rid);
+  const sensors={...(room.standardSensors||{})};
+  const v=String(value||'').trim();
+  if(v) sensors[key]=v; else delete sensors[key];
+  room.standardSensors=sensors;
+  const drafts=ensureStandardSensorDrafts();
+  drafts[standardSensorDraftKey(rid,key)] = v;
+}
+function setLocalStandardSensors(roomId, sensors){
+  const rid=normalizedRoomId(roomId);
+  const room=ensureRoomsSettingsRoom(rid);
+  const clean={};
+  STANDARD_SENSOR_DEFS.forEach(def=>{
+    const v=String(sensors?.[def.key]||'').trim();
+    if(v) clean[def.key]=v;
+    ensureStandardSensorDrafts()[standardSensorDraftKey(rid,def.key)] = v;
+  });
+  room.standardSensors=clean;
+}
+function clearLocalStandardSensorDrafts(roomId){
+  const rid=normalizedRoomId(roomId);
+  if(!state.standardSensorDrafts) return;
+  STANDARD_SENSOR_DEFS.forEach(def=>delete state.standardSensorDrafts[standardSensorDraftKey(rid,def.key)]);
+}
+function mergeRoomsSettingsPreserveStandardSensors(prev, next, overrideRoomId, overrideSensors){
+  const out = next && typeof next==='object' ? JSON.parse(JSON.stringify(next)) : {version:1, rooms:{}};
+  out.rooms = out.rooms && typeof out.rooms==='object' ? out.rooms : {};
+  const oldRooms = prev?.rooms && typeof prev.rooms==='object' ? prev.rooms : {};
+  for(const [rid, oldRoom] of Object.entries(oldRooms)){
+    const oldSensors = oldRoom?.standardSensors && typeof oldRoom.standardSensors==='object' ? oldRoom.standardSensors : {};
+    if(Object.keys(oldSensors).length && rid !== normalizedRoomId(overrideRoomId)){
+      out.rooms[rid] = out.rooms[rid] && typeof out.rooms[rid]==='object' ? out.rooms[rid] : {...oldRoom};
+      const nextSensors = out.rooms[rid].standardSensors && typeof out.rooms[rid].standardSensors==='object' ? out.rooms[rid].standardSensors : {};
+      out.rooms[rid].standardSensors = Object.keys(nextSensors).length ? nextSensors : {...oldSensors};
+    }
+  }
+  if(overrideRoomId){
+    const rid=normalizedRoomId(overrideRoomId);
+    out.rooms[rid] = out.rooms[rid] && typeof out.rooms[rid]==='object' ? out.rooms[rid] : {};
+    out.rooms[rid].standardSensors = {...(overrideSensors||{})};
+  }
+  return out;
+}
 function standardSensorInputValue(roomId, key, savedValue){
   const drafts=ensureStandardSensorDrafts();
   const k=standardSensorDraftKey(roomId,key);
@@ -3743,7 +3797,7 @@ function renderStandardSensorSuggestion(roomId, def, currentValue){
   const reason = s.reason ? `<small class="standard-sensor-reason">${esc(s.reason)}</small>` : '';
   return `<span class="standard-sensor-current">Текущий: <code>${esc(current)}</code></span>`+
     `<span class="standard-sensor-suggestion" title="${esc(s.name||s.entity_id)}">Предложено: <code>${esc(s.entity_id)}</code></span>${reason}`+
-    `<button type="button" class="small-secondary" data-accept-standard-sensor="${esc(def.key)}" ${same?'disabled':''}>Принять</button>`;
+    `<button type="button" class="small-secondary" data-room-id="${esc(roomId)}" data-accept-standard-sensor="${esc(def.key)}" ${same?'disabled':''}>Принять</button>`;
 }
 async function loadStandardSensorSuggestions(roomId){
   const rid=normalizedRoomId(roomId);
@@ -3766,6 +3820,7 @@ function acceptStandardSensorSuggestion(roomId, key){
   if(!input){ showToast('Поле датчика не найдено. Откройте комнату заново.'); return false; }
   input.value=s.entity_id;
   input.setAttribute('value', s.entity_id);
+  setLocalStandardSensorValue(rid, key, s.entity_id);
   rememberStandardSensorInput(input);
   input.dispatchEvent(new Event('input', {bubbles:true}));
   input.dispatchEvent(new Event('change', {bubbles:true}));
@@ -3796,7 +3851,7 @@ function renderRoomsZonesManager(){
     const active=STANDARD_SENSOR_DEFS.filter(def=>String(sensors[def.key]||'').trim()).map(def=>def.label).join(', ') || 'не заданы';
     const fields=STANDARD_SENSOR_DEFS.map(def=>{
       const value=standardSensorInputValue(rid, def.key, sensors[def.key]||'');
-      return `<label class="standard-sensor-field"><span>${esc(def.label)}</span><input type="text" value="${esc(value)}" placeholder="${esc(def.placeholder)}" data-standard-sensor-input="${esc(def.key)}"><button type="button" data-clear-standard-sensor="${esc(def.key)}">Очистить</button><span class="standard-sensor-suggest-wrap">${renderStandardSensorSuggestion(rid, def, value)}</span></label>`;
+      return `<div class="standard-sensor-field" data-standard-sensor-field="${esc(def.key)}"><span class="standard-sensor-label">${esc(def.label)}</span><input type="text" value="${esc(value)}" placeholder="${esc(def.placeholder)}" data-standard-sensor-input="${esc(def.key)}"><button type="button" data-room-id="${esc(rid)}" data-clear-standard-sensor="${esc(def.key)}">Очистить</button><span class="standard-sensor-suggest-wrap">${renderStandardSensorSuggestion(rid, def, value)}</span></div>`;
     }).join('');
     const open = state.openStandardSensorRooms instanceof Set && state.openStandardSensorRooms.has(rid);
     return `<div class="room-manager-card${admin?'':' room-manager-disabled'}" data-room-manager="${esc(rid)}">`+
@@ -3828,10 +3883,13 @@ function readStandardSensorInputs(roomId){
 }
 async function saveRoomStandardSensors(roomId){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
-  const standardSensors=readStandardSensorInputs(roomId);
+  const rid=normalizedRoomId(roomId);
+  const standardSensors=readStandardSensorInputs(rid);
   try{
-    state.roomsSettings = await apiJson(`api/rooms/${encodeURIComponent(roomId)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
-    if(state.standardSensorDrafts){ STANDARD_SENSOR_DEFS.forEach(def=>delete state.standardSensorDrafts[standardSensorDraftKey(roomId, def.key)]); }
+    const prev=state.roomsSettings;
+    const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
+    state.roomsSettings = mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, standardSensors);
+    clearLocalStandardSensorDrafts(rid);
     renderRoomsZonesManager();
     render();
     showToast(Object.keys(standardSensors).length ? 'Стандартные датчики сохранены' : 'Все стандартные датчики комнаты очищены');
@@ -3839,25 +3897,34 @@ async function saveRoomStandardSensors(roomId){
 }
 async function clearStandardSensorInput(roomId, key){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
+  const rid=normalizedRoomId(roomId);
   try{
-    state.roomsSettings = await apiJson(`api/rooms/${encodeURIComponent(roomId)}/standard-sensors/${encodeURIComponent(key)}/clear`, {method:'POST'});
-    if(state.standardSensorDrafts) delete state.standardSensorDrafts[standardSensorDraftKey(roomId, key)];
-    await loadStandardSensorSuggestions(roomId);
-    await loadRoomsSettings();
-    renderRoomsZonesManager();
+    const prev=state.roomsSettings;
+    const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/${encodeURIComponent(key)}/clear`, {method:'POST'});
+    const current={...standardSensorsForSettings(rid)};
+    delete current[key];
+    state.roomsSettings = mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, current);
+    setLocalStandardSensorValue(rid, key, '');
+    const card=[...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
+    const input=card?.querySelector(`[data-standard-sensor-input="${CSS.escape(key)}"]`);
+    if(input){ input.value=''; input.setAttribute('value',''); }
+    await loadStandardSensorSuggestions(rid);
     render();
     showToast('Датчик очищен. Предложение снова доступно.');
   }catch(e){ showToast('Ошибка очистки датчика: '+e.message); }
 }
 async function clearAllStandardSensors(roomId){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
+  const rid=normalizedRoomId(roomId);
   if(!confirm('Очистить все стандартные датчики этой комнаты? Комната, зона и устройства не удаляются.')) return;
   try{
-    state.roomsSettings = await apiJson(`api/rooms/${encodeURIComponent(roomId)}/standard-sensors/clear`, {method:'POST'});
-    if(state.standardSensorDrafts){ STANDARD_SENSOR_DEFS.forEach(def=>delete state.standardSensorDrafts[standardSensorDraftKey(roomId, def.key)]); }
-    await loadStandardSensorSuggestions(roomId);
-    await loadRoomsSettings();
-    renderRoomsZonesManager();
+    const prev=state.roomsSettings;
+    const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/clear`, {method:'POST'});
+    state.roomsSettings = mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, {});
+    STANDARD_SENSOR_DEFS.forEach(def=>setLocalStandardSensorValue(rid, def.key, ''));
+    const card=[...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
+    if(card) qsa('[data-standard-sensor-input]', card).forEach(input=>{ input.value=''; input.setAttribute('value',''); });
+    await loadStandardSensorSuggestions(rid);
     render();
     showToast('Все стандартные датчики комнаты очищены. Предложения снова доступны.');
   }catch(e){ showToast('Ошибка очистки датчиков: '+e.message); }
@@ -4876,6 +4943,9 @@ function bindGlobal(){
     const del=e.target.closest('[data-delete-backup]'); if(del){ deleteBackup(del.dataset.deleteBackup); return; }
   });
   const roomsManager=el('rooms-zones-manager');
+  if(roomsManager) roomsManager.addEventListener('pointerdown', e=>{
+    if(e.target.closest('[data-suggest-standard-sensors],[data-accept-standard-sensor],[data-clear-standard-sensor],[data-clear-all-standard-sensors],[data-save-standard-sensors]')) e.stopPropagation();
+  });
   if(roomsManager) roomsManager.addEventListener('click', e=>{
     const zoneBtn=e.target.closest('[data-room-zone-create]');
     const delZone=e.target.closest('[data-room-zone-delete]');
@@ -4889,10 +4959,10 @@ function bindGlobal(){
     if(zoneBtn){ if(startEditModeForLayoutTool()){ state.selectedRoom='overview'; closeSettingsModal(); render(); openZoneLayoutEditor(zoneBtn.dataset.roomZoneCreate); } }
     if(delZone){ deleteRoomZoneFromSettings(delZone.dataset.roomZoneDelete); }
     if(suggestSensors){ e.preventDefault(); e.stopPropagation(); loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); return; }
-    if(acceptSensor && roomId){ e.preventDefault(); e.stopPropagation(); acceptStandardSensorSuggestion(roomId, acceptSensor.dataset.acceptStandardSensor); return; }
-    if(saveSensors){ saveRoomStandardSensors(saveSensors.dataset.saveStandardSensors); }
-    if(clearAllSensors){ clearAllStandardSensors(clearAllSensors.dataset.clearAllStandardSensors); }
-    if(clearSensor && roomId){ clearStandardSensorInput(roomId, clearSensor.dataset.clearStandardSensor); }
+    if(acceptSensor){ e.preventDefault(); e.stopPropagation(); acceptStandardSensorSuggestion(acceptSensor.dataset.roomId || roomId, acceptSensor.dataset.acceptStandardSensor); return; }
+    if(saveSensors){ e.preventDefault(); e.stopPropagation(); saveRoomStandardSensors(saveSensors.dataset.saveStandardSensors); return; }
+    if(clearAllSensors){ e.preventDefault(); e.stopPropagation(); clearAllStandardSensors(clearAllSensors.dataset.clearAllStandardSensors); return; }
+    if(clearSensor){ e.preventDefault(); e.stopPropagation(); clearStandardSensorInput(clearSensor.dataset.roomId || roomId, clearSensor.dataset.clearStandardSensor); return; }
   });
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
   el('btn-save-config').onclick=()=>saveConfig(); const clearConfigBtn=el('btn-clear-config'); if(clearConfigBtn) clearConfigBtn.onclick=()=>clearConfig(); const cancelSettingsBtn=el('btn-cancel-settings'); if(cancelSettingsBtn) cancelSettingsBtn.onclick=()=>cancelSettingsChanges(); qsa('[data-settings-panel]').forEach(b=>b.onclick=()=>openSettingsPanel(b.dataset.settingsPanel)); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
