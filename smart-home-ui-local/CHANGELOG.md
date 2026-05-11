@@ -1,3 +1,12 @@
+## v4.1.19.3 — hotfix DB hydration, mobile settings, scroll
+
+- Исправлена гидрация `standardSensors` после перезапуска add-on и после rescan/import: bindings safety-merge из DB-primary и JSON mirror, затем DB repair.
+- `standardSensors` больше не должны визуально пропадать до первого повторного сохранения.
+- Усилена защита standardSensors при Lovelace rescan: сохранённые bindings переносятся в новый rooms cache.
+- Исправлена стабильность dropdown/select в настройках мобильного устройства на сервере: live poll не перерисовывает форму во время ввода/выбора.
+- Добавлен scroll guard для списка устройств: во время активной прокрутки state update обновляет только видимые состояния, не пересоздавая список.
+- APK/mobile sources не менялись; если scroll остаётся, значит нужна правка в мобильном исходнике v4.1.10 отдельным релизом.
+
 # Changelog
 
 ## v4.1.19.2 — hotfix: stable standard sensor clear/save/suggestions

@@ -144,6 +144,24 @@ function readJsonSafe(file, fallback){
     return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;
   }catch(e){return fallback;}
 }
+function readJsonFileOnly(file, fallback){
+  try{ return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : fallback; }
+  catch(e){ return fallback; }
+}
+function mergeStandardSensorsMaps(primary, secondary){
+  const out = isPlainObject(primary) ? JSON.parse(JSON.stringify(primary)) : {};
+  const src = isPlainObject(secondary) ? secondary : {};
+  out.rooms = isPlainObject(out.rooms) ? out.rooms : {};
+  const srcRooms = isPlainObject(src.rooms) ? src.rooms : {};
+  for(const [rid, room] of Object.entries(srcRooms)){
+    const oldSensors = normalizeStandardSensors(room?.standardSensors || {});
+    if(!Object.keys(oldSensors).length) continue;
+    out.rooms[rid] = isPlainObject(out.rooms[rid]) ? out.rooms[rid] : { ...(isPlainObject(room) ? room : {}) };
+    const currentSensors = normalizeStandardSensors(out.rooms[rid]?.standardSensors || {});
+    out.rooms[rid].standardSensors = { ...oldSensors, ...currentSensors };
+  }
+  return out;
+}
 
 /* ── Mobile access helpers ───────────────────────────── */
 const LOCAL_IP_RE = /^(127\.|::1$|::ffff:(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
@@ -1808,7 +1826,21 @@ function normalizeRoomsSettings(payload){
   }
   return { version: Number(src.version) || 1, rooms, updatedAt: src.updatedAt || null };
 }
-function loadRoomsSettings(roomsPath = ROOMS_SETTINGS_PATH){ return normalizeRoomsSettings(readJsonSafe(roomsPath, defaultRoomsSettings())); }
+function loadRoomsSettings(roomsPath = ROOMS_SETTINGS_PATH){
+  const fromDbOrFile = readJsonSafe(roomsPath, defaultRoomsSettings());
+  // v4.1.19.3: DB is primary, but standardSensors are safety-merged from the mirror file too.
+  // This recovers bindings after restart/rescan when an older import wrote an empty rooms doc to DB.
+  const mirror = readJsonFileOnly(roomsPath, null);
+  const merged = mergeStandardSensorsMaps(fromDbOrFile, mirror);
+  const normalized = normalizeRoomsSettings(merged);
+  // If DB was missing standardSensors while mirror had them, repair DB immediately.
+  try{
+    const dbJson = JSON.stringify(normalizeRoomsSettings(fromDbOrFile));
+    const mergedJson = JSON.stringify(normalized);
+    if(dbJson !== mergedJson) atomicWriteJson(roomsPath, normalized);
+  }catch(e){}
+  return normalized;
+}
 function saveRoomsSettings(payload, roomsPath = ROOMS_SETTINGS_PATH){
   const next = normalizeRoomsSettings({ ...(payload||{}), updatedAt: new Date().toISOString() });
   atomicWriteJson(roomsPath, next);
@@ -1839,7 +1871,7 @@ function clearAllRoomStandardSensors(roomId, roomsPath = ROOMS_SETTINGS_PATH){
   return saveRoomsSettings(current, roomsPath);
 }
 function mergeParsedRoomsIntoSettings(parsed, roomsPath = ROOMS_SETTINGS_PATH){
-  const currentRaw = readJsonSafe(roomsPath, defaultRoomsSettings());
+  const currentRaw = loadRoomsSettings(roomsPath);
   const oldRooms = isPlainObject(currentRaw.rooms) ? currentRaw.rooms : {};
   const parsedRooms = new Map();
   for(const d of parsed?.devices || []){
@@ -1850,7 +1882,13 @@ function mergeParsedRoomsIntoSettings(parsed, roomsPath = ROOMS_SETTINGS_PATH){
   }
   const nextRooms = {};
   for(const [id, meta] of parsedRooms.entries()){
-    const prev = oldRooms[id] || Object.values(oldRooms).find(r => String(r?.alias || '').trim() && String(r.alias).trim() === String(meta.label).trim()) || {};
+    const normLabel = String(meta.label || '').trim().toLowerCase();
+    const prev = oldRooms[id] || Object.values(oldRooms).find(r => {
+      const alias = String(r?.alias || '').trim().toLowerCase();
+      const label = String(r?.label || '').trim().toLowerCase();
+      const name = String(r?.name || '').trim().toLowerCase();
+      return !!normLabel && (alias === normLabel || label === normLabel || name === normLabel);
+    }) || {};
     nextRooms[id] = normalizeRoomSettingsRoom(id, {
       ...prev,
       alias: prev.alias || meta.label || id,

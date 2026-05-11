@@ -1772,6 +1772,7 @@ function renderEditDeviceGroups(list, filtered, q, current){
 }
 function renderDevices(){
   const list=el('device-list');
+  bindDeviceListScrollGuard();
   const q=(el('device-search').value||'').toLowerCase();
   const editGrouped = !!state.edit;
   const showAllInRoom = state.selectedRoom!=='overview' && state.edit && !!state.ui.showAllDevicesInRoom;
@@ -1790,8 +1791,11 @@ function renderDevices(){
   let countSuffix = `${filtered.length} из ${current.length}`;
   el('devices-title').textContent=state.selectedRoom==='overview'?'Все устройства':(showAllInRoom?`Все устройства · ${room(state.selectedRoom).label}`:`Устройства: ${room(state.selectedRoom).label}`);
   el('device-count').textContent=countSuffix;
+  const scrollTop=list.scrollTop;
   list.innerHTML=filtered.map(d=>deviceCardHtml(d, showAllInRoom)).join('');
   bindDeviceCards(list);
+  bindDeviceListScrollGuard();
+  if(Date.now() < Number(state.deviceListUserScrollUntil || 0)) requestAnimationFrame(()=>{ list.scrollTop=scrollTop; });
 }
 
 function openDevice(d){ if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} openDeviceModal(d); }
@@ -4303,14 +4307,42 @@ async function clearConfig(){
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
 function settingsInputActive(){ const a=document.activeElement; return !!(a && a.closest && a.closest('#settings-modal') && a.matches('input,select,textarea,button')); }
+function markDeviceListUserScroll(){ state.deviceListUserScrollUntil = Date.now() + 7000; }
+function bindDeviceListScrollGuard(){
+  const list=el('device-list');
+  if(!list || list.__allhaScrollGuard) return;
+  list.__allhaScrollGuard=true;
+  ['scroll','touchstart','touchmove','wheel','pointerdown'].forEach(ev=>list.addEventListener(ev, markDeviceListUserScroll, {passive:true}));
+}
+function deviceListScrollGuardActive(){
+  const list=el('device-list');
+  return !!(list && Date.now() < Number(state.deviceListUserScrollUntil || 0));
+}
+function updateVisibleDeviceStatesOnly(){
+  const list=el('device-list');
+  if(!list) return;
+  qsa('.device-card[data-entity]', list).forEach(card=>{
+    const d=devices().find(x=>x.entity_id===card.dataset.entity);
+    if(!d) return;
+    const outRoom = card.classList.contains('out-room');
+    card.className = `device-card ${visualClass(d)}${outRoom?' out-room':''}`;
+    card.setAttribute('style', visualStyle(d));
+    const btn=card.querySelector('[data-toggle]');
+    if(btn) btn.textContent=stateText(d);
+    const readonly=card.querySelector('.state.readonly');
+    if(readonly) readonly.textContent=stateText(d);
+  });
+}
 function renderPreservingDeviceScroll(){
   const list=el('device-list');
   const scrollTop=list ? list.scrollTop : 0;
   const openGroup=state.openDeviceRoomGroup;
   render();
-  if(list){ const next=el('device-list'); if(next){ next.scrollTop=scrollTop; state.openDeviceRoomGroup=openGroup; } }
+  state.openDeviceRoomGroup=openGroup;
+  const next=el('device-list');
+  if(next) requestAnimationFrame(()=>{ next.scrollTop=scrollTop; setTimeout(()=>{ next.scrollTop=scrollTop; }, 0); });
 }
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused && !settingsInputActive()) renderPreservingDeviceScroll();const sseOpen=state._sseSource&&state._sseSource.readyState===1;if(_mobileAuth.active) _mobileHideOffline();if(state.edit)setConnection(true,'Редактор · live paused');else if(sseOpen)setConnection(true,'Live ●','live');else setConnection(true,'Поллинг ↺','polling')}catch(e){setConnection(false,'Нет связи ✗');console.error(e);if(_mobileAuth.active){_mobileOfflineCount++;if(_mobileOfflineCount>=2)_mobileShowOffline();}}}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused && !settingsInputActive()){ if(deviceListScrollGuardActive()) updateVisibleDeviceStatesOnly(); else renderPreservingDeviceScroll(); }const sseOpen=state._sseSource&&state._sseSource.readyState===1;if(_mobileAuth.active) _mobileHideOffline();if(state.edit)setConnection(true,'Редактор · live paused');else if(sseOpen)setConnection(true,'Live ●','live');else setConnection(true,'Поллинг ↺','polling')}catch(e){setConnection(false,'Нет связи ✗');console.error(e);if(_mobileAuth.active){_mobileOfflineCount++;if(_mobileOfflineCount>=2)_mobileShowOffline();}}}
 function startPolling(){
   if(state.pollTimer)clearInterval(state.pollTimer);
   if(state.edit || state.livePaused) return;
@@ -4591,6 +4623,13 @@ function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncM
 
 /* ── Mobile access UI ─────────────────────────────────────────────── */
 let _mobileCodeTimer = null;
+let _mobileDevicesLoading = false;
+function isEditingMobileDeviceSettings(){
+  const active=document.activeElement;
+  return !!(active && active.closest && active.closest('#mobile-devices-list') && active.matches('input,select,textarea,button'));
+}
+function mobileDevicesDraftActive(){ return isEditingMobileDeviceSettings() || Date.now() < Number(state.mobileDeviceSettingsDraftUntil || 0); }
+function markMobileDeviceSettingsDraft(){ state.mobileDeviceSettingsDraftUntil = Date.now() + 12000; }
 
 function mobileCodeTick(){
   const disp = el('mobile-code-display');
@@ -4605,8 +4644,7 @@ function mobileCodeTick(){
       timer.textContent = '';
       if(_mobileCodeTimer){ clearInterval(_mobileCodeTimer); _mobileCodeTimer = null; }
     }
-    const active = document.activeElement;
-    if(!active || !active.classList?.contains('mobile-device-name')) loadMobileDevices();
+    if(!mobileDevicesDraftActive()) loadMobileDevices();
   }).catch(()=>{});
 }
 
@@ -4636,9 +4674,12 @@ async function loadMobileSettings(){
   }catch(e){ console.error('loadMobileSettings', e); }
 }
 
-async function loadMobileDevices(){
+async function loadMobileDevices(force=false){
   const list = el('mobile-devices-list');
   if(!list) return;
+  if(!force && mobileDevicesDraftActive()) return;
+  if(_mobileDevicesLoading) return;
+  _mobileDevicesLoading = true;
   try{
     const data = await apiJson('api/mobile/devices');
     let profiles=[];
@@ -4699,6 +4740,7 @@ async function loadMobileDevices(){
       </div>`;
     }).join('');
   }catch(e){ list.innerHTML = `<p class="muted">Ошибка: ${esc(e.message)}</p>`; }
+  finally{ _mobileDevicesLoading = false; }
 }
 
 function bindMobileSettings(){
@@ -4744,11 +4786,14 @@ function bindMobileSettings(){
   const revokeAll = el('btn-mobile-revoke-all');
   if(revokeAll) revokeAll.onclick = async()=>{
     if(!confirm('Отозвать токены всех устройств? Им придётся пройти паринг заново.')) return;
-    try{ await apiJson('api/mobile/devices',{method:'DELETE'}); await loadMobileDevices(); showToast('Все токены отозваны'); }
+    try{ await apiJson('api/mobile/devices',{method:'DELETE'}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); showToast('Все токены отозваны'); }
     catch(e){ showToast('Ошибка: '+e.message); }
   };
 
   const devList = el('mobile-devices-list');
+  if(devList){
+    ['focusin','input','change','pointerdown','click'].forEach(ev=>devList.addEventListener(ev, markMobileDeviceSettingsDraft, true));
+  }
   if(devList) devList.addEventListener('click', async e=>{
     const saveDeviceBtn = e.target.closest('.btn-mobile-save-device');
     const renameBtn = e.target.closest('.btn-mobile-rename');
@@ -4773,7 +4818,7 @@ function bindMobileSettings(){
           autoStart: !!row?.querySelector('.mobile-device-autostart')?.checked
         }
       };
-      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'PATCH',body:JSON.stringify(payload)}); await loadMobileDevices(); showToast('Настройки устройства сохранены'); }
+      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'PATCH',body:JSON.stringify(payload)}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); showToast('Настройки устройства сохранены'); }
       catch(e){ showToast('Ошибка: '+e.message); }
     }
     if(renameBtn){
@@ -4786,7 +4831,7 @@ function bindMobileSettings(){
     if(revokeBtn){
       const did = revokeBtn.dataset.did;
       if(!confirm('Отозвать токен этого устройства?')) return;
-      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'DELETE'}); await loadMobileDevices(); showToast('Токен отозван'); }
+      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'DELETE'}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); showToast('Токен отозван'); }
       catch(e){ showToast('Ошибка: '+e.message); }
     }
   });
