@@ -536,7 +536,7 @@ function applyUiPrefs(){
   updateEditButtons();
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
-function normalizedRoomId(id){return id==='boiler'?'laundry':id}
+function normalizedRoomId(id){return String(id||'').trim()}
 function roomDevices(id){const rid=normalizedRoomId(id);return devices().filter(d=>normalizedRoomId(d.room)===rid || (rid==='overview' && d.room!=='media'))}
 function getState(id){return state.states[id] || null}
 function lightKind(d){
@@ -3698,7 +3698,7 @@ async function loadImagesInfo(){
 
 async function loadRoomsSettings(){
   try{
-    state.roomsSettings = await apiJson('api/rooms');
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson('api/rooms'));
     refreshRuntimeRooms();
     renderRooms();
     renderRoomsZonesManager();
@@ -3713,13 +3713,22 @@ async function loadRoomsSettings(){
 }
 
 function standardSensorDraftKey(roomId, key){ return `${normalizedRoomId(roomId)}::${key}`; }
-function ensureStandardSensorDrafts(){ if(!state.standardSensorDrafts || typeof state.standardSensorDrafts!=='object') state.standardSensorDrafts={}; return state.standardSensorDrafts; }
+function persistStandardSensorDrafts(){
+  try{ localStorage.setItem('allha_standard_sensor_drafts', JSON.stringify(state.standardSensorDrafts||{})); }catch(e){}
+}
+function ensureStandardSensorDrafts(){
+  if(!state.standardSensorDrafts || typeof state.standardSensorDrafts!=='object'){
+    try{ state.standardSensorDrafts = JSON.parse(localStorage.getItem('allha_standard_sensor_drafts')||'{}') || {}; }catch(e){ state.standardSensorDrafts={}; }
+  }
+  return state.standardSensorDrafts;
+}
 function rememberStandardSensorInput(input){
   const card=input?.closest?.('[data-room-manager]');
   const key=input?.dataset?.standardSensorInput;
   const roomId=card?.dataset?.roomManager;
   if(!roomId || !key) return;
   ensureStandardSensorDrafts()[standardSensorDraftKey(roomId,key)] = input.value;
+  persistStandardSensorDrafts();
 }
 function rememberAllStandardSensorInputs(){
   qsa('#rooms-zones-manager [data-standard-sensor-input]').forEach(rememberStandardSensorInput);
@@ -3728,6 +3737,25 @@ function isEditingStandardSensorInputs(){
   const active=document.activeElement;
   return !!(active && active.closest && active.closest('#rooms-zones-manager') && active.matches('[data-standard-sensor-input]'));
 }
+
+function hydrateRoomsSettingsFromStandardSensorBindings(settings){
+  const out = settings && typeof settings==='object' ? settings : {version:1, rooms:{}};
+  out.rooms = out.rooms && typeof out.rooms==='object' ? out.rooms : {};
+  const bindings = out.standardSensorBindings && typeof out.standardSensorBindings==='object' ? out.standardSensorBindings : {};
+  for(const [ridRaw, sensorsRaw] of Object.entries(bindings)){
+    const rid = normalizedRoomId(ridRaw);
+    const clean = {};
+    STANDARD_SENSOR_DEFS.forEach(def=>{
+      const v = String(sensorsRaw?.[def.key] || '').trim();
+      if(v) clean[def.key]=v;
+    });
+    if(!Object.keys(clean).length) continue;
+    out.rooms[rid] = out.rooms[rid] && typeof out.rooms[rid]==='object' ? out.rooms[rid] : {};
+    out.rooms[rid].standardSensors = { ...(out.rooms[rid].standardSensors||{}), ...clean };
+  }
+  return out;
+}
+
 function standardSensorsForSettings(roomId){ return state.roomsSettings?.rooms?.[normalizedRoomId(roomId)]?.standardSensors || {}; }
 
 function ensureRoomsSettingsRoom(roomId){
@@ -3747,6 +3775,7 @@ function setLocalStandardSensorValue(roomId, key, value){
   room.standardSensors=sensors;
   const drafts=ensureStandardSensorDrafts();
   drafts[standardSensorDraftKey(rid,key)] = v;
+  persistStandardSensorDrafts();
 }
 function setLocalStandardSensors(roomId, sensors){
   const rid=normalizedRoomId(roomId);
@@ -3763,6 +3792,7 @@ function clearLocalStandardSensorDrafts(roomId){
   const rid=normalizedRoomId(roomId);
   if(!state.standardSensorDrafts) return;
   STANDARD_SENSOR_DEFS.forEach(def=>delete state.standardSensorDrafts[standardSensorDraftKey(rid,def.key)]);
+  persistStandardSensorDrafts();
 }
 function mergeRoomsSettingsPreserveStandardSensors(prev, next, overrideRoomId, overrideSensors){
   const out = next && typeof next==='object' ? JSON.parse(JSON.stringify(next)) : {version:1, rooms:{}};
@@ -3926,7 +3956,7 @@ async function saveRoomStandardSensors(roomId){
   try{
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
-    state.roomsSettings = mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, standardSensors);
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, standardSensors));
     clearLocalStandardSensorDrafts(rid);
     renderRoomsZonesManager(true);
     render();
@@ -3941,7 +3971,7 @@ async function clearStandardSensorInput(roomId, key){
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/${encodeURIComponent(key)}/clear`, {method:'POST'});
     const current={...standardSensorsForSettings(rid)};
     delete current[key];
-    state.roomsSettings = mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, current);
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, current));
     setLocalStandardSensorValue(rid, key, '');
     const card=[...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
     const input=card?.querySelector(`[data-standard-sensor-input="${CSS.escape(key)}"]`);
@@ -3958,7 +3988,7 @@ async function clearAllStandardSensors(roomId){
   try{
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/clear`, {method:'POST'});
-    state.roomsSettings = mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, {});
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, {}));
     STANDARD_SENSOR_DEFS.forEach(def=>setLocalStandardSensorValue(rid, def.key, ''));
     const card=[...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
     if(card) qsa('[data-standard-sensor-input]', card).forEach(input=>{ input.value=''; input.setAttribute('value',''); });

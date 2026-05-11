@@ -139,8 +139,67 @@ function bumpRuntimeAudit(kind, key){
     if(runtimeAudit[kind] !== undefined && typeof runtimeAudit[kind] === 'number') runtimeAudit[kind] += 1;
     const bucket = kind === 'jsonFallbackReads' ? 'jsonFallbackKeys' : (kind === 'fileFallbackReads' ? 'fileFallbackKeys' : null);
     if(bucket && key) runtimeAudit[bucket][key] = (runtimeAudit[bucket][key] || 0) + 1;
+    if(kind==='jsonFallbackReads' || kind==='fileFallbackReads') logDebug('storage', `${kind}: ${key||''}`);
   }catch(e){}
 }
+
+const LOG_LEVELS = { error: 0, info: 1, debug: 2 };
+function currentLogLevel(){
+  try{
+    const cfg = readJsonSafe(ADDON_CONFIG_PATH, {}) || {};
+    return String(process.env.ALLHA_LOG_LEVEL || cfg.logLevel || 'info').toLowerCase();
+  }catch(e){ return String(process.env.ALLHA_LOG_LEVEL || 'info').toLowerCase(); }
+}
+function shouldLog(level){
+  const cur = LOG_LEVELS[currentLogLevel()] ?? LOG_LEVELS.info;
+  const val = LOG_LEVELS[level] ?? LOG_LEVELS.info;
+  return val <= cur;
+}
+function redactForLog(value){
+  if(value === undefined) return undefined;
+  try{
+    const seen = new WeakSet();
+    return JSON.parse(JSON.stringify(value, (k,v)=>{
+      const key = String(k||'').toLowerCase();
+      if(key.includes('token') || key.includes('password') || key.includes('secret') || key.includes('pin') || key.includes('authorization')) return '[redacted]';
+      if(v && typeof v === 'object'){
+        if(seen.has(v)) return '[circular]';
+        seen.add(v);
+      }
+      return v;
+    }));
+  }catch(e){ return value; }
+}
+const LOG_BUFFER_LIMIT = 300;
+const logBuffer = [];
+function allhaLog(level, scope, message, details){
+  if(!shouldLog(level)) return;
+  const row = { ts:new Date().toISOString(), level, scope:String(scope||'app'), message:String(message||''), details:redactForLog(details) };
+  logBuffer.push(row);
+  while(logBuffer.length > LOG_BUFFER_LIMIT) logBuffer.shift();
+  const line = `[ALLHA-2D][${row.level}][${row.scope}] ${row.message}` + (row.details !== undefined ? ` ${JSON.stringify(row.details)}` : '');
+  try{ (level === 'error' ? console.error : console.log)(line); }catch(e){}
+  try{
+    if(process.env.ALLHA_LOG_FILE === '1'){
+      const dir = path.join(DATA_DIR, 'logs');
+      fs.mkdirSync(dir, {recursive:true});
+      const file = path.join(dir, 'allha2d.log');
+      fs.appendFileSync(file, line + '\n', 'utf8');
+      try{
+        const st = fs.statSync(file);
+        if(st.size > 1024*1024){
+          const old = path.join(dir, 'allha2d.log.1');
+          try{ if(fs.existsSync(old)) fs.rmSync(old, {force:true}); }catch(e){}
+          fs.renameSync(file, old);
+        }
+      }catch(e){}
+    }
+  }catch(e){}
+}
+function logError(scope, message, details){ allhaLog('error', scope, message, details); }
+function logInfo(scope, message, details){ allhaLog('info', scope, message, details); }
+function logDebug(scope, message, details){ allhaLog('debug', scope, message, details); }
+
 function projectDocKeyForFile(file){
   try{
     const resolved = path.resolve(file);
@@ -288,12 +347,41 @@ function applyDbStandardSensorBindings(settings, roomsPath = ROOMS_SETTINGS_PATH
     const bindings = allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {};
     for(const [rid, sensors] of Object.entries(bindings)){
       if(!next.rooms[rid]) continue;
-      const clean = normalizeStandardSensors(sensors || {});
+      const clean = normalizeStandardSensors(sensors || {}, {strict:true});
       if(Object.keys(clean).length) next.rooms[rid].standardSensors = clean;
     }
   }catch(e){ console.warn('[standardSensors] DB overlay failed:', e.message); }
   return next;
 }
+
+function standardSensorBindingsForRoomsPath(roomsPath = ROOMS_SETTINGS_PATH){
+  try{
+    if(!allhaDb.hasDb || !allhaDb.hasDb()) return {};
+    const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+    return allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {};
+  }catch(e){ console.warn('[standardSensors] DB bindings read failed:', e.message); return {}; }
+}
+function overlayExplicitStandardSensorBindings(settings, bindings){
+  const next = normalizeRoomsSettings(settings || defaultRoomsSettings(), {filterUnknownRooms:false});
+  const src = isPlainObject(bindings) ? bindings : {};
+  for(const [rid, sensors] of Object.entries(src)){
+    const clean = normalizeStandardSensors(sensors || {});
+    if(!Object.keys(clean).length) continue;
+    if(!next.rooms[rid]) next.rooms[rid] = { alias:friendlyRoomLabel(rid), source:'standard-sensor-bindings' };
+    const current = normalizeStandardSensors(next.rooms[rid]?.standardSensors || {});
+    next.rooms[rid].standardSensors = { ...current, ...clean };
+  }
+  return next;
+}
+function roomsApiPayloadForRequest(req){
+  const lp = clientLevelPaths(req);
+  logDebug('rooms', 'api rooms payload requested', {roomsPath:lp.rooms, devicesPath:lp.devicesJs});
+  const settings = loadRoomsSettings(lp.rooms);
+  const bindings = standardSensorBindingsForRoomsPath(lp.rooms);
+  const hydrated = overlayExplicitStandardSensorBindings(settings, bindings);
+  return { ok:true, ...hydrated, standardSensorBindings:bindings, knownRooms: roomSourcesForApi({ roomsPath: lp.rooms, devicesPath: lp.devicesJs }) };
+}
+
 const _standardSensorLegacySeedAttempts = new Set();
 function seedDbStandardSensorsIfEmpty(settings, roomsPath = ROOMS_SETTINGS_PATH){
   try{
@@ -2048,18 +2136,22 @@ const STANDARD_SENSOR_KEYS = ['temperature','humidity','motion','noise','co2','i
 
 function defaultRoomsSettings(){ return { version: 1, rooms: {}, updatedAt: null }; }
 
-function normalizeEntityId(value){
+function normalizeEntityId(value, options={}){
   const v = String(value || '').trim();
   if(!v) return '';
-  if(!/^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$/.test(v)) throw new Error(`Некорректный entity_id: ${v}`);
+  if(!/^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$/.test(v)){
+    if(options.strict) throw new Error(`Некорректный entity_id: ${v}`);
+    logInfo('standardSensors', 'invalid entity_id ignored while loading', { entity_id:v });
+    return '';
+  }
   return v;
 }
 
-function normalizeStandardSensors(src){
+function normalizeStandardSensors(src, options={}){
   const out = {};
   if(!isPlainObject(src)) return out;
   for(const key of STANDARD_SENSOR_KEYS){
-    const v = normalizeEntityId(src[key]);
+    const v = normalizeEntityId(src[key], { strict: options.strict === true });
     if(v) out[key] = v;
   }
   return out;
@@ -2104,6 +2196,7 @@ function saveRoomsSettings(payload, roomsPath = ROOMS_SETTINGS_PATH){
 }
 function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId, roomsPath);
+  logInfo('standardSensors', 'save requested', {roomId:id, roomsPath, keys:Object.keys(sensors||{})});
   const current = loadRoomsSettings(roomsPath);
   const clean = normalizeStandardSensors(sensors || {});
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: clean };
@@ -2116,6 +2209,7 @@ function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PAT
 }
 function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId, roomsPath);
+  logInfo('standardSensors', 'clear one requested', {roomId:id, sensorType, roomsPath});
   const key = String(sensorType || '').trim();
   if(!STANDARD_SENSOR_KEYS.includes(key)) throw new Error(`Неизвестный тип стандартного датчика: ${key}`);
   const current = loadRoomsSettings(roomsPath);
@@ -2133,6 +2227,7 @@ function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_
 }
 function clearAllRoomStandardSensors(roomId, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId, roomsPath);
+  logInfo('standardSensors', 'clear all requested', {roomId:id, roomsPath});
   const current = loadRoomsSettings(roomsPath);
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: {} };
   try{
@@ -2237,6 +2332,7 @@ function standardSensorSuggestionsForRoom(roomId, options={}){
   const roomsPath = options.roomsPath || ROOMS_SETTINGS_PATH;
   const devicesPath = options.devicesPath || (roomsPath === ROOMS_SETTINGS_PATH ? DEVICES_PATH : path.join(path.dirname(roomsPath), 'devices.js'));
   const rid = assertKnownRoomId(roomId, roomsPath);
+  logInfo('standardSensors', 'suggest requested', {roomId:rid, roomsPath, devicesPath});
   const devices = parseJsAssignedArray(devicesPath, 'ALL_DEVICES');
   const allStates = statesCache instanceof Map ? [...statesCache.values()] : [];
   const byId = new Map();
@@ -3010,11 +3106,11 @@ app.get('/api/mobile/debug', (req, res) => {
   });
 });
 app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
-app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi({ roomsPath: lp.rooms, devicesPath: lp.devicesJs }) }); }catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/rooms', (req,res)=>{ try{ res.json(roomsApiPayloadForRequest(req)); }catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }) }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });
-app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearAllRoomStandardSensors(req.params.room_id, lp.rooms); res.json({ ok:true, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions || {}; res.json({ ok:true, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json(roomsApiPayloadForRequest(req)); }catch(e){res.status(400).json({error:e.message});} });
+app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearAllRoomStandardSensors(req.params.room_id, lp.rooms); const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions || {}; const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){res.status(500).json({error:e.message});} });
@@ -3316,18 +3412,42 @@ function runtimeStorageDiagnostics(){
   return { ...db, mode:'sqlite-primary-json-mirror', documents, files, audit:{...runtimeAudit}, roomsDebug };
 }
 app.get('/api/database/info', (req, res) => {
-  try { res.json({ ok:true, database: runtimeStorageDiagnostics() }); }
+  try { res.json({ ok:true, database: runtimeStorageDiagnostics(), logLevel: currentLogLevel(), recentErrors: logBuffer.filter(x=>x.level==='error').slice(-20) }); }
   catch(e){ res.status(500).json({ error:e.message }); }
 });
 
+
+app.get('/api/diagnostics/logs', (req,res)=>{
+  try{
+    const level = currentLogLevel();
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit||200)));
+    res.json({ ok:true, level, logs: logBuffer.slice(-limit) });
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+app.post('/api/diagnostics/log-level', (req,res)=>{
+  try{
+    const level = String(req.body?.level || '').toLowerCase();
+    if(!['error','info','debug'].includes(level)) return res.status(400).json({ok:false,error:'log level must be error, info or debug'});
+    const cfg = readJsonSafe(ADDON_CONFIG_PATH, {}) || {};
+    cfg.logLevel = level;
+    atomicWriteJson(ADDON_CONFIG_PATH, cfg);
+    logInfo('diagnostics', 'log level changed', {level});
+    res.json({ok:true, level});
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+});
+
+
 app.get('/api/rooms/debug', (req,res)=>{
   try{
-    const rawRooms = readJsonSafe(ROOMS_SETTINGS_PATH, {rooms:{}});
+    const lp=clientLevelPaths(req);
+    const rawRooms = readJsonSafe(lp.rooms, {rooms:{}});
     const normalizedRooms = normalizeRoomsSettings(rawRooms, {filterUnknownRooms:false});
-    const knownRoomIds = listKnownRoomIds({roomsPath:ROOMS_SETTINGS_PATH, devicesPath:DEVICES_PATH});
-    const {profileId, levelId} = profileLevelFromRoomsPath(ROOMS_SETTINGS_PATH);
-    const bindings = allhaDb.hasDb && allhaDb.hasDb() ? (allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {}) : {};
-    res.json({ ok:true, profileId, levelId, roomsPath:ROOMS_SETTINGS_PATH, devicesPath:DEVICES_PATH, devicesSource:runtimeFileSource(DEVICES_PATH), lovelaceRawSource:runtimeDocumentSource(activeLevelPaths().lovelaceRaw), rawRoomsCount:Object.keys(rawRooms?.rooms||{}).length, normalizedRoomsCount:Object.keys(normalizedRooms.rooms||{}).length, knownRoomIds, standardSensorBindings:bindings, audit:{...runtimeAudit} });
+    const hydratedRooms = loadRoomsSettings(lp.rooms);
+    const knownRoomIds = listKnownRoomIds({roomsPath:lp.rooms, devicesPath:lp.devicesJs});
+    const {profileId, levelId} = profileLevelFromRoomsPath(lp.rooms);
+    const bindings = standardSensorBindingsForRoomsPath(lp.rooms);
+    res.json({ ok:true, profileId, levelId, roomsPath:lp.rooms, devicesPath:lp.devicesJs, devicesSource:runtimeFileSource(lp.devicesJs), lovelaceRawSource:runtimeDocumentSource(lp.lovelaceRaw), rawRoomsCount:Object.keys(rawRooms?.rooms||{}).length, normalizedRoomsCount:Object.keys(normalizedRooms.rooms||{}).length, hydratedRoomsCount:Object.keys(hydratedRooms.rooms||{}).length, knownRoomIds, standardSensorBindings:bindings, hydratedStandardSensors:Object.fromEntries(Object.entries(hydratedRooms.rooms||{}).map(([rid,room])=>[rid, normalizeStandardSensors(room?.standardSensors||{})]).filter(([,s])=>Object.keys(s).length)), audit:{...runtimeAudit} });
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 
