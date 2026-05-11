@@ -1,4 +1,4 @@
-# ALLHA-2D v4.1.15
+# ALLHA-2D v4.1.18
 
 Этот релиз использует рабочую логику мобильного подключения из приложенных пользователем файлов Sonnet. Серверная часть совместима с мобильным доступом v4.1.5+: `/api/health`, `/api/mobile/debug`, `/api/mobile/pair`.
 
@@ -900,7 +900,7 @@ https://example.domain
 - Порт 32457 по-прежнему не отдаёт полный web UI без токена.
 
 
-## v4.1.15 — mobile pairing polish
+## v4.1.17 — mobile pairing polish
 
 - После сопряжения список мобильных устройств обновляется автоматически, без перезагрузки браузера.
 - Добавлена кнопка «Скопировать код» для pairing-кода.
@@ -909,8 +909,64 @@ https://example.domain
 - При сопряжении приложение передаёт сведения устройства: модель/platform/user-agent/screen, если Android/WebView позволяет их получить.
 
 
-## v4.1.15 notes
+## v4.1.17 notes
 
 - Mobile device management now stores per-device access settings: viewer/control/admin, profile access, server mode and app options.
 - Live updates remain the primary mechanism; polling is treated as fallback if live/SSE/WebSocket is unavailable.
 - Mobile APK hides Home Assistant back buttons in standalone runtime.
+
+
+## Storage in v4.1.17: SQLite foundation
+
+ALLHA-2D now creates a database at:
+
+```text
+/data/allha2d.db
+```
+
+The first SQLite-backed scope includes:
+
+- mobile devices and hashed mobile tokens;
+- mobile device settings and server backup copies;
+- web clients and web client settings;
+- mobile web sessions;
+- access/events foundation;
+- command log table;
+- attention event table;
+- backup index table;
+- server baseline settings foundation.
+
+Existing JSON files such as `/data/mobile-devices.json` and `/data/client-prefs/*.json` are migrated on startup when possible. Before migration they are copied to:
+
+```text
+/data/migration-backups/
+```
+
+Profiles, levels, maps, rooms, zones, layout and Lovelace sources intentionally remain file-based for now. The goal of this release is to stabilize device/client identity and settings first, then move viewer fixes, standard sensor recovery and per-device layout overrides onto a cleaner database foundation.
+
+Database diagnostics:
+
+```text
+/api/database/info
+/api/health
+```
+
+## v4.1.17 — SQLite document store and standard sensor suggestions
+
+This release extends the SQLite foundation. Runtime JSON documents are stored in `/data/allha2d.db` in addition to compatibility file mirrors. Existing JSON files are imported into the database on first read. The goal is to make future per-device/per-client settings, aliases, recovery and copying between panels safer.
+
+Standard room sensors now have suggestions. In `Настройки → Комнаты / зоны / датчики`, press `Предложить` or `Предложить все`; ALLHA-2D searches sensors in the same room context and suggests entities for temperature, humidity, motion, illuminance, noise and CO2. Suggestions never overwrite manual values automatically; use `Принять` and then `Сохранить датчики`.
+
+
+
+## v4.1.18: локальные web-клиенты через 8099
+
+Локальный браузерный доступ через `http://IP_HOME_ASSISTANT:8099/` теперь регистрируется как отдельный web-клиент. Для настенных панелей рекомендуется создать/использовать постоянную ссылку клиента:
+
+```text
+http://IP_HOME_ASSISTANT:8099/client/<slug>
+```
+
+Эта ссылка не является admin-токеном и не выдаёт права доступа. Она нужна для восстановления индивидуальных UI-настроек конкретной панели: масштаб, видимость маркеров/датчиков, kiosk-настройки, последний профиль/уровень и будущие layout overrides. Порт `8099` предназначен только для локальной сети; не пробрасывайте его напрямую в интернет.
+
+SQLite `/data/allha2d.db` теперь является основным источником runtime-документов. JSON/JS-файлы в `/data` сохраняются как mirror для диагностики, export/debug и безопасного отката. Проверка состояния: `/api/database/info`.

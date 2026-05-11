@@ -17,7 +17,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), standardSensorSuggestions:{}, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
 };
 
 const STATIC_ROOMS = window.PLAN_CONFIG.rooms || [];
@@ -105,6 +105,7 @@ async function saveGlobalPrefs(){
 
 async function loadClientPrefs(){
   try{
+    if(!_mobileAuth.active) await registerLocalWebClient();
     if(_mobileAuth.active){
       try{
         const sess = await apiJson('api/mobile/session');
@@ -2954,18 +2955,45 @@ const _mobileAuth = (()=>{
 })();
 
 /* ── Per-client ID (stable per browser/device, used for /api/prefs) ── */
-const _clientId = (() => {
+function currentWebClientSlug(){
+  const m = location.pathname.match(/\/client\/([a-zA-Z0-9_-]+)/);
+  if(m) return m[1];
+  try{ return localStorage.getItem('allha_web_client_slug') || ''; }catch{ return ''; }
+}
+let _clientId = (() => {
   if(_mobileAuth.active) return _mobileAuth.deviceId; // мобилка — device_id уже есть
   try{
-    let id = localStorage.getItem('_client_id');
+    let id = localStorage.getItem('allha_web_client_id') || localStorage.getItem('_client_id');
     if(!id){
-      id = crypto.randomUUID ? crypto.randomUUID()
-         : (Math.random().toString(36).slice(2) + Date.now().toString(36));
+      id = (crypto.randomUUID ? crypto.randomUUID() : (Math.random().toString(36).slice(2) + Date.now().toString(36))).replace(/[^a-zA-Z0-9_-]/g,'');
+      id = 'web_' + id.slice(0, 24);
+      localStorage.setItem('allha_web_client_id', id);
       localStorage.setItem('_client_id', id);
     }
     return id;
   }catch{ return ''; }
 })();
+async function registerLocalWebClient(){
+  if(_mobileAuth.active) return null;
+  try{
+    const slug = currentWebClientSlug();
+    const screenInfo = `${window.screen?.width || innerWidth}x${window.screen?.height || innerHeight}@${window.devicePixelRatio || 1}`;
+    const res = await apiJson('api/web-clients/touch', { method:'POST', body:JSON.stringify({ slug, clientId:_clientId, alias: localStorage.getItem('allha_web_client_alias') || '', screen:screenInfo }) });
+    const c = res.client || {};
+    if(c.clientId){
+      _clientId = c.clientId;
+      localStorage.setItem('allha_web_client_id', c.clientId);
+      localStorage.setItem('_client_id', c.clientId);
+    }
+    if(c.slug){
+      localStorage.setItem('allha_web_client_slug', c.slug);
+      if(location.pathname.startsWith('/client/')) localStorage.setItem('allha_web_client_url', c.url || location.href);
+    }
+    if(c.alias) localStorage.setItem('allha_web_client_alias', c.alias);
+    state.webClient = c;
+    return c;
+  }catch(e){ console.warn('[web-client] registration failed', e); return null; }
+}
 
 /* ── Mobile offline overlay (только когда _mobileAuth.active) ──────── */
 let _mobileOfflineCount = 0;
@@ -3701,6 +3729,34 @@ function standardSensorInputValue(roomId, key, savedValue){
   const k=standardSensorDraftKey(roomId,key);
   return Object.prototype.hasOwnProperty.call(drafts,k) ? drafts[k] : (savedValue || '');
 }
+function suggestionForStandardSensor(roomId, key){
+  const pack = state.standardSensorSuggestions?.[normalizedRoomId(roomId)]?.suggestions || {};
+  const list = Array.isArray(pack[key]) ? pack[key] : [];
+  return list[0] || null;
+}
+function renderStandardSensorSuggestion(roomId, def, currentValue){
+  const s = suggestionForStandardSensor(roomId, def.key);
+  if(!s){ return `<button type="button" class="small-secondary" data-suggest-standard-sensors="${esc(roomId)}">Предложить</button>`; }
+  const same = String(currentValue||'').trim() === String(s.entity_id||'').trim();
+  return `<span class="standard-sensor-suggestion" title="${esc(s.name||s.entity_id)}">Предложено: <code>${esc(s.entity_id)}</code></span>`+
+    `<button type="button" class="small-secondary" data-accept-standard-sensor="${esc(def.key)}" ${same?'disabled':''}>Принять</button>`;
+}
+async function loadStandardSensorSuggestions(roomId){
+  const rid=normalizedRoomId(roomId);
+  try{
+    const data = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensor-suggestions`);
+    state.standardSensorSuggestions = state.standardSensorSuggestions || {};
+    state.standardSensorSuggestions[rid] = data;
+    renderRoomsZonesManager();
+    showToast('Предложения датчиков обновлены');
+  }catch(e){ showToast('Не удалось подобрать датчики: '+e.message); }
+}
+function acceptStandardSensorSuggestion(roomId, key){
+  const card=document.querySelector(`[data-room-manager="${CSS.escape(roomId)}"]`);
+  const s=suggestionForStandardSensor(roomId, key);
+  const input=card?.querySelector(`[data-standard-sensor-input="${CSS.escape(key)}"]`);
+  if(input && s?.entity_id){ input.value=s.entity_id; rememberStandardSensorInput(input); }
+}
 
 function renderRoomsZonesManager(){
   const box=el('rooms-zones-manager');
@@ -3718,12 +3774,15 @@ function renderRoomsZonesManager(){
     const hasZone=!!state.layout?.zones?.[rid];
     const sensors=standardSensorsForSettings(rid);
     const active=STANDARD_SENSOR_DEFS.filter(def=>String(sensors[def.key]||'').trim()).map(def=>def.label).join(', ') || 'не заданы';
-    const fields=STANDARD_SENSOR_DEFS.map(def=>`<label class="standard-sensor-field"><span>${esc(def.label)}</span><input type="text" value="${esc(standardSensorInputValue(rid, def.key, sensors[def.key]||''))}" placeholder="${esc(def.placeholder)}" data-standard-sensor-input="${esc(def.key)}"><button type="button" data-clear-standard-sensor="${esc(def.key)}">Очистить</button></label>`).join('');
+    const fields=STANDARD_SENSOR_DEFS.map(def=>{
+      const value=standardSensorInputValue(rid, def.key, sensors[def.key]||'');
+      return `<label class="standard-sensor-field"><span>${esc(def.label)}</span><input type="text" value="${esc(value)}" placeholder="${esc(def.placeholder)}" data-standard-sensor-input="${esc(def.key)}"><button type="button" data-clear-standard-sensor="${esc(def.key)}">Очистить</button><span class="standard-sensor-suggest-wrap">${renderStandardSensorSuggestion(rid, def, value)}</span></label>`;
+    }).join('');
     const open = state.openStandardSensorRooms instanceof Set && state.openStandardSensorRooms.has(rid);
     return `<div class="room-manager-card${admin?'':' room-manager-disabled'}" data-room-manager="${esc(rid)}">`+
       `<div class="room-manager-head"><div><strong>${esc(r.label||rid)}</strong><br><span class="muted">room_id: ${esc(rid)} · зона: ${hasZone?'есть':'нет'} · датчики: ${esc(active)}</span></div>`+
       `<div class="room-manager-actions"><button type="button" data-room-zone-create="${esc(rid)}">${hasZone?'Редактировать зону':'Назначить / пересоздать зону'}</button>${hasZone?`<button type="button" data-room-zone-delete="${esc(rid)}" class="danger-button small-danger">Удалить зону</button>`:''}</div></div>`+
-      `<details class="standard-sensors-details" data-standard-details="${esc(rid)}" ${open?'open':''}><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную.</p><button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button></details>`+
+      `<details class="standard-sensors-details" data-standard-details="${esc(rid)}" ${open?'open':''}><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную или принять предложенный датчик.</p><button type="button" data-suggest-standard-sensors="${esc(rid)}">Предложить все</button> <button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button></details>`+
       `</div>`;
   }).join('');
   qsa('button,input', box).forEach(ctrl=>ctrl.disabled=!admin);
@@ -4774,10 +4833,14 @@ function bindGlobal(){
     const delZone=e.target.closest('[data-room-zone-delete]');
     const saveSensors=e.target.closest('[data-save-standard-sensors]');
     const clearSensor=e.target.closest('[data-clear-standard-sensor]');
+    const suggestSensors=e.target.closest('[data-suggest-standard-sensors]');
+    const acceptSensor=e.target.closest('[data-accept-standard-sensor]');
     const card=e.target.closest('[data-room-manager]');
     const roomId=card?.dataset.roomManager;
     if(zoneBtn){ if(startEditModeForLayoutTool()){ state.selectedRoom='overview'; closeSettingsModal(); render(); openZoneLayoutEditor(zoneBtn.dataset.roomZoneCreate); } }
     if(delZone){ deleteRoomZoneFromSettings(delZone.dataset.roomZoneDelete); }
+    if(suggestSensors){ loadStandardSensorSuggestions(suggestSensors.dataset.suggestStandardSensors || roomId); }
+    if(acceptSensor && roomId){ acceptStandardSensorSuggestion(roomId, acceptSensor.dataset.acceptStandardSensor); }
     if(saveSensors){ saveRoomStandardSensors(saveSensors.dataset.saveStandardSensors); }
     if(clearSensor && roomId){ clearStandardSensorInput(roomId, clearSensor.dataset.clearStandardSensor); }
   });

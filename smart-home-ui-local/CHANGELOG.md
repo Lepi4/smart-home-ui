@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## v4.1.18 — DB-primary read priority + local web clients
+
+- SQLite теперь используется как основной источник чтения runtime JSON-документов проекта; JSON/JS-файлы остаются mirror/export/debug-слоем для диагностики и отката.
+- `/api/database/info` расширен: показывает `mode: sqlite-primary-json-mirror`, наличие документов в DB, наличие mirror-файлов, используемый источник и размер mirror.
+- Runtime JS-файлы `devices.js` и `lovelace-source.js` отдаются через DB-first слой `project_files`; при отсутствии записи выполняется fallback на файл.
+- Добавлены локальные web-клиенты для LAN-доступа через host-port `8099`: `web_clients`, `web_client_settings`, `clientId`, alias, описание, lastSeen и индивидуальные настройки.
+- Добавлены постоянные локальные ссылки web-клиентов вида `http://IP_HOME_ASSISTANT:8099/client/<slug>`. Такая ссылка восстанавливает настройки клиента даже после очистки cookies/localStorage.
+- Добавлены API: `GET/POST /api/web-clients`, `POST /api/web-clients/touch`, `PATCH /api/web-clients/:id`, `POST /api/web-clients/:id/regenerate-link`, `DELETE /api/web-clients/:id`.
+- Frontend автоматически регистрирует локальный web-клиент, хранит `allha_web_client_id` и `allha_web_client_slug` в localStorage и использует их для `/api/prefs`.
+- APK и mobile sources не менялись. Порт мобильного приложения остаётся `32457`.
+
+
+## v4.1.17 — full SQLite document store + standard sensor suggestions
+
+- Extended SQLite storage from mobile/web clients to project JSON documents via `project_documents` and runtime JS/text via `project_files`.
+- JSON runtime files are now mirrored into `/data/allha2d.db`: profiles, levels, layout, rooms, source config, UI state, image metadata, security/config, attention rules and diagnostics documents.
+- Existing JSON files are imported into SQLite on first read; file mirrors are still written for compatibility and safe rollback.
+- Added `/api/rooms/:room_id/standard-sensor-suggestions` to suggest standard room sensors from Lovelace/HA entities.
+- Standard sensor UI now shows “Предложено” candidates and buttons to accept suggested entities without overwriting manually configured sensors automatically.
+- Suggestions match room context and keywords/device_class: temperature, humidity, motion/presence/occupancy, illuminance/lux, sound_level/noise, co2/carbon_dioxide.
+- APK and mobile sources were not changed in this release.
+
+
+## v4.1.17 — SQLite foundation / database storage
+
+- Added `/data/allha2d.db` SQLite database foundation.
+- Mobile devices, mobile device settings, web clients, web client settings, sessions, command log, attention events and backup index now have database tables.
+- Legacy `/data/mobile-devices.json` and `/data/client-prefs/*.json` are migrated into SQLite on startup when possible.
+- Legacy files are copied into `/data/migration-backups/` before migration.
+- Mobile device tokens are stored as SHA-256 hashes in SQLite instead of plain text.
+- Mobile web sessions are stored in SQLite.
+- Added `/api/database/info` and database status in `/api/health` / mobile debug.
+- Added server-side foundation for Device Alias / Recovery ID, per-device settings backup and future copy-settings workflows.
+- Docker image now installs the SQLite CLI package.
+
+Note: v4.1.17 is an architecture/storage release. Viewer mode, mobile dropdown stability, standard sensor recovery and APK device-list scroll remain in the next implementation block.
+
+
 ## v4.1.15
 
 - Исправлена критическая ошибка инициализации UI: добавлена отсутствующая `updateMobileLockedSettingsUI()`, из-за которой `applyUiPrefs()` мог падать и интерфейс переставал реагировать.

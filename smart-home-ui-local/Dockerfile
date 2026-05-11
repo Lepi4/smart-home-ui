@@ -11,6 +11,8 @@ RUN npm install --omit=dev --ignore-optional \
 # Stage 2: final image for the target arch
 FROM node:20-alpine
 
+RUN apk add --no-cache sqlite
+
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080

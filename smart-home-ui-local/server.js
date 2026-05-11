@@ -5,6 +5,7 @@ const { Readable } = require('stream');
 const crypto = require('crypto');
 const { HA_API_BASE, HA_WS_URL, HA_TOKEN, haFetch, haWsCommand, statesCache, sseClients, broadcastSseEvent, startHaWsSubscription } = require('./src/ha');
 const mobileAuth = require('./src/mobile-auth');
+const allhaDb = require('./src/db');
 let sharp = null;
 try { sharp = require('sharp'); } catch (e) { sharp = null; }
 
@@ -116,7 +117,33 @@ const ALLOWED_SERVICES = Object.fromEntries([...Object.entries(SAFE_SERVICES), .
 const COMMAND_LOG_PATH = path.join(DATA_DIR, 'command_log.json');
 const DASHBOARD_PROXY_STATE_PATH = path.join(DATA_DIR, 'dashboard_proxy.json');
 const DIRECT_DASHBOARD_PORT = Number(process.env.DIRECT_DASHBOARD_PORT || process.env.ALLHA_DIRECT_PORT || 8099);
-function readJsonSafe(file, fallback){ try{return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;}catch(e){return fallback;} }
+function projectDocKeyForFile(file){
+  try{
+    const resolved = path.resolve(file);
+    const dataRoot = path.resolve(DATA_DIR);
+    if(!resolved.startsWith(dataRoot)) return null;
+    const rel = path.relative(dataRoot, resolved).replace(/\\/g,'/');
+    if(!rel || rel.startsWith('..')) return null;
+    if(!/\.json$/i.test(rel)) return null;
+    return rel;
+  }catch(e){ return null; }
+}
+function readJsonSafe(file, fallback){
+  try{
+    const key = projectDocKeyForFile(file);
+    if(key && allhaDb.hasDb && allhaDb.hasDb()){
+      const fromDb = allhaDb.getProjectDocument(key, undefined);
+      if(fromDb !== undefined) return fromDb;
+      if(fs.existsSync(file)){
+        const parsed = JSON.parse(fs.readFileSync(file,'utf8'));
+        allhaDb.setProjectDocument(key, parsed, 'json');
+        return parsed;
+      }
+      return fallback;
+    }
+    return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;
+  }catch(e){return fallback;}
+}
 
 /* ── Mobile access helpers ───────────────────────────── */
 const LOCAL_IP_RE = /^(127\.|::1$|::ffff:(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
@@ -635,8 +662,8 @@ function profilesDiagnostics(){
 
 function safeJsonFileCount(file, kind){
   try{
-    if(!fs.existsSync(file)) return 0;
-    const data = JSON.parse(fs.readFileSync(file,'utf8'));
+    const data = readJsonSafe(file, null);
+    if(data === null || data === undefined) return 0;
     if(Array.isArray(data)) return data.length;
     if(kind === 'rooms') return Object.keys(data.rooms || {}).length;
     if(kind === 'zones') return Object.keys(data.zones || {}).length;
@@ -729,7 +756,7 @@ function createLevel(payload={}){
   if(!fs.existsSync(lp.sourceConfig)) atomicWriteJson(lp.sourceConfig, defaultSourceConfig());
   if(!fs.existsSync(lp.uiState)) atomicWriteJson(lp.uiState, defaultUiState());
   if(!fs.existsSync(lp.devicesJs)) writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
-  if(!fs.existsSync(lp.lovelaceJs)) fs.writeFileSync(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  if(!fs.existsSync(lp.lovelaceJs)) writeTextRuntimeFile(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
   const now = new Date().toISOString();
   meta.levels.push({id, name, createdAt:now, updatedAt:now});
   saveLevelsMeta(pid, meta);
@@ -832,7 +859,7 @@ function createProfile(payload={}){
   atomicWriteJson(pp.uiState, defaultUiState());
   atomicWriteJson(pp.imagesMeta, defaultImagesMeta());
   if(!fs.existsSync(pp.devicesJs)) writeJsAssignedArray(pp.devicesJs, 'ALL_DEVICES', []);
-  if(!fs.existsSync(pp.lovelaceJs)) fs.writeFileSync(pp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  if(!fs.existsSync(pp.lovelaceJs)) writeTextRuntimeFile(pp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
   meta.profiles.push({id, name, createdAt:now, updatedAt:now});
   saveProfilesMeta(meta);
   return profilesDiagnostics();
@@ -1032,13 +1059,18 @@ function ensureDataStore(){
   fs.mkdirSync(DATA_IMAGES_ORIGINALS_ROOMS_DIR, {recursive:true});
   if(!fs.existsSync(IMAGES_META_PATH)) atomicWriteJson(IMAGES_META_PATH, defaultImagesMeta());
   if(!fs.existsSync(DEVICES_PATH)) writeJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES', []);
-  if(!fs.existsSync(LOVELACE_PATH)) fs.writeFileSync(LOVELACE_PATH, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  if(!fs.existsSync(LOVELACE_PATH)) writeTextRuntimeFile(LOVELACE_PATH, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
   if(!fs.existsSync(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
   if(!fs.existsSync(SECURITY_RULES_PATH)) saveSecurityRules(securityRulesDefault());
   if(!fs.existsSync(ROOMS_SETTINGS_PATH)) saveRoomsSettings(defaultRoomsSettings());
 }
 
 function atomicWriteJson(file, payload){
+  const key = projectDocKeyForFile(file);
+  if(key && allhaDb.hasDb && allhaDb.hasDb()){
+    try{ allhaDb.setProjectDocument(key, payload, 'json'); }catch(e){ console.warn('[ALLHA-2D] DB JSON write failed:', key, e.message); }
+  }
+  // Mirror to files for image/media compatibility, manual inspection, and safe rollback.
   fs.mkdirSync(path.dirname(file), {recursive:true});
   const tmp = file + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8');
@@ -1093,8 +1125,8 @@ function saveUiState(payload, uiPath = UI_STATE_PATH){
 }
 function parseJsAssignedArray(file, name){
   try{
-    if(!fs.existsSync(file)) return [];
-    const txt=fs.readFileSync(file,'utf8');
+    const txt=readTextRuntimeFile(file, '');
+    if(!txt) return [];
     const re=new RegExp('window\\.'+name+'\\s*=\\s*([\\s\\S]*?);\\s*(?:\\n|$)');
     const m=txt.match(re); if(!m) return [];
     return JSON.parse(m[1]);
@@ -1333,9 +1365,7 @@ function backupLayoutWithPrefix(prefix){
 function writeLayoutWithoutBackup(layout){
   fs.mkdirSync(DATA_DIR,{recursive:true});
   const normalized = normalizeLayoutPayload(layout || {version:8}, {strict:false});
-  const tmpPath = LAYOUT_PATH + '.tmp';
-  fs.writeFileSync(tmpPath, JSON.stringify(normalized.layout, null, 2), 'utf8');
-  fs.renameSync(tmpPath, LAYOUT_PATH);
+  atomicWriteJson(LAYOUT_PATH, normalized.layout);
   return normalized.layout;
 }
 function clearLayoutMarkers(){
@@ -1376,9 +1406,41 @@ function removePathSafe(target){
   if(!target || !target.startsWith(DATA_DIR)) return;
   try{ if(fs.existsSync(target)) fs.rmSync(target, {recursive:true, force:true}); }catch(e){ console.warn('[ALLHA-2D] factory reset remove failed:', target, e.message); }
 }
-function writeJsAssignedArray(file, name, arr){
+function projectFileKeyForFile(file){
+  try{
+    const resolved = path.resolve(file);
+    const dataRoot = path.resolve(DATA_DIR);
+    if(!resolved.startsWith(dataRoot)) return null;
+    const rel = path.relative(dataRoot, resolved).replace(/\\/g,'/');
+    if(!rel || rel.startsWith('..')) return null;
+    if(!/\.(js|txt|md)$/i.test(rel)) return null;
+    return rel;
+  }catch(e){ return null; }
+}
+function writeTextRuntimeFile(file, text, type='text'){
+  const key = projectFileKeyForFile(file);
+  if(key && allhaDb.hasDb && allhaDb.hasDb()){
+    try{ allhaDb.setProjectFile(key, text, type); }catch(e){ console.warn('[ALLHA-2D] DB text write failed:', key, e.message); }
+  }
   fs.mkdirSync(path.dirname(file), {recursive:true});
-  fs.writeFileSync(file, `window.${name} = ${JSON.stringify(arr||[], null, 2)};\n`, 'utf8');
+  fs.writeFileSync(file, String(text ?? ''), 'utf8');
+}
+function readTextRuntimeFile(file, fallback=''){
+  const key = projectFileKeyForFile(file);
+  if(key && allhaDb.hasDb && allhaDb.hasDb()){
+    const fromDb = allhaDb.getProjectFile(key, null);
+    if(fromDb !== null && fromDb !== undefined) return fromDb;
+    if(fs.existsSync(file)){
+      const txt=fs.readFileSync(file,'utf8');
+      allhaDb.setProjectFile(key, txt, path.extname(file).slice(1) || 'text');
+      return txt;
+    }
+    return fallback;
+  }
+  return fs.existsSync(file) ? fs.readFileSync(file,'utf8') : fallback;
+}
+function writeJsAssignedArray(file, name, arr){
+  writeTextRuntimeFile(file, `window.${name} = ${JSON.stringify(arr||[], null, 2)};\n`, 'js');
 }
 function emptyLayout(){
   return { version:8, coordinateSpace:'room-content-box', overviewRoomSync:false, roomCoordinateMigrated:{}, overviewMarkers:{}, roomMarkers:{}, overviewMetrics:{}, roomMetrics:{}, zones:{}, customNames:{} };
@@ -1391,7 +1453,7 @@ function writeEmptyRuntimeBundle(lp){
   atomicWriteJson(lp.imagesMeta, defaultImagesMeta());
   writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
   atomicWriteJson(lp.devicesJson, []);
-  fs.writeFileSync(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  writeTextRuntimeFile(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
   atomicWriteJson(lp.lovelaceRaw, { version:1, views:[] });
 }
 function factoryResetProject(confirmWord){
@@ -1459,7 +1521,7 @@ function factoryResetProject(confirmWord){
   atomicWriteJson(path.join(DATA_DIR,'layout.json'), emptyLayout());
   writeJsAssignedArray(path.join(DATA_DIR,'devices.js'), 'ALL_DEVICES', []);
   atomicWriteJson(path.join(DATA_DIR,'devices.json'), []);
-  fs.writeFileSync(path.join(DATA_DIR,'lovelace-source.js'), 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'utf8');
+  writeTextRuntimeFile(path.join(DATA_DIR,'lovelace-source.js'), 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
   atomicWriteJson(path.join(DATA_DIR,'lovelace_raw.json'), { version:1, views:[] });
 
   ensureDataStore();
@@ -1758,6 +1820,62 @@ function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PAT
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: normalizeStandardSensors(sensors || {}) };
   return saveRoomsSettings(current, roomsPath);
 }
+function entityDomain(entityId){ return String(entityId||'').split('.')[0] || ''; }
+function textForSuggestion(device, stateObj){
+  const parts = [
+    device?.entity_id, device?.name, device?.friendly_name, device?.label, device?.room, device?.roomLabel,
+    stateObj?.attributes?.friendly_name, stateObj?.attributes?.device_class, stateObj?.attributes?.unit_of_measurement,
+    stateObj?.attributes?.state_class
+  ];
+  return parts.map(x=>String(x||'').toLowerCase()).join(' ');
+}
+function scoreStandardSensorSuggestion(key, entityId, device, stateObj, roomId){
+  const domain = entityDomain(entityId);
+  const txt = textForSuggestion(device, stateObj);
+  let score = 0;
+  if(String(device?.room || '').trim() === roomId) score += 50;
+  if(String(device?.area || '').trim() === roomId) score += 25;
+  if(domain === 'sensor') score += 8;
+  if(domain === 'binary_sensor') score += key === 'motion' ? 12 : -20;
+  const dc = String(stateObj?.attributes?.device_class || device?.device_class || '').toLowerCase();
+  const unit = String(stateObj?.attributes?.unit_of_measurement || '').toLowerCase();
+  const has = (...words)=>words.some(w=>txt.includes(w));
+  if(key === 'temperature') { if(dc === 'temperature') score += 80; if(has('temperature','temp','температур')) score += 45; if(unit.includes('°') || unit.includes('c')) score += 10; }
+  if(key === 'humidity') { if(dc === 'humidity') score += 80; if(has('humidity','влажн')) score += 45; if(unit === '%' || unit.includes('%')) score += 10; }
+  if(key === 'motion') { if(['motion','presence','occupancy'].includes(dc)) score += 80; if(has('motion','presence','occupancy','движ','присутств')) score += 45; }
+  if(key === 'illuminance') { if(['illuminance'].includes(dc)) score += 80; if(has('illuminance','lux','light_level','освещ','свет')) score += 45; if(unit.includes('lx') || unit.includes('lux')) score += 10; }
+  if(key === 'noise') { if(['sound_pressure','sound_level'].includes(dc)) score += 80; if(has('sound_level','noise','sound','шум')) score += 45; if(unit.includes('db')) score += 10; }
+  if(key === 'co2') { if(['carbon_dioxide','co2'].includes(dc)) score += 90; if(has('co2','carbon_dioxide','carbon dioxide','углекисл')) score += 60; if(unit.includes('ppm')) score += 10; }
+  return score;
+}
+function standardSensorSuggestionsForRoom(roomId){
+  const rid = assertKnownRoomId(roomId);
+  const devices = parseJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES');
+  const allStates = statesCache instanceof Map ? [...statesCache.values()] : [];
+  const byId = new Map();
+  for(const d of devices){ if(d?.entity_id) byId.set(d.entity_id, d); }
+  for(const st of allStates){ if(st?.entity_id && !byId.has(st.entity_id)) byId.set(st.entity_id, { entity_id:st.entity_id, name:st.attributes?.friendly_name || st.entity_id, domain:entityDomain(st.entity_id), room:'' }); }
+  const candidates = [...byId.values()].filter(d=>{
+    const eid=String(d?.entity_id||'');
+    const domain=entityDomain(eid);
+    if(!['sensor','binary_sensor'].includes(domain)) return false;
+    const sameRoom = String(d?.room||'') === rid || String(d?.area||'') === rid || String(d?.room_id||'') === rid;
+    const stateObj = statesCache?.get?.(eid);
+    const txt = textForSuggestion(d, stateObj);
+    return sameRoom || txt.includes(rid.toLowerCase()) || txt.includes(friendlyRoomLabel(rid).toLowerCase());
+  });
+  const out = {};
+  for(const key of STANDARD_SENSOR_KEYS){
+    const scored = candidates.map(d=>{
+      const eid=String(d.entity_id||'');
+      const st=statesCache?.get?.(eid);
+      const score=scoreStandardSensorSuggestion(key, eid, d, st, rid);
+      return { entity_id:eid, name:d.name || d.friendly_name || st?.attributes?.friendly_name || eid, domain:entityDomain(eid), score, device_class:st?.attributes?.device_class || d.device_class || '', unit:st?.attributes?.unit_of_measurement || '' };
+    }).filter(x=>x.score>25).sort((a,b)=>b.score-a.score || a.entity_id.localeCompare(b.entity_id)).slice(0,5);
+    out[key]=scored;
+  }
+  return { roomId:rid, suggestions:out, totalCandidates:candidates.length };
+}
 function roomSourcesForApi(){
   const settings = loadRoomsSettings();
   const labelByRoom = {};
@@ -1836,7 +1954,7 @@ async function buildDiagnostics(req=null){
     generatedAt: new Date().toISOString()
   };
 }
-function loadLayout(layoutPath = LAYOUT_PATH){ if(!fs.existsSync(layoutPath)) return {version:1, markers:{}}; try{return JSON.parse(fs.readFileSync(layoutPath,'utf8'));}catch(e){return {version:1, markers:{}};} }
+function loadLayout(layoutPath = LAYOUT_PATH){ return readJsonSafe(layoutPath, {version:1, markers:{}}); }
 function timestampForFile(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function backupLayout(){
   if(!fs.existsSync(LAYOUT_PATH)) return null;
@@ -1855,9 +1973,7 @@ function saveLayout(layout, layoutPath = LAYOUT_PATH){
     backupPath = path.join(LAYOUT_BACKUP_DIR, `layout-${timestampForFile()}.json`);
     fs.copyFileSync(layoutPath, backupPath);
   }
-  const tmpPath = layoutPath + '.tmp';
-  fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
-  fs.renameSync(tmpPath, layoutPath);
+  atomicWriteJson(layoutPath, payload);
   pruneLayoutBackups(20);
   return backupPath;
 }
@@ -1876,19 +1992,14 @@ function defaultSourceConfig(){
   };
 }
 function loadSourceConfig(srcPath = SOURCE_CONFIG_PATH){
-  if(!fs.existsSync(srcPath)) return defaultSourceConfig();
-  try { return { ...defaultSourceConfig(), ...JSON.parse(fs.readFileSync(srcPath,'utf8')) }; }
-  catch(e){ return defaultSourceConfig(); }
+  return { ...defaultSourceConfig(), ...readJsonSafe(srcPath, {}) };
 }
 function saveSourceConfig(cfg, srcPath = SOURCE_CONFIG_PATH){
-  fs.mkdirSync(path.dirname(srcPath),{recursive:true});
-  fs.writeFileSync(srcPath, JSON.stringify({ ...defaultSourceConfig(), ...(cfg || {}) }, null, 2), 'utf8');
+  atomicWriteJson(srcPath, { ...defaultSourceConfig(), ...(cfg || {}) });
 }
 function loadSourceConfigForLevel(profileId, levelId){
   const lp = ensureLevelDirs(profileId || ACTIVE_PROFILE_ID, levelId || ACTIVE_LEVEL_ID);
-  if(!fs.existsSync(lp.sourceConfig)) return defaultSourceConfig();
-  try { return { ...defaultSourceConfig(), ...JSON.parse(fs.readFileSync(lp.sourceConfig,'utf8')) }; }
-  catch(e){ return defaultSourceConfig(); }
+  return { ...defaultSourceConfig(), ...readJsonSafe(lp.sourceConfig, {}) };
 }
 function saveSourceConfigForLevel(profileId, levelId, cfg){
   const lp = ensureLevelDirs(profileId || ACTIVE_PROFILE_ID, levelId || ACTIVE_LEVEL_ID);
@@ -1902,7 +2013,7 @@ function saveSourceConfigForLevel(profileId, levelId, cfg){
     dashboardPaths,
     dashboardPathText: dashboardPaths.join('\n')
   };
-  fs.writeFileSync(lp.sourceConfig, JSON.stringify(normalized, null, 2), 'utf8');
+  atomicWriteJson(lp.sourceConfig, normalized);
   if(sanitizeProfileId(profileId || ACTIVE_PROFILE_ID) === ACTIVE_PROFILE_ID && sanitizeLevelId(levelId || ACTIVE_LEVEL_ID) === ACTIVE_LEVEL_ID){
     SOURCE_CONFIG_PATH = lp.sourceConfig;
   }
@@ -1974,8 +2085,8 @@ app.get('/devices.js', (req,res)=>{
   res.set('Pragma','no-cache');
   res.set('Expires','0');
   res.type('application/javascript');
-  if(fs.existsSync(generated)) return res.sendFile(generated);
-  return res.send('window.ALL_DEVICES = [];\nwindow.DEVICES = [];\n');
+  const txt = readTextRuntimeFile(generated, 'window.ALL_DEVICES = [];\nwindow.DEVICES = [];\n');
+  return res.send(txt);
 });
 app.get('/lovelace-source.js', (req,res)=>{
   const generated = LOVELACE_PATH;
@@ -1983,9 +2094,17 @@ app.get('/lovelace-source.js', (req,res)=>{
   res.set('Pragma','no-cache');
   res.set('Expires','0');
   res.type('application/javascript');
-  if(fs.existsSync(generated)) return res.sendFile(generated);
-  return res.send('window.LOVELACE_SOURCE = {"version":1,"views":[]};\n');
+  const txt = readTextRuntimeFile(generated, 'window.LOVELACE_SOURCE = {"version":1,"views":[]};\n');
+  return res.send(txt);
 });
+app.get('/client/:slug', (req,res)=>{
+  try{
+    const client = allhaDb.getWebClientBySlug ? allhaDb.getWebClientBySlug(req.params.slug) : null;
+    if(client) res.setHeader('Set-Cookie', `allha_web_client_slug=${encodeURIComponent(client.slug)}; Path=/; SameSite=Lax; Max-Age=31536000`);
+  }catch(e){}
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 
@@ -2101,8 +2220,8 @@ function loadAddonConfig(){
   const defaults = defaultAddonConfig();
   try {
     const optionsPath = path.join(DATA_DIR, 'options.json');
-    const options = fs.existsSync(optionsPath) ? JSON.parse(fs.readFileSync(optionsPath, 'utf8')) : {};
-    const local = fs.existsSync(ADDON_CONFIG_PATH) ? JSON.parse(fs.readFileSync(ADDON_CONFIG_PATH, 'utf8')) : {};
+    const options = readJsonSafe(optionsPath, {});
+    const local = readJsonSafe(ADDON_CONFIG_PATH, {});
     const merged = { ...defaults, ...options, ...local };
     return {
       ...merged,
@@ -2131,7 +2250,7 @@ function saveAddonConfig(cfg){
       pairingPassword: String(cfg.mobileAccess.pairingPassword ?? current.mobileAccess?.pairingPassword ?? '').trim()
     } : (current.mobileAccess || { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '' })
   };
-  fs.writeFileSync(ADDON_CONFIG_PATH, JSON.stringify(next, null, 2), 'utf8');
+  atomicWriteJson(ADDON_CONFIG_PATH, next);
   return next;
 }
 function normalizeDashboardPathEntry(value){
@@ -2231,7 +2350,7 @@ async function readLovelaceRawFromHa(paths){
     }
   }
   fs.mkdirSync(DATA_DIR,{recursive:true});
-  fs.writeFileSync(activeLevelPaths().lovelaceRaw, JSON.stringify({ generatedAt:new Date().toISOString(), requested, results }, null, 2), 'utf8');
+  atomicWriteJson(activeLevelPaths().lovelaceRaw, { generatedAt:new Date().toISOString(), requested, results });
   return { requested, results };
 }
 
@@ -2242,10 +2361,10 @@ function writeDeviceOutputs(parsed){
   fs.mkdirSync(DATA_DIR,{recursive:true});
   const devicesJs = 'window.ALL_DEVICES = '+JSON.stringify(parsed.devices, null, 2)+';\nwindow.DEVICES = window.ALL_DEVICES;\n';
   const lovelaceJs = 'window.LOVELACE_SOURCE = '+JSON.stringify(parsed.source, null, 2)+';\n';
-  fs.writeFileSync(activeLevelPaths().devicesJson, JSON.stringify(parsed.devices, null, 2), 'utf8');
-  fs.writeFileSync(DEVICES_PATH, devicesJs, 'utf8');
-  fs.writeFileSync(LOVELACE_PATH, lovelaceJs, 'utf8');
-  fs.writeFileSync(activeLevelPaths().deviceParseReportJson, JSON.stringify(parsed.stats, null, 2), 'utf8');
+  atomicWriteJson(activeLevelPaths().devicesJson, parsed.devices);
+  writeTextRuntimeFile(DEVICES_PATH, devicesJs, 'js');
+  writeTextRuntimeFile(LOVELACE_PATH, lovelaceJs, 'js');
+  atomicWriteJson(activeLevelPaths().deviceParseReportJson, parsed.stats);
   const md = [
     '# Device parse report v3.4.13',
     '',
@@ -2278,7 +2397,7 @@ async function importLovelaceRaw(paths){
 async function importStoredLovelaceRaw(){
   const file = activeLevelPaths().lovelaceRaw;
   if(!fs.existsSync(file)) throw new Error('data/lovelace_raw.json не найден. Сначала перечитайте RAW панели из HA.');
-  const rawBundle = JSON.parse(fs.readFileSync(file,'utf8'));
+  const rawBundle = readJsonSafe(file, {version:1, views:[]});
   const registry = await loadHaEntityAreaMap();
   const parsed = parseLovelaceRawBundle(rawBundle, registry);
   writeDeviceOutputs(parsed);
@@ -2315,11 +2434,9 @@ app.post('/api/profiles/:id/activate-for-client', express.json(), (req,res)=>{
     const profileId = sanitizeProfileId(req.params.id);
     const meta = loadProfilesMeta();
     if(!meta.profiles.some(p=>p.id===profileId)) return res.status(404).json({ ok:false, error: 'Profile not found' });
-    fs.mkdirSync(CLIENT_PREFS_DIR,{recursive:true});
-    const prefsFile = path.join(CLIENT_PREFS_DIR, `${cid}.json`);
-    const existing = (()=>{ try{return JSON.parse(fs.readFileSync(prefsFile,'utf8'));}catch{return {};} })();
+    const existing = getClientPrefs(cid);
     existing.activeProfileId = profileId;
-    fs.writeFileSync(prefsFile, JSON.stringify(existing,null,2), 'utf8');
+    saveClientPrefs(cid, existing, req);
     res.json({ ok:true, activeProfileId: profileId });
   }catch(e){ res.status(500).json({ ok:false, error: e.message }); }
 });
@@ -2475,7 +2592,7 @@ app.delete('/api/images/rooms/:room_id', (req,res)=>{
   }catch(e){ res.status(500).json({ok:false, error:e.message}); }
 });
 
-app.get('/api/health', (req,res)=> res.json({ ok:true, app:'ALLHA-2D', version: ADDON_VERSION, mobilePort: req.socket?.localPort === MOBILE_PORT }));
+app.get('/api/health', (req,res)=> res.json({ ok:true, app:'ALLHA-2D', version: ADDON_VERSION, mobilePort: req.socket?.localPort === MOBILE_PORT, database: allhaDb.getInfo() }));
 app.get('/api/mobile/debug', (req, res) => {
   const cfg = loadAddonConfig();
   const pending = mobileAuth.getPendingCode();
@@ -2487,11 +2604,13 @@ app.get('/api/mobile/debug', (req, res) => {
     mobileAccessEnabled: !!cfg?.mobileAccess?.enabled,
     pairingPasswordSet: !!String(cfg?.mobileAccess?.pairingPassword || '').trim(),
     pairingCodeActive: !!pending,
-    pairedDevices: mobileAuth.listDevices().length
+    pairedDevices: mobileAuth.listDevices().length,
+    database: allhaDb.getInfo()
   });
 });
 app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id) }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });
 app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
@@ -2744,6 +2863,41 @@ app.post('/api/import/layout', express.json({limit:'5mb'}), (req, res) => {
   } catch(e) { res.status(400).json({error: e.message}); }
 });
 
+/* ── Database diagnostics ───────────────────────────────────────────── */
+const RUNTIME_DB_DOCUMENTS = [
+  'profiles.json','attention_rules.json','security_rules.json','addon_config.json','dashboard_proxy.json','command_log.json',
+  'profiles/profile-1/levels/level-1/layout.json','profiles/profile-1/levels/level-1/rooms.json','profiles/profile-1/levels/level-1/source_config.json','profiles/profile-1/levels/level-1/ui_state.json','profiles/profile-1/levels/level-1/images/images_meta.json','profiles/profile-1/levels/level-1/devices.json','profiles/profile-1/levels/level-1/lovelace_raw.json'
+];
+const RUNTIME_DB_FILES = [
+  'profiles/profile-1/levels/level-1/devices.js',
+  'profiles/profile-1/levels/level-1/lovelace-source.js'
+];
+function runtimeStorageDiagnostics(){
+  const db = allhaDb.getInfo();
+  const documents = [];
+  const files = [];
+  const knownDocs = new Map((allhaDb.listProjectDocumentKeys ? allhaDb.listProjectDocumentKeys() : []).map(x=>[x.doc_key,x]));
+  for(const key of RUNTIME_DB_DOCUMENTS){
+    const file = path.join(DATA_DIR, key);
+    const inDb = allhaDb.hasProjectDocument ? allhaDb.hasProjectDocument(key) : false;
+    let size = 0; let mirrorUpdatedAt = null;
+    try{ if(fs.existsSync(file)){ const st=fs.statSync(file); size=st.size; mirrorUpdatedAt=st.mtime.toISOString(); } }catch(e){}
+    documents.push({ key, inDb, mirrorExists: fs.existsSync(file), sourceUsed: inDb ? 'sqlite' : (fs.existsSync(file) ? 'json-fallback-migrated-on-read' : 'default'), dbUpdatedAt: knownDocs.get(key)?.updated_at || null, mirrorUpdatedAt, sizeBytes:size });
+  }
+  for(const key of RUNTIME_DB_FILES){
+    const file = path.join(DATA_DIR, key);
+    const inDb = !!(allhaDb.getProjectFile && allhaDb.getProjectFile(key, null) !== null);
+    let size = 0; let mirrorUpdatedAt = null;
+    try{ if(fs.existsSync(file)){ const st=fs.statSync(file); size=st.size; mirrorUpdatedAt=st.mtime.toISOString(); } }catch(e){}
+    files.push({ key, inDb, mirrorExists: fs.existsSync(file), sourceUsed: inDb ? 'sqlite' : (fs.existsSync(file) ? 'file-fallback-migrated-on-read' : 'default'), mirrorUpdatedAt, sizeBytes:size });
+  }
+  return { ...db, mode:'sqlite-primary-json-mirror', documents, files };
+}
+app.get('/api/database/info', (req, res) => {
+  try { res.json({ ok:true, database: runtimeStorageDiagnostics() }); }
+  catch(e){ res.status(500).json({ error:e.message }); }
+});
+
 /* ── Mobile access API ──────────────────────────────────────────────── */
 
 // Генерация кода — только с локального IP (только admin)
@@ -2838,6 +2992,86 @@ app.delete('/api/mobile/devices', (req, res) => {
   res.json({ ok: true, devices: [] });
 });
 
+
+/* ── Local web clients for LAN browser access on host port 8099 ─────── */
+function webClientBaseUrl(req){
+  const host = requestHostname(req) || 'IP_HOME_ASSISTANT';
+  return `http://${host}:${DIRECT_DASHBOARD_PORT}`;
+}
+function publicWebClient(client, req){
+  if(!client) return null;
+  return {
+    clientId: client.client_id,
+    client_id: client.client_id,
+    name: client.name,
+    alias: client.alias,
+    description: client.description,
+    slug: client.slug,
+    url: client.slug ? `${webClientBaseUrl(req)}/client/${client.slug}` : '',
+    userAgent: client.userAgent,
+    screen: client.screen,
+    firstSeen: client.firstSeen,
+    lastSeen: client.lastSeen,
+    settings: client.settings || {}
+  };
+}
+app.get('/api/web-clients', (req,res)=>{
+  try{
+    const clients = (allhaDb.listWebClients ? allhaDb.listWebClients() : []).map(c=>publicWebClient(c, req));
+    res.json({ ok:true, baseUrl:webClientBaseUrl(req), clients });
+  }catch(e){ res.status(500).json({ ok:false, error:e.message }); }
+});
+app.post('/api/web-clients', express.json(), (req,res)=>{
+  try{
+    const body=req.body||{};
+    const client = allhaDb.createWebClient({
+      clientId: body.clientId || body.client_id,
+      alias: body.alias || body.name || 'web-client',
+      name: body.name || body.alias || 'web-client',
+      description: body.description || '',
+      userAgent: req.headers['user-agent'] || body.userAgent || '',
+      screen: body.screen || '',
+      settings: body.settings || {}
+    });
+    res.json({ ok:true, client: publicWebClient(client, req) });
+  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+});
+app.post('/api/web-clients/touch', express.json(), (req,res)=>{
+  try{
+    const body=req.body||{};
+    const headerId = sanitizeClientId(req.headers['x-client-id'] || '');
+    let client = null;
+    if(body.slug && allhaDb.getWebClientBySlug) client = allhaDb.getWebClientBySlug(body.slug);
+    if(client){
+      allhaDb.touchWebClient(client.client_id, { userAgent:req.headers['user-agent'] || '', screen:body.screen || '' });
+      client = allhaDb.getWebClient(client.client_id);
+    } else if(headerId) {
+      client = allhaDb.touchWebClient(headerId, { alias:body.alias || headerId, userAgent:req.headers['user-agent'] || '', screen:body.screen || '', settings:body.settings || {} });
+    } else {
+      client = allhaDb.createWebClient({ alias:body.alias || 'web-client', userAgent:req.headers['user-agent'] || '', screen:body.screen || '', settings:body.settings || {} });
+    }
+    res.json({ ok:true, client: publicWebClient(client, req) });
+  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+});
+app.patch('/api/web-clients/:id', express.json(), (req,res)=>{
+  try{
+    const client = allhaDb.updateWebClient(req.params.id, req.body || {});
+    if(!client) return res.status(404).json({ ok:false, error:'Web client not found' });
+    res.json({ ok:true, client: publicWebClient(client, req) });
+  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+});
+app.post('/api/web-clients/:id/regenerate-link', (req,res)=>{
+  try{
+    const client = allhaDb.updateWebClient(req.params.id, { regenerateSlug:true });
+    if(!client) return res.status(404).json({ ok:false, error:'Web client not found' });
+    res.json({ ok:true, client: publicWebClient(client, req) });
+  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+});
+app.delete('/api/web-clients/:id', (req,res)=>{
+  try{ allhaDb.deleteWebClient(req.params.id); res.json({ ok:true }); }
+  catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+});
+
 /* ── Per-client preferences (profile, panelMode, UI scales per device) ─ */
 const CLIENT_PREFS_DIR = path.join(DATA_DIR, 'client-prefs');
 
@@ -2848,7 +3082,18 @@ function sanitizeClientId(id) {
 function getClientPrefs(clientId) {
   const safe = sanitizeClientId(clientId);
   if(!safe) return {};
-  try{ return JSON.parse(fs.readFileSync(path.join(CLIENT_PREFS_DIR, `${safe}.json`), 'utf8')); }catch{ return {}; }
+  const dbPrefs = allhaDb.getWebClientSettings(safe);
+  if (dbPrefs) return dbPrefs;
+  return readJsonSafe(path.join(CLIENT_PREFS_DIR, `${safe}.json`), {});
+}
+function saveClientPrefs(clientId, prefs, req) {
+  const safe = sanitizeClientId(clientId);
+  if(!safe) return false;
+  const meta = { userAgent: req?.headers?.['user-agent'] || '', name: prefs?.name || prefs?.alias || safe, alias: prefs?.alias || prefs?.name || safe, slug: prefs?.slug || '' };
+  if (allhaDb.setWebClientSettings(safe, prefs || {}, meta)) return true;
+  fs.mkdirSync(CLIENT_PREFS_DIR, { recursive: true });
+  atomicWriteJson(path.join(CLIENT_PREFS_DIR, `${safe}.json`), prefs || {});
+  return true;
 }
 function clientLevelPaths(req) {
   const cid = sanitizeClientId(req.headers['x-client-id'] || '');
@@ -2865,7 +3110,7 @@ app.get('/api/prefs', (req, res) => {
   const auth = mobileAuthFromHeaders(req);
   if (!cid) return res.json(auth.ok ? { panelMode: auth.device?.accessMode || 'viewer', mobileDevice: auth.device } : {});
   try {
-    const data = JSON.parse(fs.readFileSync(path.join(CLIENT_PREFS_DIR, `${cid}.json`), 'utf8'));
+    const data = getClientPrefs(cid) || {};
     if(auth.ok){
       data.panelMode = auth.device?.accessMode || 'viewer';
       data.mobileDevice = auth.device;
@@ -2881,7 +3126,6 @@ app.put('/api/prefs', express.json(), (req, res) => {
   const cid = sanitizeClientId(req.headers['x-client-id'] || '');
   if (!cid) return res.status(400).json({ error: 'X-Client-ID required' });
   try {
-    fs.mkdirSync(CLIENT_PREFS_DIR, { recursive: true });
     const body = req.body || {};
     const auth = mobileAuthFromHeaders(req);
     const existing = getClientPrefs(cid);
@@ -2890,8 +3134,8 @@ app.put('/api/prefs', express.json(), (req, res) => {
     // For APK/mobile access, panelMode is server-controlled per device. Do not let the app promote itself.
     if (!auth.ok && body.panelMode !== undefined) prefs.panelMode = String(body.panelMode);
     if (body.activeProfileId !== undefined) prefs.activeProfileId = body.activeProfileId;
-    fs.writeFileSync(path.join(CLIENT_PREFS_DIR, `${cid}.json`), JSON.stringify(prefs, null, 2), 'utf8');
-    res.json({ ok: true, mobileAccessLocked: !!auth.ok });
+    saveClientPrefs(cid, prefs, req);
+    res.json({ ok: true, mobileAccessLocked: !!auth.ok, database: allhaDb.getInfo() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
