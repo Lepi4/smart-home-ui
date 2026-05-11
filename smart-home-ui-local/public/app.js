@@ -3756,7 +3756,27 @@ function hydrateRoomsSettingsFromStandardSensorBindings(settings){
   return out;
 }
 
-function standardSensorsForSettings(roomId){ return state.roomsSettings?.rooms?.[normalizedRoomId(roomId)]?.standardSensors || {}; }
+
+function canonicalStandardSensorsForCompare(src){
+  const clean = {};
+  STANDARD_SENSOR_DEFS.forEach(def=>{
+    const v = String(src?.[def.key] || '').trim();
+    if(v) clean[def.key] = v;
+  });
+  return clean;
+}
+function sameStandardSensors(a,b){
+  return JSON.stringify(canonicalStandardSensorsForCompare(a)) === JSON.stringify(canonicalStandardSensorsForCompare(b));
+}
+
+function standardSensorsForSettings(roomId){
+  const rid=normalizedRoomId(roomId);
+  const fromRoom = state.roomsSettings?.rooms?.[rid]?.standardSensors;
+  if(fromRoom && typeof fromRoom==='object' && Object.keys(canonicalStandardSensorsForCompare(fromRoom)).length) return fromRoom;
+  const fromBindings = state.roomsSettings?.standardSensorBindings?.[rid];
+  if(fromBindings && typeof fromBindings==='object') return fromBindings;
+  return {};
+}
 
 function ensureRoomsSettingsRoom(roomId){
   const rid=normalizedRoomId(roomId);
@@ -3879,6 +3899,21 @@ function acceptStandardSensorSuggestion(roomId, key){
 // the settings panel can be re-rendered/replaced after DB hydration, focus guards,
 // modal changes or mobile WebView refreshes. The local #rooms-zones-manager handler
 // remains as a secondary path, but this one is the authoritative safety net.
+
+const standardSensorActionLocks = {};
+function standardSensorActionKey(action, roomId, key=''){ return `${action}:${normalizedRoomId(roomId)}:${key||''}`; }
+function beginStandardSensorAction(action, roomId, key='', ttl=1500){
+  const k = standardSensorActionKey(action, roomId, key);
+  const now = Date.now();
+  if(standardSensorActionLocks[k] && standardSensorActionLocks[k] > now) return false;
+  standardSensorActionLocks[k] = now + ttl;
+  return true;
+}
+function endStandardSensorAction(action, roomId, key=''){
+  const k = standardSensorActionKey(action, roomId, key);
+  delete standardSensorActionLocks[k];
+}
+
 function handleStandardSensorControlClick(e){
   const btn=e.target.closest('[data-suggest-standard-sensors],[data-accept-standard-sensor],[data-save-standard-sensors],[data-clear-standard-sensor],[data-clear-all-standard-sensors]');
   if(!btn || !btn.closest('#rooms-zones-manager')) return false;
@@ -3888,11 +3923,34 @@ function handleStandardSensorControlClick(e){
   e.stopPropagation();
   const card=btn.closest('[data-room-manager]');
   const roomId=btn.dataset.suggestStandardSensors || btn.dataset.saveStandardSensors || btn.dataset.clearAllStandardSensors || btn.dataset.roomId || card?.dataset.roomManager || '';
-  if(btn.matches('[data-suggest-standard-sensors]')){ loadStandardSensorSuggestions(roomId); return true; }
-  if(btn.matches('[data-accept-standard-sensor]')){ acceptStandardSensorSuggestion(roomId, btn.dataset.acceptStandardSensor); return true; }
-  if(btn.matches('[data-save-standard-sensors]')){ saveRoomStandardSensors(roomId); return true; }
-  if(btn.matches('[data-clear-all-standard-sensors]')){ clearAllStandardSensors(roomId); return true; }
-  if(btn.matches('[data-clear-standard-sensor]')){ clearStandardSensorInput(roomId, btn.dataset.clearStandardSensor); return true; }
+  if(btn.matches('[data-suggest-standard-sensors]')){
+    if(!beginStandardSensorAction('suggest', roomId, '', 1200)) return true;
+    Promise.resolve(loadStandardSensorSuggestions(roomId)).finally(()=>endStandardSensorAction('suggest', roomId));
+    return true;
+  }
+  if(btn.matches('[data-accept-standard-sensor]')){
+    const key = btn.dataset.acceptStandardSensor || '';
+    if(!beginStandardSensorAction('accept', roomId, key, 800)) return true;
+    try{ acceptStandardSensorSuggestion(roomId, key); } finally { setTimeout(()=>endStandardSensorAction('accept', roomId, key), 250); }
+    return true;
+  }
+  if(btn.matches('[data-save-standard-sensors]')){
+    if(!beginStandardSensorAction('save', roomId, '', 2500)) return true;
+    btn.disabled = true;
+    Promise.resolve(saveRoomStandardSensors(roomId)).finally(()=>{ btn.disabled=false; endStandardSensorAction('save', roomId); });
+    return true;
+  }
+  if(btn.matches('[data-clear-all-standard-sensors]')){
+    if(!beginStandardSensorAction('clearAll', roomId, '', 2500)) return true;
+    Promise.resolve(clearAllStandardSensors(roomId)).finally(()=>endStandardSensorAction('clearAll', roomId));
+    return true;
+  }
+  if(btn.matches('[data-clear-standard-sensor]')){
+    const key = btn.dataset.clearStandardSensor || '';
+    if(!beginStandardSensorAction('clearOne', roomId, key, 2000)) return true;
+    Promise.resolve(clearStandardSensorInput(roomId, key)).finally(()=>endStandardSensorAction('clearOne', roomId, key));
+    return true;
+  }
   return false;
 }
 document.addEventListener('click', handleStandardSensorControlClick, true);
@@ -3938,9 +3996,6 @@ function renderRoomsZonesManager(force=false){
     input.addEventListener('change',()=>rememberStandardSensorInput(input));
     input.addEventListener('focus',()=>rememberStandardSensorInput(input));
   });
-  qsa('[data-suggest-standard-sensors],[data-accept-standard-sensor],[data-save-standard-sensors],[data-clear-standard-sensor],[data-clear-all-standard-sensors]', box).forEach(btn=>{
-    btn.onclick=(ev)=>handleStandardSensorControlClick(ev);
-  });
 }
 function readStandardSensorInputs(roomId){
   const card=document.querySelector(`[data-room-manager="${CSS.escape(roomId)}"]`);
@@ -3960,7 +4015,8 @@ async function saveRoomStandardSensors(roomId){
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
     const verified = response?.verifiedRoomBinding && typeof response.verifiedRoomBinding==='object' ? response.verifiedRoomBinding : null;
-    if(JSON.stringify(verified||{}) !== JSON.stringify(standardSensors||{})){
+    if(!sameStandardSensors(verified||{}, standardSensors||{})){
+      console.error('[ALLHA-2D][standardSensors] save verify mismatch', {sent:canonicalStandardSensorsForCompare(standardSensors), verified:canonicalStandardSensorsForCompare(verified||{})});
       throw new Error('Сервер не подтвердил сохранение датчиков в базе данных');
     }
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, verified));

@@ -1,8 +1,8 @@
-## v4.1.21.9
+## v4.1.21.11
 - Hotfix: robust delegated/direct handlers for standardSensors controls; save/suggest/accept/clear buttons work after settings re-render/focus guard/mobile WebView refresh.
 - Standard sensor inputs remain clickable and show admin-mode toast instead of silently disabled controls.
 
-## v4.1.21.9 — hotfix standard sensor suggestions click/render
+## v4.1.21.11 — hotfix standard sensor suggestions click/render
 
 - Fixed standard sensor suggestion buttons not updating the UI after v4.1.21.1.
 - `renderRoomsZonesManager()` now supports forced render for suggestion updates, bypassing the input-focus render guard only for this explicit action.

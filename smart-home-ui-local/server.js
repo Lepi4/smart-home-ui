@@ -144,11 +144,23 @@ function bumpRuntimeAudit(kind, key){
 }
 
 const LOG_LEVELS = { error: 0, info: 1, debug: 2 };
+let cachedLogLevel = null;
+let cachedLogLevelLoadedAt = 0;
 function currentLogLevel(){
+  const env = process.env.ALLHA_LOG_LEVEL;
+  if(env) return String(env).toLowerCase();
+  const now = Date.now();
+  if(cachedLogLevel && (now - cachedLogLevelLoadedAt) < 30000) return cachedLogLevel;
   try{
     const cfg = readJsonSafe(ADDON_CONFIG_PATH, {}) || {};
-    return String(process.env.ALLHA_LOG_LEVEL || cfg.logLevel || 'info').toLowerCase();
-  }catch(e){ return String(process.env.ALLHA_LOG_LEVEL || 'info').toLowerCase(); }
+    cachedLogLevel = String(cfg.logLevel || 'info').toLowerCase();
+    cachedLogLevelLoadedAt = now;
+    return cachedLogLevel;
+  }catch(e){ return cachedLogLevel || 'info'; }
+}
+function setCachedLogLevel(level){
+  cachedLogLevel = String(level || 'info').toLowerCase();
+  cachedLogLevelLoadedAt = Date.now();
 }
 function shouldLog(level){
   const cur = LOG_LEVELS[currentLogLevel()] ?? LOG_LEVELS.info;
@@ -346,12 +358,26 @@ function applyDbStandardSensorBindings(settings, roomsPath = ROOMS_SETTINGS_PATH
     const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
     const bindings = allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {};
     for(const [rid, sensors] of Object.entries(bindings)){
-      if(!next.rooms[rid]) continue;
-      const clean = normalizeStandardSensors(sensors || {}, {strict:true});
-      if(Object.keys(clean).length) next.rooms[rid].standardSensors = clean;
+      const clean = normalizeStandardSensors(sensors || {}, {strict:false});
+      if(!Object.keys(clean).length) continue;
+      if(!next.rooms[rid]) next.rooms[rid] = { alias:friendlyRoomLabel(rid), source:'standard-sensor-bindings' };
+      next.rooms[rid].standardSensors = clean;
     }
   }catch(e){ console.warn('[standardSensors] DB overlay failed:', e.message); }
   return next;
+}
+
+
+function canonicalStandardSensorsForCompare(src){
+  const clean = normalizeStandardSensors(src || {}, {strict:false});
+  const out = {};
+  for(const key of STANDARD_SENSOR_KEYS){
+    if(clean[key]) out[key] = clean[key];
+  }
+  return out;
+}
+function sameStandardSensors(a,b){
+  return JSON.stringify(canonicalStandardSensorsForCompare(a)) === JSON.stringify(canonicalStandardSensorsForCompare(b));
 }
 
 function standardSensorBindingsForRoomsPath(roomsPath = ROOMS_SETTINGS_PATH){
@@ -2207,11 +2233,9 @@ function standardSensorBindingsForRoom(roomsPath, roomId){
 }
 
 function verifyRoomStandardSensorSave(roomsPath, roomId, expected){
-  const saved = standardSensorBindingsForRoom(roomsPath, roomId);
-  const want = normalizeStandardSensors(expected || {}, {strict:false});
-  const savedJson = JSON.stringify(saved);
-  const wantJson = JSON.stringify(want);
-  if(savedJson !== wantJson){
+  const saved = canonicalStandardSensorsForCompare(standardSensorBindingsForRoom(roomsPath, roomId));
+  const want = canonicalStandardSensorsForCompare(expected || {});
+  if(!sameStandardSensors(saved, want)){
     logError('standardSensors', 'DB verify failed after save', {roomId, expected:want, saved});
     throw new Error(`Датчики не подтвердились в базе данных для комнаты ${roomId}`);
   }
@@ -3474,6 +3498,7 @@ app.post('/api/diagnostics/log-level', (req,res)=>{
     const cfg = readJsonSafe(ADDON_CONFIG_PATH, {}) || {};
     cfg.logLevel = level;
     atomicWriteJson(ADDON_CONFIG_PATH, cfg);
+    setCachedLogLevel(level);
     logInfo('diagnostics', 'log level changed', {level});
     res.json({ok:true, level});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
