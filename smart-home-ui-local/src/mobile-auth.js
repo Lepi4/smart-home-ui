@@ -68,7 +68,7 @@ function _deviceDefaultName(device_id, meta = {}) {
   const platform = _cleanText(meta.platform, 32);
   if (/android/i.test(platform || ua)) return `Android ${String(device_id).slice(0, 6)}`;
   if (/iphone|ipad|ios/i.test(platform || ua)) return `iOS ${String(device_id).slice(0, 6)}`;
-  const count = (db.listMobileDevices() || Object.keys(_devs()).map(k=>({}))).length;
+  const count = db.hasDb() ? ((db.listMobileDevices() || []).length) : Object.keys(_devs()).length;
   return `Устройство ${count + 1}`;
 }
 
@@ -82,7 +82,7 @@ function consumeCode(code, device_id, meta = {}) {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = _hashToken(token);
   const now = new Date().toISOString();
-  const existing = db.getMobileDevice(device_id) || _devs()[device_id] || {};
+  const existing = db.hasDb() ? (db.getMobileDevice(device_id) || {}) : (_devs()[device_id] || {});
   const device = {
     device_id,
     tokenHash,

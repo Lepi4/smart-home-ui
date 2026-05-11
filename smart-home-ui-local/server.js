@@ -117,6 +117,29 @@ const ALLOWED_SERVICES = Object.fromEntries([...Object.entries(SAFE_SERVICES), .
 const COMMAND_LOG_PATH = path.join(DATA_DIR, 'command_log.json');
 const DASHBOARD_PROXY_STATE_PATH = path.join(DATA_DIR, 'dashboard_proxy.json');
 const DIRECT_DASHBOARD_PORT = Number(process.env.DIRECT_DASHBOARD_PORT || process.env.ALLHA_DIRECT_PORT || 8099);
+const runtimeAudit = {
+  jsonFallbackReads: 0,
+  fileFallbackReads: 0,
+  jsonFallbackKeys: {},
+  fileFallbackKeys: {},
+  runtimeDefaultWrites: 0,
+  mirrorMissingButDbPresent: 0,
+  directRuntimeFileChecks: 0,
+  legacyClientPrefsFallbackReads: 0,
+  legacyClientPrefsFallbackWrites: 0,
+  legacyClientPrefsImported: 0,
+  legacyMobileJsonFallbackReads: 0,
+  legacyStandardSensorsMigrationReads: 0,
+  devicesSource: 'unknown',
+  lovelaceRawSource: 'unknown'
+};
+function bumpRuntimeAudit(kind, key){
+  try{
+    if(runtimeAudit[kind] !== undefined && typeof runtimeAudit[kind] === 'number') runtimeAudit[kind] += 1;
+    const bucket = kind === 'jsonFallbackReads' ? 'jsonFallbackKeys' : (kind === 'fileFallbackReads' ? 'fileFallbackKeys' : null);
+    if(bucket && key) runtimeAudit[bucket][key] = (runtimeAudit[bucket][key] || 0) + 1;
+  }catch(e){}
+}
 function projectDocKeyForFile(file){
   try{
     const resolved = path.resolve(file);
@@ -133,20 +156,101 @@ function readJsonSafe(file, fallback){
     const key = projectDocKeyForFile(file);
     if(key && allhaDb.hasDb && allhaDb.hasDb()){
       const fromDb = allhaDb.getProjectDocument(key, undefined);
-      if(fromDb !== undefined) return fromDb;
+      if(fromDb !== undefined){
+        if(!fs.existsSync(file)) runtimeAudit.mirrorMissingButDbPresent += 1;
+        return fromDb;
+      }
       if(fs.existsSync(file)){
         const parsed = JSON.parse(fs.readFileSync(file,'utf8'));
-        allhaDb.setProjectDocument(key, parsed, 'json');
+        bumpRuntimeAudit('jsonFallbackReads', key);
+        allhaDb.setProjectDocument(key, parsed, 'json-migration-fallback');
         return parsed;
       }
       return fallback;
     }
-    return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):fallback;
+    if(fs.existsSync(file)){
+      bumpRuntimeAudit('jsonFallbackReads', key || file);
+      return JSON.parse(fs.readFileSync(file,'utf8'));
+    }
+    return fallback;
   }catch(e){return fallback;}
 }
 function readJsonFileOnly(file, fallback){
   try{ return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : fallback; }
   catch(e){ return fallback; }
+}
+
+function runtimeDocumentExists(file){
+  try{
+    const key = projectDocKeyForFile(file);
+    if(key && allhaDb.hasDb && allhaDb.hasDb() && allhaDb.hasProjectDocument && allhaDb.hasProjectDocument(key)){
+      if(!fs.existsSync(file)) runtimeAudit.mirrorMissingButDbPresent += 1;
+      return true;
+    }
+    return fs.existsSync(file);
+  }catch(e){ return false; }
+}
+function runtimeFileExists(file){
+  try{
+    const key = projectFileKeyForFile(file);
+    const fromDb = key && allhaDb.hasDb && allhaDb.hasDb() && allhaDb.getProjectFile ? allhaDb.getProjectFile(key, null) : null;
+    if(fromDb !== null && fromDb !== undefined){
+      if(!fs.existsSync(file)) runtimeAudit.mirrorMissingButDbPresent += 1;
+      return true;
+    }
+    return fs.existsSync(file);
+  }catch(e){ return false; }
+}
+function runtimeDocumentSource(file){
+  try{
+    const key = projectDocKeyForFile(file);
+    if(key && allhaDb.hasDb && allhaDb.hasDb() && allhaDb.hasProjectDocument && allhaDb.hasProjectDocument(key)) return fs.existsSync(file) ? 'sqlite+mirror' : 'sqlite-only';
+    if(fs.existsSync(file)) return 'mirror-only';
+    return 'missing';
+  }catch(e){ return 'error'; }
+}
+function runtimeFileSource(file){
+  try{
+    const key = projectFileKeyForFile(file);
+    const fromDb = key && allhaDb.hasDb && allhaDb.hasDb() && allhaDb.getProjectFile ? allhaDb.getProjectFile(key, null) : null;
+    if(fromDb !== null && fromDb !== undefined) return fs.existsSync(file) ? 'sqlite+mirror' : 'sqlite-only';
+    if(fs.existsSync(file)) return 'mirror-only';
+    return 'missing';
+  }catch(e){ return 'error'; }
+}
+function readRuntimeDocument(file, fallback){ return readJsonSafe(file, fallback); }
+function writeRuntimeDocument(file, data){ return atomicWriteJson(file, data); }
+function readRuntimeTextFile(file, fallback=''){ return readTextRuntimeFile(file, fallback); }
+function writeRuntimeTextFile(file, text, type='text'){ return writeTextRuntimeFile(file, text, type); }
+function copyRuntimeDocument(src, dst, fallback){
+  const value = readJsonSafe(src, undefined);
+  if(value !== undefined){ atomicWriteJson(dst, value); return true; }
+  if(fallback !== undefined){ atomicWriteJson(dst, fallback); return true; }
+  return false;
+}
+function copyRuntimeFile(src, dst){
+  const txt = readTextRuntimeFile(src, null);
+  if(txt === null || txt === undefined) return false;
+  writeTextRuntimeFile(dst, txt, path.extname(dst).slice(1) || 'text');
+  return true;
+}
+function importRuntimeMirrorToDb(file){
+  try{
+    if(!file || !fs.existsSync(file)) return false;
+    const docKey = projectDocKeyForFile(file);
+    if(docKey && allhaDb.hasDb && allhaDb.hasDb()){
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      allhaDb.setProjectDocument(docKey, parsed, 'json-imported-copy');
+      return true;
+    }
+    const fileKey = projectFileKeyForFile(file);
+    if(fileKey && allhaDb.hasDb && allhaDb.hasDb()){
+      const txt = fs.readFileSync(file, 'utf8');
+      allhaDb.setProjectFile(fileKey, txt, path.extname(file).slice(1) || 'text');
+      return true;
+    }
+  }catch(e){ console.warn('[ALLHA-2D] import mirror to DB failed:', file, e.message); }
+  return false;
 }
 function mergeStandardSensorsMaps(primary, secondary){
   const out = isPlainObject(primary) ? JSON.parse(JSON.stringify(primary)) : {};
@@ -159,6 +263,117 @@ function mergeStandardSensorsMaps(primary, secondary){
     out.rooms[rid] = isPlainObject(out.rooms[rid]) ? out.rooms[rid] : { ...(isPlainObject(room) ? room : {}) };
     const currentSensors = normalizeStandardSensors(out.rooms[rid]?.standardSensors || {});
     out.rooms[rid].standardSensors = { ...oldSensors, ...currentSensors };
+  }
+  return out;
+}
+
+function profileLevelFromRoomsPath(roomsPath){
+  try{
+    const rel = path.relative(path.resolve(PROFILES_DIR), path.resolve(roomsPath || ROOMS_SETTINGS_PATH)).replace(/\\/g,'/');
+    const parts = rel.split('/').filter(Boolean);
+    const profileId = sanitizeProfileId(parts[0] || ACTIVE_PROFILE_ID) || ACTIVE_PROFILE_ID;
+    const levelIdx = parts.indexOf('levels');
+    const levelId = sanitizeLevelId(levelIdx >= 0 ? parts[levelIdx + 1] : ACTIVE_LEVEL_ID) || ACTIVE_LEVEL_ID;
+    return { profileId, levelId };
+  }catch(e){
+    return { profileId: ACTIVE_PROFILE_ID, levelId: ACTIVE_LEVEL_ID };
+  }
+}
+function applyDbStandardSensorBindings(settings, roomsPath = ROOMS_SETTINGS_PATH){
+  const next = normalizeRoomsSettings(settings || defaultRoomsSettings());
+  try{
+    if(!allhaDb.hasDb || !allhaDb.hasDb()) return next;
+    const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+    const bindings = allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {};
+    for(const [rid, sensors] of Object.entries(bindings)){
+      if(!next.rooms[rid]) continue;
+      const clean = normalizeStandardSensors(sensors || {});
+      if(Object.keys(clean).length) next.rooms[rid].standardSensors = clean;
+    }
+  }catch(e){ console.warn('[standardSensors] DB overlay failed:', e.message); }
+  return next;
+}
+const _standardSensorLegacySeedAttempts = new Set();
+function seedDbStandardSensorsIfEmpty(settings, roomsPath = ROOMS_SETTINGS_PATH){
+  try{
+    if(!allhaDb.hasDb || !allhaDb.hasDb()) return false;
+    const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+    const seedKey = `${profileId}/${levelId}`;
+    const currentDb = allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {};
+    if(Object.keys(currentDb).length) return false;
+    if(_standardSensorLegacySeedAttempts.has(seedKey)) return false;
+    _standardSensorLegacySeedAttempts.add(seedKey);
+    // One-time migration only. Runtime source remains SQLite standard_sensor_bindings.
+    const mirror = readJsonFileOnly(roomsPath, null);
+    const dedicatedBackup = readStandardSensorsBackup(roomsPath);
+    const scannedBackups = scanStandardSensorBackups(roomsPath);
+    let seed = mergeStandardSensorsMaps(settings || defaultRoomsSettings(), mirror);
+    seed = mergeStandardSensorsMaps(seed, dedicatedBackup);
+    seed = mergeStandardSensorsMaps(seed, scannedBackups);
+    seed = normalizeRoomsSettings(seed, {filterUnknownRooms:false});
+    const hasAny = Object.values(seed.rooms || {}).some(r => Object.keys(normalizeStandardSensors(r?.standardSensors || {})).length);
+    if(!hasAny) return false;
+    runtimeAudit.legacyStandardSensorsMigrationReads += 1;
+    allhaDb.syncStandardSensorBindingsFromRooms(profileId, levelId, seed);
+    return true;
+  }catch(e){ console.warn('[standardSensors] DB seed failed:', e.message); return false; }
+}
+function syncRoomSettingsAndStandardSensorDb(settings, roomsPath = ROOMS_SETTINGS_PATH){
+  const normalized = normalizeRoomsSettings(settings || defaultRoomsSettings());
+  try{
+    if(allhaDb.hasDb && allhaDb.hasDb()){
+      const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+      allhaDb.syncStandardSensorBindingsFromRooms(profileId, levelId, normalized);
+    }
+  }catch(e){ console.warn('[standardSensors] DB sync failed:', e.message); }
+  return applyDbStandardSensorBindings(normalized, roomsPath);
+}
+
+function standardSensorsBackupPathForRooms(roomsPath){
+  try{ return path.join(path.dirname(roomsPath || ROOMS_SETTINGS_PATH), 'standard_sensors_bindings.json'); }
+  catch(e){ return path.join(ACTIVE_LEVEL_DIR, 'standard_sensors_bindings.json'); }
+}
+function extractStandardSensorBindings(settings){
+  const out = { version:1, rooms:{}, updatedAt:new Date().toISOString(), source:'standard-sensors-backup' };
+  const rooms = isPlainObject(settings?.rooms) ? settings.rooms : {};
+  for(const [rid, room] of Object.entries(rooms)){
+    const sensors = normalizeStandardSensors(room?.standardSensors || {});
+    if(Object.keys(sensors).length) out.rooms[rid] = { standardSensors:sensors };
+  }
+  return out;
+}
+function readStandardSensorsBackup(roomsPath = ROOMS_SETTINGS_PATH){
+  const file = standardSensorsBackupPathForRooms(roomsPath);
+  const backup = readJsonFileOnly(file, null);
+  return isPlainObject(backup) ? backup : { version:1, rooms:{} };
+}
+function writeStandardSensorsBackup(settings, roomsPath = ROOMS_SETTINGS_PATH){
+  // Deprecated in DB-primary mode. Kept as a no-op compatibility stub; runtime writes only to SQLite.
+  return extractStandardSensorBindings(settings);
+}
+function scanStandardSensorBackups(roomsPath = ROOMS_SETTINGS_PATH){
+  const out = { version:1, rooms:{} };
+  const wantedBase = path.basename(roomsPath || 'rooms.json');
+  const candidates = [standardSensorsBackupPathForRooms(roomsPath)];
+  const dirs = [path.join(DATA_DIR, 'migration-backups'), path.join(DATA_DIR, 'backups')];
+  for(const dir of dirs){
+    try{
+      if(!fs.existsSync(dir)) continue;
+      for(const name of fs.readdirSync(dir).slice(-200)){
+        const f = path.join(dir, name);
+        if(!/\.json$/i.test(name) && !name.includes(wantedBase) && !name.includes('standard_sensors')) continue;
+        candidates.push(f);
+      }
+    }catch(e){}
+  }
+  for(const f of candidates){
+    try{
+      if(!fs.existsSync(f)) continue;
+      runtimeAudit.legacyStandardSensorsMigrationReads += 1;
+      const parsed = JSON.parse(fs.readFileSync(f,'utf8'));
+      const merged = mergeStandardSensorsMaps(out, parsed);
+      out.rooms = merged.rooms || out.rooms;
+    }catch(e){}
   }
   return out;
 }
@@ -582,8 +797,8 @@ function ensureLevelDirs(profileId, levelId){
 }
 function initializeLevelsStorage(profileId){
   const pp = ensureProfileDirs(profileId);
-  let meta = fs.existsSync(levelsMetaPath(profileId)) ? loadLevelsMeta(profileId) : defaultLevelsMeta();
-  if(!fs.existsSync(levelsMetaPath(profileId))) atomicWriteJson(levelsMetaPath(profileId), meta);
+  let meta = runtimeDocumentExists(levelsMetaPath(profileId)) ? loadLevelsMeta(profileId) : defaultLevelsMeta();
+  if(!runtimeDocumentExists(levelsMetaPath(profileId))) atomicWriteJson(levelsMetaPath(profileId), meta);
   for(const l of meta.levels) ensureLevelDirs(profileId, l.id);
   const l1 = ensureLevelDirs(profileId, 'level-1');
   // Миграция v3.5.7: данные лежали прямо в profile-N/. Переносим их в первый уровень.
@@ -618,7 +833,8 @@ function jsonArrayCount(file){
 }
 function shouldReplaceEmptyMigratedFile(src, dst){
   try{
-    if(!fs.existsSync(src) || !fs.existsSync(dst)) return false;
+    if(!(runtimeDocumentExists(src) || runtimeFileExists(src) || fs.existsSync(src))) return false;
+    if(!(runtimeDocumentExists(dst) || runtimeFileExists(dst) || fs.existsSync(dst))) return false;
     if(path.basename(src)==='devices.js' && path.basename(dst)==='devices.js'){
       return assignedArrayCount(src, 'ALL_DEVICES') > 0 && assignedArrayCount(dst, 'ALL_DEVICES') === 0;
     }
@@ -626,7 +842,7 @@ function shouldReplaceEmptyMigratedFile(src, dst){
       return jsonArrayCount(src) > 0 && jsonArrayCount(dst) === 0;
     }
     if(path.basename(src)==='lovelace-source.js' && path.basename(dst)==='lovelace-source.js'){
-      const srcTxt=fs.readFileSync(src,'utf8'); const dstTxt=fs.readFileSync(dst,'utf8');
+      const srcTxt=readTextRuntimeFile(src,''); const dstTxt=readTextRuntimeFile(dst,'');
       return /views\s*"?\s*:\s*\[\s*\{/.test(srcTxt) && !/views\s*"?\s*:\s*\[\s*\{/.test(dstTxt);
     }
   }catch(e){ return false; }
@@ -634,15 +850,20 @@ function shouldReplaceEmptyMigratedFile(src, dst){
 }
 function copyIfExists(src, dst){
   try{
-    if(!fs.existsSync(src)) return;
-    if(!fs.existsSync(dst) || shouldReplaceEmptyMigratedFile(src, dst)) copyPathRecursive(src, dst);
+    const sourceExists = runtimeDocumentExists(src) || runtimeFileExists(src) || fs.existsSync(src);
+    if(!sourceExists) return;
+    const targetExists = runtimeDocumentExists(dst) || runtimeFileExists(dst) || fs.existsSync(dst);
+    if(targetExists && !shouldReplaceEmptyMigratedFile(src, dst)) return;
+    if(projectDocKeyForFile(src) || projectDocKeyForFile(dst)) return copyRuntimeDocument(src, dst);
+    if(projectFileKeyForFile(src) || projectFileKeyForFile(dst)) return copyRuntimeFile(src, dst);
+    return copyPathRecursive(src, dst);
   }catch(e){ console.warn('[ALLHA-2D] profile migration copy failed:', src, e.message); }
 }
 function initializeProfilesStorage(){
   fs.mkdirSync(DATA_DIR, {recursive:true});
   fs.mkdirSync(PROFILES_DIR, {recursive:true});
-  let meta = fs.existsSync(PROFILES_META_PATH) ? loadProfilesMeta() : defaultProfilesMeta();
-  if(!fs.existsSync(PROFILES_META_PATH)) atomicWriteJson(PROFILES_META_PATH, meta);
+  let meta = runtimeDocumentExists(PROFILES_META_PATH) ? loadProfilesMeta() : defaultProfilesMeta();
+  if(!runtimeDocumentExists(PROFILES_META_PATH)) atomicWriteJson(PROFILES_META_PATH, meta);
   for(const p of meta.profiles){ ensureProfileDirs(p.id); initializeLevelsStorage(p.id); }
   const p1 = profilePaths('profile-1');
   ensureProfileDirs('profile-1');
@@ -770,11 +991,11 @@ function createLevel(payload={}){
     copyIfExists(LOVELACE_PATH, lp.lovelaceJs);
     copyIfExists(activeLevelPaths().lovelaceRaw, lp.lovelaceRaw);
   }
-  if(!fs.existsSync(lp.rooms)) atomicWriteJson(lp.rooms, defaultRoomsSettings());
-  if(!fs.existsSync(lp.sourceConfig)) atomicWriteJson(lp.sourceConfig, defaultSourceConfig());
-  if(!fs.existsSync(lp.uiState)) atomicWriteJson(lp.uiState, defaultUiState());
-  if(!fs.existsSync(lp.devicesJs)) writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
-  if(!fs.existsSync(lp.lovelaceJs)) writeTextRuntimeFile(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
+  if(!runtimeDocumentExists(lp.rooms)) atomicWriteJson(lp.rooms, defaultRoomsSettings());
+  if(!runtimeDocumentExists(lp.sourceConfig)) atomicWriteJson(lp.sourceConfig, defaultSourceConfig());
+  if(!runtimeDocumentExists(lp.uiState)) atomicWriteJson(lp.uiState, defaultUiState());
+  if(!runtimeFileExists(lp.devicesJs)) writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
+  if(!runtimeFileExists(lp.lovelaceJs)) writeTextRuntimeFile(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
   const now = new Date().toISOString();
   meta.levels.push({id, name, createdAt:now, updatedAt:now});
   saveLevelsMeta(pid, meta);
@@ -872,12 +1093,12 @@ function createProfile(payload={}){
     }
   }
   atomicWriteJson(pp.layout, baseLayout);
-  if(!fs.existsSync(pp.rooms)) atomicWriteJson(pp.rooms, defaultRoomsSettings());
-  if(!fs.existsSync(pp.sourceConfig)) atomicWriteJson(pp.sourceConfig, defaultSourceConfig());
+  if(!runtimeDocumentExists(pp.rooms)) atomicWriteJson(pp.rooms, defaultRoomsSettings());
+  if(!runtimeDocumentExists(pp.sourceConfig)) atomicWriteJson(pp.sourceConfig, defaultSourceConfig());
   atomicWriteJson(pp.uiState, defaultUiState());
   atomicWriteJson(pp.imagesMeta, defaultImagesMeta());
-  if(!fs.existsSync(pp.devicesJs)) writeJsAssignedArray(pp.devicesJs, 'ALL_DEVICES', []);
-  if(!fs.existsSync(pp.lovelaceJs)) writeTextRuntimeFile(pp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
+  if(!runtimeFileExists(pp.devicesJs)) writeJsAssignedArray(pp.devicesJs, 'ALL_DEVICES', []);
+  if(!runtimeFileExists(pp.lovelaceJs)) writeTextRuntimeFile(pp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
   meta.profiles.push({id, name, createdAt:now, updatedAt:now});
   saveProfilesMeta(meta);
   return profilesDiagnostics();
@@ -939,12 +1160,13 @@ function compareOverviewImagesForCopy(srcLp, dstLp){
 }
 function copyJsonFileWithFallback(src, dst, fallback){
   fs.mkdirSync(path.dirname(dst), {recursive:true});
-  if(fs.existsSync(src)){ if(fs.existsSync(dst)) removePathSafe(dst); copyPathRecursive(src, dst); } else atomicWriteJson(dst, fallback);
+  return copyRuntimeDocument(src, dst, fallback);
 }
 function replacePathIfExists(src, dst){
-  if(!fs.existsSync(src)) return false;
-  if(fs.existsSync(dst)) removePathSafe(dst);
-  return copyPathRecursive(src, dst);
+  if(projectDocKeyForFile(src) || projectDocKeyForFile(dst)){ if(runtimeDocumentExists(src)) return copyRuntimeDocument(src, dst); return false; }
+  if(projectFileKeyForFile(src) || projectFileKeyForFile(dst)){ if(runtimeFileExists(src)) return copyRuntimeFile(src, dst); return false; }
+  if(fs.existsSync(src)){ if(fs.existsSync(dst)) removePathSafe(dst); return copyPathRecursive(src, dst); }
+  return false;
 }
 function copyProfileData(targetProfileId, payload={}){
   const meta = loadProfilesMeta();
@@ -1075,12 +1297,12 @@ function ensureDataStore(){
   fs.mkdirSync(DATA_IMAGES_ROOMS_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_ORIGINALS_DIR, {recursive:true});
   fs.mkdirSync(DATA_IMAGES_ORIGINALS_ROOMS_DIR, {recursive:true});
-  if(!fs.existsSync(IMAGES_META_PATH)) atomicWriteJson(IMAGES_META_PATH, defaultImagesMeta());
-  if(!fs.existsSync(DEVICES_PATH)) writeJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES', []);
-  if(!fs.existsSync(LOVELACE_PATH)) writeTextRuntimeFile(LOVELACE_PATH, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
-  if(!fs.existsSync(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
-  if(!fs.existsSync(SECURITY_RULES_PATH)) saveSecurityRules(securityRulesDefault());
-  if(!fs.existsSync(ROOMS_SETTINGS_PATH)) saveRoomsSettings(defaultRoomsSettings());
+  if(!runtimeDocumentExists(IMAGES_META_PATH)) atomicWriteJson(IMAGES_META_PATH, defaultImagesMeta());
+  if(!runtimeFileExists(DEVICES_PATH)) writeJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES', []);
+  if(!runtimeFileExists(LOVELACE_PATH)) writeTextRuntimeFile(LOVELACE_PATH, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
+  if(!runtimeDocumentExists(ATTENTION_RULES_PATH)) saveAttentionRules(attentionDefault());
+  if(!runtimeDocumentExists(SECURITY_RULES_PATH)) saveSecurityRules(securityRulesDefault());
+  if(!runtimeDocumentExists(ROOMS_SETTINGS_PATH)) saveRoomsSettings(defaultRoomsSettings());
 }
 
 function atomicWriteJson(file, payload){
@@ -1151,8 +1373,9 @@ function parseJsAssignedArray(file, name){
   }catch(e){ return []; }
 }
 function loadAllDevicesForDiagnostics(){
-  const file=fs.existsSync(DEVICES_PATH)?DEVICES_PATH:FALLBACK_DEVICES_PATH;
-  return parseJsAssignedArray(file,'ALL_DEVICES');
+  const devices = parseJsAssignedArray(DEVICES_PATH,'ALL_DEVICES');
+  if(devices.length) return devices;
+  return parseJsAssignedArray(FALLBACK_DEVICES_PATH,'ALL_DEVICES');
 }
 function listBackups(){
   if(!fs.existsSync(LAYOUT_BACKUP_DIR)) return [];
@@ -1170,8 +1393,9 @@ function restoreLayoutBackup(name){
   const src=path.join(LAYOUT_BACKUP_DIR,name);
   if(!fs.existsSync(src)) throw new Error('Backup не найден');
   fs.mkdirSync(DATA_DIR,{recursive:true});
-  if(fs.existsSync(LAYOUT_PATH)) backupLayout();
-  fs.copyFileSync(src, LAYOUT_PATH);
+  if(runtimeDocumentExists(LAYOUT_PATH)) backupLayout();
+  const restored = JSON.parse(fs.readFileSync(src, 'utf8'));
+  atomicWriteJson(LAYOUT_PATH, restored);
   return loadLayout();
 }
 function deleteLayoutBackup(name){
@@ -1373,11 +1597,12 @@ function normalizeStoredLayout(){
 }
 
 function backupLayoutWithPrefix(prefix){
-  if(!fs.existsSync(LAYOUT_PATH)) return null;
+  const layout = loadLayout();
+  if(!layout) return null;
   fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
   const safePrefix = String(prefix||'layout').replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
   const backupPath = path.join(LAYOUT_BACKUP_DIR, `${safePrefix}-${timestampForFile()}.json`);
-  fs.copyFileSync(LAYOUT_PATH, backupPath);
+  fs.writeFileSync(backupPath, JSON.stringify(layout, null, 2), 'utf8');
   return backupPath;
 }
 function writeLayoutWithoutBackup(layout){
@@ -1417,6 +1642,7 @@ function copyPathRecursive(src, dst){
     for(const name of fs.readdirSync(src)) copyPathRecursive(path.join(src,name), path.join(dst,name));
   } else {
     fs.copyFileSync(src, dst);
+    importRuntimeMirrorToDb(dst);
   }
   return true;
 }
@@ -1447,15 +1673,23 @@ function readTextRuntimeFile(file, fallback=''){
   const key = projectFileKeyForFile(file);
   if(key && allhaDb.hasDb && allhaDb.hasDb()){
     const fromDb = allhaDb.getProjectFile(key, null);
-    if(fromDb !== null && fromDb !== undefined) return fromDb;
+    if(fromDb !== null && fromDb !== undefined){
+      if(!fs.existsSync(file)) runtimeAudit.mirrorMissingButDbPresent += 1;
+      return fromDb;
+    }
     if(fs.existsSync(file)){
       const txt=fs.readFileSync(file,'utf8');
+      bumpRuntimeAudit('fileFallbackReads', key);
       allhaDb.setProjectFile(key, txt, path.extname(file).slice(1) || 'text');
       return txt;
     }
     return fallback;
   }
-  return fs.existsSync(file) ? fs.readFileSync(file,'utf8') : fallback;
+  if(fs.existsSync(file)){
+    bumpRuntimeAudit('fileFallbackReads', key || file);
+    return fs.readFileSync(file,'utf8');
+  }
+  return fallback;
 }
 function writeJsAssignedArray(file, name, arr){
   writeTextRuntimeFile(file, `window.${name} = ${JSON.stringify(arr||[], null, 2)};\n`, 'js');
@@ -1723,14 +1957,6 @@ function backupRoomImage(roomId){
   const active = activeCustomRoomImagePath(roomId);
   return active && fs.existsSync(active) ? backupDataFile(active, `room-${safe}-image`, path.extname(active) || '.img') : null;
 }
-function assertKnownRoomId(roomId){
-  const id = String(roomId||'').trim();
-  if(!id) throw new Error('room_id не указан');
-  if(id === 'overview') throw new Error('overview не является комнатой');
-  const known = new Set(listKnownRoomIds());
-  if(!known.has(id)) throw new Error(`Комната ${id} не найдена в конфигурации`);
-  return id;
-}
 function activeCustomOverviewImagePath(){
   const meta = loadImagesMeta();
   const src = meta.overview?.file;
@@ -1777,33 +2003,48 @@ function imageInfo(kind, roomId){
     maxLongSide: metaInfo?.maxLongSide || null
   };
 }
-function listKnownRoomIds(){
-  const set = new Set();
+function roomKeyVariants(roomId, room){
+  const values = [roomId, room?.id, room?.alias, room?.label, room?.name, room?.title];
+  const out = new Set();
+  for(const v of values){
+    const raw = String(v || '').trim();
+    if(!raw) continue;
+    out.add(raw.toLowerCase());
+    out.add(raw.replace(/[^a-z0-9а-яё]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase());
+    out.add(raw.replace(/\s+/g,' ').toLowerCase());
+  }
+  return out;
+}
+function listKnownRoomIds(options={}){
+  const roomsPath = options.roomsPath || ROOMS_SETTINGS_PATH;
+  const devicesPath = options.devicesPath || (roomsPath === ROOMS_SETTINGS_PATH ? DEVICES_PATH : path.join(path.dirname(roomsPath), 'devices.js'));
+  const ids = new Set();
   try{
-    const devices = parseJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES');
-    for(const d of devices){
-      const rid = String(d?.room || d?.area || '').trim();
-      if(rid && rid !== 'overview' && rid !== 'unassigned') set.add(rid);
+    const rawRooms = readJsonSafe(roomsPath, {rooms:{}});
+    if(rawRooms && isPlainObject(rawRooms.rooms)){
+      for(const id of Object.keys(rawRooms.rooms)) if(id && id !== 'overview') ids.add(id);
     }
   }catch(e){}
   try{
-    const raw = readJsonSafe(ROOMS_SETTINGS_PATH, {rooms:{}});
-    for(const rid of Object.keys(raw.rooms || {})) if(rid && rid !== 'overview') set.add(rid);
+    const devices = parseJsAssignedArray(devicesPath, 'ALL_DEVICES');
+    for(const d of devices){
+      const room = String(d?.room || d?.room_id || '').trim();
+      if(room && room !== 'overview' && room !== 'unassigned') ids.add(room);
+    }
   }catch(e){}
-  return [...set].sort((a,b)=>a.localeCompare(b));
+  return [...ids];
 }
-
-const STANDARD_SENSOR_KEYS = ['temperature','humidity','motion','noise','co2','illuminance'];
-function defaultRoomsSettings(){ return { version: 1, rooms: {}, updatedAt: null }; }
-function normalizeEntityId(value){
-  const v = String(value || '').trim();
-  if(!v) return '';
-  if(!/^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$/.test(v)) throw new Error(`Некорректный entity_id: ${v}`);
-  return v;
+function assertKnownRoomId(roomId){
+  const id = String(roomId||'').trim();
+  if(!id) throw new Error('room_id не указан');
+  if(id === 'overview') throw new Error('overview не является комнатой');
+  const known = new Set(listKnownRoomIds());
+  if(known.size && !known.has(id)) throw new Error(`Комната ${id} не найдена в конфигурации`);
+  return id;
 }
-function normalizeStandardSensors(value){
-  const src = isPlainObject(value) ? value : {};
+function normalizeStandardSensors(src){
   const out = {};
+  if(!isPlainObject(src)) return out;
   for(const key of STANDARD_SENSOR_KEYS){
     const v = normalizeEntityId(src[key]);
     if(v) out[key] = v;
@@ -1816,41 +2057,49 @@ function normalizeRoomSettingsRoom(roomId, value){
   if(Object.prototype.hasOwnProperty.call(current, 'standardSensors')) out.standardSensors = normalizeStandardSensors(current.standardSensors);
   return out;
 }
-function normalizeRoomsSettings(payload){
+function normalizeRoomsSettings(payload, options={}){
   const src = isPlainObject(payload) ? payload : defaultRoomsSettings();
-  const known = new Set(listKnownRoomIds());
   const rooms = {};
-  for(const [roomId, value] of Object.entries(isPlainObject(src.rooms) ? src.rooms : {})){
-    if(!known.has(roomId)) continue;
+  const srcRooms = isPlainObject(src.rooms) ? src.rooms : {};
+  const filterUnknownRooms = options.filterUnknownRooms === true;
+  const explicitKnown = Array.isArray(options.knownRoomIds) ? options.knownRoomIds : null;
+  const known = new Set(explicitKnown || []);
+  // Non-destructive by default: load/DB hydration must never delete rooms or sensors.
+  // Even in filtered mode an empty known set means “unknown”, not “delete everything”.
+  for(const [roomId, value] of Object.entries(srcRooms)){
+    if(filterUnknownRooms && known.size && !known.has(roomId)) continue;
     rooms[roomId] = normalizeRoomSettingsRoom(roomId, value);
   }
-  return { version: Number(src.version) || 1, rooms, updatedAt: src.updatedAt || null };
+  return { version: Number(src.version) || 1, rooms, updatedAt: src.updatedAt || null, ...(src.importSummary ? {importSummary:src.importSummary} : {}) };
 }
 function loadRoomsSettings(roomsPath = ROOMS_SETTINGS_PATH){
-  const fromDbOrFile = readJsonSafe(roomsPath, defaultRoomsSettings());
-  // v4.1.19.3: DB is primary, but standardSensors are safety-merged from the mirror file too.
-  // This recovers bindings after restart/rescan when an older import wrote an empty rooms doc to DB.
-  const mirror = readJsonFileOnly(roomsPath, null);
-  const merged = mergeStandardSensorsMaps(fromDbOrFile, mirror);
-  const normalized = normalizeRoomsSettings(merged);
-  // If DB was missing standardSensors while mirror had them, repair DB immediately.
+  const fromDbOrFile = normalizeRoomsSettings(readJsonSafe(roomsPath, defaultRoomsSettings()), {filterUnknownRooms:false});
+  seedDbStandardSensorsIfEmpty(fromDbOrFile, roomsPath);
+  const withDbSensors = applyDbStandardSensorBindings(fromDbOrFile, roomsPath);
+  // If DB table contains bindings, keep rooms document hydrated, but never write an empty normalized result over DB.
   try{
-    const dbJson = JSON.stringify(normalizeRoomsSettings(fromDbOrFile));
-    const mergedJson = JSON.stringify(normalized);
-    if(dbJson !== mergedJson) atomicWriteJson(roomsPath, normalized);
+    const hasSensors = Object.values(withDbSensors.rooms || {}).some(r => Object.keys(normalizeStandardSensors(r?.standardSensors || {})).length);
+    if(hasSensors && JSON.stringify(fromDbOrFile) !== JSON.stringify(withDbSensors)) atomicWriteJson(roomsPath, withDbSensors);
   }catch(e){}
-  return normalized;
+  return withDbSensors;
 }
 function saveRoomsSettings(payload, roomsPath = ROOMS_SETTINGS_PATH){
-  const next = normalizeRoomsSettings({ ...(payload||{}), updatedAt: new Date().toISOString() });
-  atomicWriteJson(roomsPath, next);
-  return next;
+  const next = normalizeRoomsSettings({ ...(payload||{}), updatedAt: new Date().toISOString() }, {filterUnknownRooms:false});
+  const withDbSensors = syncRoomSettingsAndStandardSensorDb(next, roomsPath);
+  atomicWriteJson(roomsPath, withDbSensors);
+  return withDbSensors;
 }
 function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId);
   const current = loadRoomsSettings(roomsPath);
-  current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: normalizeStandardSensors(sensors || {}) };
-  return saveRoomsSettings(current, roomsPath);
+  const clean = normalizeStandardSensors(sensors || {});
+  current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: clean };
+  try{
+    const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+    if(allhaDb.hasDb && allhaDb.hasDb()) allhaDb.replaceRoomStandardSensorBindings(profileId, levelId, id, clean);
+  }catch(e){ console.warn('[standardSensors] DB room save failed:', e.message); }
+  atomicWriteJson(roomsPath, applyDbStandardSensorBindings(current, roomsPath));
+  return loadRoomsSettings(roomsPath);
 }
 function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId);
@@ -1862,17 +2111,32 @@ function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_
   delete sensors[key];
   room.standardSensors = sensors;
   current.rooms[id] = room;
-  return saveRoomsSettings(current, roomsPath);
+  try{
+    const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+    if(allhaDb.hasDb && allhaDb.hasDb()) allhaDb.replaceRoomStandardSensorBindings(profileId, levelId, id, sensors);
+  }catch(e){ console.warn('[standardSensors] DB clear failed:', e.message); }
+  atomicWriteJson(roomsPath, applyDbStandardSensorBindings(current, roomsPath));
+  return loadRoomsSettings(roomsPath);
 }
 function clearAllRoomStandardSensors(roomId, roomsPath = ROOMS_SETTINGS_PATH){
   const id = assertKnownRoomId(roomId);
   const current = loadRoomsSettings(roomsPath);
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: {} };
-  return saveRoomsSettings(current, roomsPath);
+  try{
+    const { profileId, levelId } = profileLevelFromRoomsPath(roomsPath);
+    if(allhaDb.hasDb && allhaDb.hasDb()) allhaDb.clearAllStandardSensorBindingsForRoom(profileId, levelId, id);
+  }catch(e){ console.warn('[standardSensors] DB clear-all failed:', e.message); }
+  atomicWriteJson(roomsPath, applyDbStandardSensorBindings(current, roomsPath));
+  return loadRoomsSettings(roomsPath);
 }
 function mergeParsedRoomsIntoSettings(parsed, roomsPath = ROOMS_SETTINGS_PATH){
   const currentRaw = loadRoomsSettings(roomsPath);
   const oldRooms = isPlainObject(currentRaw.rooms) ? currentRaw.rooms : {};
+  let dbBindings = {};
+  try{
+    const {profileId, levelId} = profileLevelFromRoomsPath(roomsPath);
+    if(allhaDb.hasDb && allhaDb.hasDb()) dbBindings = allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {};
+  }catch(e){}
   const parsedRooms = new Map();
   for(const d of parsed?.devices || []){
     const id = String(d?.room || '').trim();
@@ -1880,27 +2144,31 @@ function mergeParsedRoomsIntoSettings(parsed, roomsPath = ROOMS_SETTINGS_PATH){
     if(!parsedRooms.has(id)) parsedRooms.set(id, { id, label: d.roomLabel || d.room_name || friendlyRoomLabel(id), source: d.roomSource || 'lovelace-import', entities:0 });
     parsedRooms.get(id).entities += 1;
   }
+  const oldIndex = new Map();
+  for(const [oldId, oldRoom] of Object.entries(oldRooms)){
+    const withDb = { ...oldRoom, standardSensors: { ...normalizeStandardSensors(dbBindings[oldId] || {}), ...normalizeStandardSensors(oldRoom?.standardSensors || {}) } };
+    for(const k of roomKeyVariants(oldId, withDb)) if(k && !oldIndex.has(k)) oldIndex.set(k, {id:oldId, room:withDb});
+  }
   const nextRooms = {};
   for(const [id, meta] of parsedRooms.entries()){
-    const normLabel = String(meta.label || '').trim().toLowerCase();
-    const prev = oldRooms[id] || Object.values(oldRooms).find(r => {
-      const alias = String(r?.alias || '').trim().toLowerCase();
-      const label = String(r?.label || '').trim().toLowerCase();
-      const name = String(r?.name || '').trim().toLowerCase();
-      return !!normLabel && (alias === normLabel || label === normLabel || name === normLabel);
-    }) || {};
+    const keys = roomKeyVariants(id, {alias:meta.label, label:meta.label, name:meta.label});
+    let match = oldRooms[id] ? {id, room:oldRooms[id]} : null;
+    if(!match){ for(const k of keys){ if(oldIndex.has(k)){ match = oldIndex.get(k); break; } } }
+    const prev = match?.room || {};
+    const directDbSensors = normalizeStandardSensors(dbBindings[id] || {});
+    const prevSensors = { ...directDbSensors, ...normalizeStandardSensors(prev.standardSensors || {}) };
     nextRooms[id] = normalizeRoomSettingsRoom(id, {
       ...prev,
       alias: prev.alias || meta.label || id,
+      label: prev.label || meta.label || id,
       source: meta.source || prev.source || 'lovelace-import',
       importedEntities: meta.entities,
       updatedAt: new Date().toISOString(),
-      standardSensors: prev.standardSensors || {}
+      standardSensors: prevSensors
     });
   }
   const next = { version:Number(currentRaw.version)||1, rooms:nextRooms, updatedAt:new Date().toISOString(), importSummary:{ rooms:parsedRooms.size, entities:(parsed?.devices||[]).length, source:'lovelace-import' } };
-  atomicWriteJson(roomsPath, next);
-  return next;
+  return saveRoomsSettings(next, roomsPath);
 }
 function resetInvalidSelectedRoomAfterImport(validRoomIds, uiPath = UI_STATE_PATH){
   try{
@@ -2048,7 +2316,7 @@ async function buildDiagnostics(req=null){
     profiles: profilesDiagnostics(),
     missingInHa: missing.slice(0,200), duplicates: duplicates.slice(0,200), noRoom: noRoom.slice(0,200), noCoordinates: noCoordinates.slice(0,200),
     backups: backupSummary(),
-    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, profilesPath: PROFILES_META_PATH, profilesDir: PROFILES_DIR, activeProfileId: ACTIVE_PROFILE_ID, activeProfileDir: ACTIVE_PROFILE_DIR, activeLevelId: ACTIVE_LEVEL_ID, activeLevelDir: ACTIVE_LEVEL_DIR, levelsMetaPath: levelsMetaPath(ACTIVE_PROFILE_ID), roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: fs.existsSync(IMAGES_META_PATH), layoutExists: fs.existsSync(LAYOUT_PATH), uiStateExists: fs.existsSync(UI_STATE_PATH), roomsSettingsExists: fs.existsSync(ROOMS_SETTINGS_PATH), devicesInData: fs.existsSync(DEVICES_PATH), lovelaceInData: fs.existsSync(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
+    storage: { dataDir: DATA_DIR, layoutPath: LAYOUT_PATH, addonConfigPath: ADDON_CONFIG_PATH, sourceConfigPath: SOURCE_CONFIG_PATH, uiStatePath: UI_STATE_PATH, attentionRulesPath: ATTENTION_RULES_PATH, securityRulesPath: SECURITY_RULES_PATH, profilesPath: PROFILES_META_PATH, profilesDir: PROFILES_DIR, activeProfileId: ACTIVE_PROFILE_ID, activeProfileDir: ACTIVE_PROFILE_DIR, activeLevelId: ACTIVE_LEVEL_ID, activeLevelDir: ACTIVE_LEVEL_DIR, levelsMetaPath: levelsMetaPath(ACTIVE_PROFILE_ID), roomsSettingsPath: ROOMS_SETTINGS_PATH, devicesPath: DEVICES_PATH, lovelacePath: LOVELACE_PATH, dataExists: fs.existsSync(DATA_DIR), imagesDir: DATA_IMAGES_DIR, imagesMetaPath: IMAGES_META_PATH, imagesExists: fs.existsSync(DATA_IMAGES_DIR), imagesMetaExists: runtimeDocumentExists(IMAGES_META_PATH), layoutExists: runtimeDocumentExists(LAYOUT_PATH), uiStateExists: runtimeDocumentExists(UI_STATE_PATH), roomsSettingsExists: runtimeDocumentExists(ROOMS_SETTINGS_PATH), devicesInData: runtimeFileExists(DEVICES_PATH), lovelaceInData: runtimeFileExists(LOVELACE_PATH), fallbackDevicesPath: FALLBACK_DEVICES_PATH, fallbackDevicesExists: fs.existsSync(FALLBACK_DEVICES_PATH) },
     layoutDiagnostics,
     allowedServices: ALLOWED_SERVICES,
     safeServices: SAFE_SERVICES,
@@ -2061,10 +2329,11 @@ async function buildDiagnostics(req=null){
 function loadLayout(layoutPath = LAYOUT_PATH){ return readJsonSafe(layoutPath, {version:1, markers:{}}); }
 function timestampForFile(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function backupLayout(){
-  if(!fs.existsSync(LAYOUT_PATH)) return null;
+  const layout = loadLayout();
+  if(!layout) return null;
   fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
   const backupPath = path.join(LAYOUT_BACKUP_DIR, `layout-${timestampForFile()}.json`);
-  fs.copyFileSync(LAYOUT_PATH, backupPath);
+  fs.writeFileSync(backupPath, JSON.stringify(layout, null, 2), 'utf8');
   return backupPath;
 }
 function saveLayout(layout, layoutPath = LAYOUT_PATH){
@@ -2072,10 +2341,10 @@ function saveLayout(layout, layoutPath = LAYOUT_PATH){
   const normalized = normalizeLayoutPayload(layout || {version:8}, {strict:false});
   const payload = normalized.layout;
   let backupPath = null;
-  if(fs.existsSync(layoutPath)){
+  if(runtimeDocumentExists(layoutPath)){
     fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
     backupPath = path.join(LAYOUT_BACKUP_DIR, `layout-${timestampForFile()}.json`);
-    fs.copyFileSync(layoutPath, backupPath);
+    fs.writeFileSync(backupPath, JSON.stringify(readJsonSafe(layoutPath, emptyLayout()), null, 2), 'utf8');
   }
   atomicWriteJson(layoutPath, payload);
   pruneLayoutBackups(20);
@@ -2500,7 +2769,7 @@ function writeDeviceOutputs(parsed){
     '## Skipped views',
     ...(parsed.stats.skippedViews.length ? parsed.stats.skippedViews.map(x=>`- ${x}`) : ['- none'])
   ].join('\n');
-  fs.writeFileSync(activeLevelPaths().deviceParseReportMd, md+'\n', 'utf8');
+  writeTextRuntimeFile(activeLevelPaths().deviceParseReportMd, md+'\n', 'md');
 }
 
 async function importLovelaceRaw(paths){
@@ -2512,8 +2781,8 @@ async function importLovelaceRaw(paths){
 }
 async function importStoredLovelaceRaw(){
   const file = activeLevelPaths().lovelaceRaw;
-  if(!fs.existsSync(file)) throw new Error('data/lovelace_raw.json не найден. Сначала перечитайте RAW панели из HA.');
-  const rawBundle = readJsonSafe(file, {version:1, views:[]});
+  const rawBundle = readJsonSafe(file, null);
+  if(!rawBundle) throw new Error('lovelace_raw не найден в SQLite или mirror. Сначала перечитайте RAW панели из HA.');
   const registry = await loadHaEntityAreaMap();
   const parsed = parseLovelaceRawBundle(rawBundle, registry);
   writeDeviceOutputs(parsed);
@@ -3009,11 +3278,41 @@ function runtimeStorageDiagnostics(){
     try{ if(fs.existsSync(file)){ const st=fs.statSync(file); size=st.size; mirrorUpdatedAt=st.mtime.toISOString(); } }catch(e){}
     files.push({ key, inDb, mirrorExists: fs.existsSync(file), sourceUsed: inDb ? 'sqlite' : (fs.existsSync(file) ? 'file-fallback-migrated-on-read' : 'default'), mirrorUpdatedAt, sizeBytes:size });
   }
-  return { ...db, mode:'sqlite-primary-json-mirror', documents, files };
+  let roomsDebug = null;
+  try{
+    const rawRooms = readJsonSafe(ROOMS_SETTINGS_PATH, {rooms:{}});
+    const normalizedRooms = normalizeRoomsSettings(rawRooms, {filterUnknownRooms:false});
+    const knownRoomIds = listKnownRoomIds({roomsPath:ROOMS_SETTINGS_PATH, devicesPath:DEVICES_PATH});
+    const {profileId, levelId} = profileLevelFromRoomsPath(ROOMS_SETTINGS_PATH);
+    const bindings = allhaDb.hasDb && allhaDb.hasDb() ? (allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {}) : {};
+    roomsDebug = {
+      dbRoomsCount: Object.keys(rawRooms?.rooms || {}).length,
+      normalizedRoomsCount: Object.keys(normalizedRooms.rooms || {}).length,
+      knownRoomIdsCount: knownRoomIds.length,
+      standardSensorBindingsRooms: Object.keys(bindings).length,
+      standardSensorBindingsCount: Object.values(bindings).reduce((a,b)=>a+Object.keys(b||{}).length,0),
+      devicesSource: runtimeFileSource(DEVICES_PATH),
+      lovelaceRawSource: runtimeDocumentSource(activeLevelPaths().lovelaceRaw)
+    };
+    runtimeAudit.devicesSource = roomsDebug.devicesSource;
+    runtimeAudit.lovelaceRawSource = roomsDebug.lovelaceRawSource;
+  }catch(e){ roomsDebug = { error:e.message }; }
+  return { ...db, mode:'sqlite-primary-json-mirror', documents, files, audit:{...runtimeAudit}, roomsDebug };
 }
 app.get('/api/database/info', (req, res) => {
   try { res.json({ ok:true, database: runtimeStorageDiagnostics() }); }
   catch(e){ res.status(500).json({ error:e.message }); }
+});
+
+app.get('/api/rooms/debug', (req,res)=>{
+  try{
+    const rawRooms = readJsonSafe(ROOMS_SETTINGS_PATH, {rooms:{}});
+    const normalizedRooms = normalizeRoomsSettings(rawRooms, {filterUnknownRooms:false});
+    const knownRoomIds = listKnownRoomIds({roomsPath:ROOMS_SETTINGS_PATH, devicesPath:DEVICES_PATH});
+    const {profileId, levelId} = profileLevelFromRoomsPath(ROOMS_SETTINGS_PATH);
+    const bindings = allhaDb.hasDb && allhaDb.hasDb() ? (allhaDb.getStandardSensorBindingsForLevel(profileId, levelId) || {}) : {};
+    res.json({ ok:true, profileId, levelId, roomsPath:ROOMS_SETTINGS_PATH, devicesPath:DEVICES_PATH, devicesSource:runtimeFileSource(DEVICES_PATH), lovelaceRawSource:runtimeDocumentSource(activeLevelPaths().lovelaceRaw), rawRoomsCount:Object.keys(rawRooms?.rooms||{}).length, normalizedRoomsCount:Object.keys(normalizedRooms.rooms||{}).length, knownRoomIds, standardSensorBindings:bindings, audit:{...runtimeAudit} });
+  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 
 /* ── Mobile access API ──────────────────────────────────────────────── */
@@ -3200,15 +3499,34 @@ function sanitizeClientId(id) {
 function getClientPrefs(clientId) {
   const safe = sanitizeClientId(clientId);
   if(!safe) return {};
-  const dbPrefs = allhaDb.getWebClientSettings(safe);
-  if (dbPrefs) return dbPrefs;
-  return readJsonSafe(path.join(CLIENT_PREFS_DIR, `${safe}.json`), {});
+  const legacyPath = path.join(CLIENT_PREFS_DIR, `${safe}.json`);
+  if(allhaDb.hasDb && allhaDb.hasDb()){
+    const dbPrefs = allhaDb.getWebClientSettings(safe);
+    if(dbPrefs) return dbPrefs;
+    // DB-primary final polish: old client-prefs JSON is migration-only.
+    // If a legacy file appears after the initial DB migration marker was already set,
+    // import it once into web_client_settings and then keep runtime on SQLite.
+    const legacy = readJsonFileOnly(legacyPath, null);
+    if(legacy && isPlainObject(legacy)){
+      runtimeAudit.legacyClientPrefsFallbackReads += 1;
+      const meta = { userAgent:'', name: legacy.name || legacy.alias || safe, alias: legacy.alias || legacy.name || safe, slug: legacy.slug || '' };
+      if(allhaDb.setWebClientSettings(safe, legacy, meta)){
+        runtimeAudit.legacyClientPrefsImported += 1;
+        return allhaDb.getWebClientSettings(safe) || legacy;
+      }
+      return legacy;
+    }
+    return {};
+  }
+  runtimeAudit.legacyClientPrefsFallbackReads += 1;
+  return readJsonSafe(legacyPath, {});
 }
 function saveClientPrefs(clientId, prefs, req) {
   const safe = sanitizeClientId(clientId);
   if(!safe) return false;
   const meta = { userAgent: req?.headers?.['user-agent'] || '', name: prefs?.name || prefs?.alias || safe, alias: prefs?.alias || prefs?.name || safe, slug: prefs?.slug || '' };
-  if (allhaDb.setWebClientSettings(safe, prefs || {}, meta)) return true;
+  if(allhaDb.hasDb && allhaDb.hasDb()) return !!allhaDb.setWebClientSettings(safe, prefs || {}, meta);
+  runtimeAudit.legacyClientPrefsFallbackWrites += 1;
   fs.mkdirSync(CLIENT_PREFS_DIR, { recursive: true });
   atomicWriteJson(path.join(CLIENT_PREFS_DIR, `${safe}.json`), prefs || {});
   return true;

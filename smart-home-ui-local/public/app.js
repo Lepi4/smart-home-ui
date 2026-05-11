@@ -4307,7 +4307,7 @@ async function clearConfig(){
 }
 async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
 function settingsInputActive(){ const a=document.activeElement; return !!(a && a.closest && a.closest('#settings-modal') && a.matches('input,select,textarea,button')); }
-function markDeviceListUserScroll(){ state.deviceListUserScrollUntil = Date.now() + 7000; }
+function markDeviceListUserScroll(){ state.deviceListUserScrollUntil = Date.now() + 30000; }
 function bindDeviceListScrollGuard(){
   const list=el('device-list');
   if(!list || list.__allhaScrollGuard) return;
@@ -4629,7 +4629,7 @@ function isEditingMobileDeviceSettings(){
   return !!(active && active.closest && active.closest('#mobile-devices-list') && active.matches('input,select,textarea,button'));
 }
 function mobileDevicesDraftActive(){ return isEditingMobileDeviceSettings() || Date.now() < Number(state.mobileDeviceSettingsDraftUntil || 0); }
-function markMobileDeviceSettingsDraft(){ state.mobileDeviceSettingsDraftUntil = Date.now() + 12000; }
+function markMobileDeviceSettingsDraft(){ state.mobileDeviceSettingsDraftUntil = Date.now() + 30000; }
 
 function mobileCodeTick(){
   const disp = el('mobile-code-display');
@@ -4684,6 +4684,7 @@ async function loadMobileDevices(force=false){
     const data = await apiJson('api/mobile/devices');
     let profiles=[];
     try{ profiles = (await apiJson('api/profiles')).profiles || []; }catch{}
+    if(!force && mobileDevicesDraftActive()) return;
     const devs = data.devices || [];
     const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${devs.length})`;
     if(!devs.length){ list.innerHTML = '<p class="muted">Нет привязанных устройств</p>'; return; }
@@ -4792,7 +4793,7 @@ function bindMobileSettings(){
 
   const devList = el('mobile-devices-list');
   if(devList){
-    ['focusin','input','change','pointerdown','click'].forEach(ev=>devList.addEventListener(ev, markMobileDeviceSettingsDraft, true));
+    ['focusin','input','change','pointerdown','mousedown','touchstart','click','keydown'].forEach(ev=>devList.addEventListener(ev, markMobileDeviceSettingsDraft, true));
   }
   if(devList) devList.addEventListener('click', async e=>{
     const saveDeviceBtn = e.target.closest('.btn-mobile-save-device');

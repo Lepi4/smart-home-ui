@@ -1,3 +1,56 @@
+## v4.1.21.1 — DB-primary polish / final leftover cleanup
+
+- Imported legacy `/data/client-prefs/<client>.json` into `web_client_settings` on first access when SQLite is available but the DB row is missing.
+- Added `legacyClientPrefsImported` audit counter in `/api/database/info`.
+- `device_parse_report.md` is now written through the runtime text storage wrapper, so it is mirrored into `project_files` while still remaining a diagnostic file.
+- Kept `standard_sensors_bindings.json` as migration-only input; runtime standard sensors remain DB-primary via `standard_sensor_bindings`.
+
+## v4.1.21 — DB-primary final hardening / runtime mirror isolation
+
+- Усилен DB-primary слой: добавлены runtime source helpers и diagnostics counters для JSON/file fallback, mirror-missing-but-DB-present и источников devices/lovelace raw.
+- `standard_sensor_bindings` оставлен главным источником standardSensors; legacy `standard_sensors_bindings.json` используется только как одноразовая миграция при пустой таблице.
+- Generic sync standardSensors больше не очищает DB bindings, если поле `standardSensors` отсутствует в комнате; явная очистка идёт только через clear endpoints.
+- `readJsonSafe` / `readTextRuntimeFile` теперь фиксируют fallback-события и не считают отсутствие mirror-файла отсутствием runtime-документа.
+- `copyPathRecursive` импортирует скопированные runtime JSON/JS/TXT/MD обратно в SQLite, чтобы копирование/restore профилей не оставляло DB старой.
+- `copyIfExists` / `replacePathIfExists` сильнее привязаны к DB-aware copy для runtime-документов и файлов.
+- `mergeParsedRoomsIntoSettings` учитывает DB standardSensor bindings при переносе комнат после Lovelace rescan/import.
+- Web client prefs JSON переведены в migration/emergency fallback: при доступной SQLite runtime читает/пишет только `web_client_settings`.
+- Mobile legacy `mobile-devices.json` не используется при pairing, если SQLite доступна; существующее устройство ищется в DB, fallback только при недоступной DB.
+- Настройки мобильных устройств в серверном UI защищены от async re-render во время редактирования: увеличен draft guard, добавлена проверка после async-загрузки профилей.
+- Scroll guard списка устройств усилен: активный scroll держит защиту дольше, чтобы state polling не возвращал список наверх.
+- Добавлен endpoint `/api/rooms/debug` для проверки rooms normalization, knownRoomIds, DB bindings и источников `devices.js` / `lovelace_raw`.
+
+## v4.1.20 — DB-primary hardening + rooms normalization repair
+
+- Исправлена destructive-нормализация rooms: обычная загрузка больше не фильтрует комнаты по knownRoomIds и не удаляет standardSensors.
+- `listKnownRoomIds()` переведён на контекст текущего rooms/devices path и больше не зависит от глобального `ROOMS_SETTINGS_PATH`.
+- Если knownRoomIds пустой, rooms не очищаются: пустой список known больше не считается доказательством отсутствия комнат.
+- `mergeParsedRoomsIntoSettings()` теперь переносит настройки/standardSensors по room id, alias, label/name и нормализованным названиям.
+- `standard_sensor_bindings` остаётся DB-primary источником привязок standardSensors; rooms document гидратируется из DB при `/api/rooms`.
+- Добавлены DB-primary helpers `runtimeDocumentExists()`, `runtimeFileExists()`, `copyRuntimeDocument()`, `copyRuntimeFile()`.
+- `ensureDataStore()` и создание уровней больше не создают defaults поверх существующих SQLite-документов только из-за отсутствия mirror-файла.
+- `devices.js` больше не уходит в `public/devices.js` fallback только потому, что нет mirror-файла: чтение идёт через `project_files` DB-first.
+- `importStoredLovelaceRaw()` больше не требует физический `lovelace_raw.json`, если RAW уже есть в SQLite.
+- Копирование профилей/уровней и copy settings теперь используют DB-aware копирование JSON/JS runtime-документов.
+- Backup layout теперь создаётся из DB-first `loadLayout()`, а не только через физический файл.
+
+## v4.1.19.5 — hotfix: DB-primary standardSensors repair
+
+- Added canonical SQLite table `standard_sensor_bindings`.
+- Standard room sensors are now stored and restored through DB, not through a runtime mirror file.
+- `/api/rooms` overlays room settings with DB bindings after restart.
+- Lovelace rescan/import preserves standardSensors through DB merge.
+- Save/Clear one/Clear all update the DB table immediately.
+- Legacy mirror/recovery files are used only once to seed the DB table if it is empty, then runtime reads from SQLite.
+- `/api/database/info` now includes `standard_sensor_bindings` count.
+
+## v4.1.19.4 — hotfix: persistent standardSensors recovery
+
+- Added dedicated per-level `standard_sensors_bindings.json` recovery mirror.
+- `/api/rooms` now merges standardSensors from SQLite, JSON mirror, dedicated backup, and migration backups.
+- Saving rooms now updates the dedicated standardSensors backup, so accepted sensors survive add-on restart and Lovelace rescan even if a rooms document is rewritten empty.
+- This hotfix targets the case where sensors visually disappear after restart/rescan but reappear after saving the first sensor.
+
 ## v4.1.19.3 — hotfix DB hydration, mobile settings, scroll
 
 - Исправлена гидрация `standardSensors` после перезапуска add-on и после rescan/import: bindings safety-merge из DB-primary и JSON mirror, затем DB repair.

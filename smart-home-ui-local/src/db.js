@@ -204,6 +204,16 @@ CREATE TABLE IF NOT EXISTS project_files (
   text_value TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS standard_sensor_bindings (
+  profile_id TEXT NOT NULL,
+  level_id TEXT NOT NULL,
+  room_id TEXT NOT NULL,
+  sensor_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(profile_id, level_id, room_id, sensor_type)
+);
+CREATE INDEX IF NOT EXISTS idx_standard_sensor_bindings_level ON standard_sensor_bindings(profile_id, level_id, room_id);
 CREATE INDEX IF NOT EXISTS idx_project_documents_updated ON project_documents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_mobile_devices_alias ON mobile_devices(alias);
 CREATE INDEX IF NOT EXISTS idx_mobile_devices_last_seen ON mobile_devices(last_seen);
@@ -690,6 +700,11 @@ function listProjectDocumentKeys() {
   return all(`SELECT doc_key, doc_type, updated_at FROM project_documents ORDER BY doc_key ASC;`);
 }
 
+function listProjectFileKeys() {
+  if (!hasDb()) return [];
+  return all(`SELECT file_key, file_type, updated_at FROM project_files ORDER BY file_key ASC;`);
+}
+
 function upsertBackupIndex(item = {}) {
   if (!hasDb() || !item.id || !item.filename) return false;
   run(`INSERT INTO backup_index(id, filename, backup_type, size_bytes, meta_json, created_at)
@@ -698,12 +713,78 @@ ON CONFLICT(id) DO UPDATE SET filename=excluded.filename, backup_type=excluded.b
   return true;
 }
 
+
+function normalizeSensorType(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 64);
+}
+function normalizeEntityIdForDb(value) {
+  const v = String(value || '').trim();
+  return /^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$/.test(v) ? v : '';
+}
+function getStandardSensorBindingsForLevel(profileId, levelId) {
+  if (!hasDb()) return {};
+  const rows = all(`SELECT room_id, sensor_type, entity_id FROM standard_sensor_bindings WHERE profile_id=${q(profileId)} AND level_id=${q(levelId)} ORDER BY room_id ASC, sensor_type ASC;`);
+  const out = {};
+  for (const r of rows) {
+    const room = String(r.room_id || '').trim();
+    const type = normalizeSensorType(r.sensor_type);
+    const entity = normalizeEntityIdForDb(r.entity_id);
+    if (!room || !type || !entity) continue;
+    out[room] = out[room] || {};
+    out[room][type] = entity;
+  }
+  return out;
+}
+function getStandardSensorBindingsForRoom(profileId, levelId, roomId) {
+  const allBindings = getStandardSensorBindingsForLevel(profileId, levelId);
+  return allBindings[String(roomId || '').trim()] || {};
+}
+function replaceRoomStandardSensorBindings(profileId, levelId, roomId, sensors = {}) {
+  if (!hasDb()) return false;
+  const pid = String(profileId || '').trim() || 'profile-1';
+  const lid = String(levelId || '').trim() || 'level-1';
+  const rid = String(roomId || '').trim();
+  if (!rid) return false;
+  const now = new Date().toISOString();
+  const statements = [`DELETE FROM standard_sensor_bindings WHERE profile_id=${q(pid)} AND level_id=${q(lid)} AND room_id=${q(rid)};`];
+  for (const [typeRaw, entityRaw] of Object.entries(sensors || {})) {
+    const type = normalizeSensorType(typeRaw);
+    const entity = normalizeEntityIdForDb(entityRaw);
+    if (!type || !entity) continue;
+    statements.push(`INSERT INTO standard_sensor_bindings(profile_id, level_id, room_id, sensor_type, entity_id, updated_at) VALUES(${q(pid)}, ${q(lid)}, ${q(rid)}, ${q(type)}, ${q(entity)}, ${q(now)});`);
+  }
+  run(`BEGIN;\n${statements.join('\n')}\nCOMMIT;`);
+  return true;
+}
+function clearStandardSensorBinding(profileId, levelId, roomId, sensorType) {
+  if (!hasDb()) return false;
+  run(`DELETE FROM standard_sensor_bindings WHERE profile_id=${q(profileId)} AND level_id=${q(levelId)} AND room_id=${q(roomId)} AND sensor_type=${q(normalizeSensorType(sensorType))};`);
+  return true;
+}
+function clearAllStandardSensorBindingsForRoom(profileId, levelId, roomId) {
+  if (!hasDb()) return false;
+  run(`DELETE FROM standard_sensor_bindings WHERE profile_id=${q(profileId)} AND level_id=${q(levelId)} AND room_id=${q(roomId)};`);
+  return true;
+}
+function syncStandardSensorBindingsFromRooms(profileId, levelId, settings = {}) {
+  if (!hasDb()) return false;
+  const rooms = settings && typeof settings === 'object' && settings.rooms && typeof settings.rooms === 'object' ? settings.rooms : {};
+  for (const [roomId, room] of Object.entries(rooms)) {
+    if (!room || typeof room !== 'object') continue;
+    // DB-primary safety: missing standardSensors means “not changed”, not “clear bindings”.
+    // Explicit clears go through clearStandardSensorBinding/clearAllStandardSensorBindingsForRoom.
+    if (!Object.prototype.hasOwnProperty.call(room, 'standardSensors')) continue;
+    replaceRoomStandardSensorBindings(profileId, levelId, roomId, room.standardSensors || {});
+  }
+  return true;
+}
+
 function getInfo() {
   const available = sqliteAvailable();
   if (!available) return { available:false, path:DB_PATH };
   initSchema();
   const counts = {};
-  for (const table of ['mobile_devices','mobile_device_settings','web_clients','web_client_settings','web_sessions','command_log','attention_events','backup_index','project_documents','project_files','server_baseline_settings']) {
+  for (const table of ['mobile_devices','mobile_device_settings','web_clients','web_client_settings','web_sessions','command_log','attention_events','backup_index','project_documents','project_files','standard_sensor_bindings','server_baseline_settings']) {
     try { counts[table] = Number(get(`SELECT COUNT(*) AS count FROM ${table};`)?.count || 0); }
     catch { counts[table] = 0; }
   }
@@ -717,7 +798,8 @@ module.exports = {
   updateMobileLastSeen, updateMobileDevice, deleteMobileDevice, deleteAllMobileDevices,
   createWebSession, validateWebSession,
   upsertWebClient, listWebClients, getWebClient, getWebClientBySlug, createWebClient, touchWebClient, updateWebClient, deleteWebClient, getWebClientSettings, setWebClientSettings,
-  setProjectDocument, getProjectDocument, hasProjectDocument, deleteProjectDocument, clearProjectDocuments, listProjectDocumentKeys,
+  setProjectDocument, getProjectDocument, hasProjectDocument, deleteProjectDocument, clearProjectDocuments, listProjectDocumentKeys, listProjectFileKeys,
   setProjectFile, getProjectFile, upsertBackupIndex,
+  getStandardSensorBindingsForLevel, getStandardSensorBindingsForRoom, replaceRoomStandardSensorBindings, clearStandardSensorBinding, clearAllStandardSensorBindingsForRoom, syncStandardSensorBindingsFromRooms,
   normalizeMobileSettings, normalizeProfileAccess, backupLegacyFile
 };
