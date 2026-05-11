@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## v4.1.19 — Lovelace sections parser + viewer/dropdown/scroll/standardSensors stabilization
+
+- Исправлен парсер Lovelace `sections` dashboards: `sections[].cards[].title` и heading/section title теперь считаются явной комнатой. Карточка `Прочее` больше не переопределяется в `media` из-за сущностей с “Алиса” в названии.
+- Импорт `dashboard-dddd/physical` теперь должен находить 14 комнат и 195 entity в предоставленном YAML: `Прочее`, `Гостиная`, `Кабинет`, `Спальня левая/правая`, санузлы и другие карточки.
+- После импорта обновляется `rooms.json`/SQLite mirror с найденными комнатами, сохраняются старые `standardSensors` для совпавших комнат, а устаревший `selectedRoom` сбрасывается на `overview`.
+- Диагностика импорта и `device_parse_report.md/json` теперь показывают rooms/views/cards/entities, rooms from card titles и список найденных комнат.
+- Добавлены API очистки стандартных датчиков: очистить один тип датчика и очистить все standardSensors комнаты. После очистки предложения снова доступны.
+- UI standardSensors показывает текущий entity, предложенный entity и причину предложения; предложения не применяются автоматически.
+- Добавлена базовая защита от закрытия dropdown/select при live-refresh: при активном поле в настройках render не пересоздаёт форму.
+- Список устройств сохраняет scroll при обновлении HA states, чтобы мобильный список не прыгал наверх.
+- Viewer mode оставлен как режим навигации/просмотра: устройства открываются в read-only modal, управление и admin-редактирование остаются заблокированными.
+- APK и mobile sources не менялись; историческая база mobile остаётся v4.1.10.
+
 ## v4.1.18 — DB-primary read priority + local web clients
 
 - SQLite теперь используется как основной источник чтения runtime JSON-документов проекта; JSON/JS-файлы остаются mirror/export/debug-слоем для диагностики и отката.

@@ -1820,6 +1820,63 @@ function saveRoomStandardSensors(roomId, sensors, roomsPath = ROOMS_SETTINGS_PAT
   current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: normalizeStandardSensors(sensors || {}) };
   return saveRoomsSettings(current, roomsPath);
 }
+function clearRoomStandardSensor(roomId, sensorType, roomsPath = ROOMS_SETTINGS_PATH){
+  const id = assertKnownRoomId(roomId);
+  const key = String(sensorType || '').trim();
+  if(!STANDARD_SENSOR_KEYS.includes(key)) throw new Error(`Неизвестный тип стандартного датчика: ${key}`);
+  const current = loadRoomsSettings(roomsPath);
+  const room = { ...(current.rooms[id] || {}) };
+  const sensors = { ...(room.standardSensors || {}) };
+  delete sensors[key];
+  room.standardSensors = sensors;
+  current.rooms[id] = room;
+  return saveRoomsSettings(current, roomsPath);
+}
+function clearAllRoomStandardSensors(roomId, roomsPath = ROOMS_SETTINGS_PATH){
+  const id = assertKnownRoomId(roomId);
+  const current = loadRoomsSettings(roomsPath);
+  current.rooms[id] = { ...(current.rooms[id] || {}), standardSensors: {} };
+  return saveRoomsSettings(current, roomsPath);
+}
+function mergeParsedRoomsIntoSettings(parsed, roomsPath = ROOMS_SETTINGS_PATH){
+  const currentRaw = readJsonSafe(roomsPath, defaultRoomsSettings());
+  const oldRooms = isPlainObject(currentRaw.rooms) ? currentRaw.rooms : {};
+  const parsedRooms = new Map();
+  for(const d of parsed?.devices || []){
+    const id = String(d?.room || '').trim();
+    if(!id || id === 'overview' || id === 'unassigned') continue;
+    if(!parsedRooms.has(id)) parsedRooms.set(id, { id, label: d.roomLabel || d.room_name || friendlyRoomLabel(id), source: d.roomSource || 'lovelace-import', entities:0 });
+    parsedRooms.get(id).entities += 1;
+  }
+  const nextRooms = {};
+  for(const [id, meta] of parsedRooms.entries()){
+    const prev = oldRooms[id] || Object.values(oldRooms).find(r => String(r?.alias || '').trim() && String(r.alias).trim() === String(meta.label).trim()) || {};
+    nextRooms[id] = normalizeRoomSettingsRoom(id, {
+      ...prev,
+      alias: prev.alias || meta.label || id,
+      source: meta.source || prev.source || 'lovelace-import',
+      importedEntities: meta.entities,
+      updatedAt: new Date().toISOString(),
+      standardSensors: prev.standardSensors || {}
+    });
+  }
+  const next = { version:Number(currentRaw.version)||1, rooms:nextRooms, updatedAt:new Date().toISOString(), importSummary:{ rooms:parsedRooms.size, entities:(parsed?.devices||[]).length, source:'lovelace-import' } };
+  atomicWriteJson(roomsPath, next);
+  return next;
+}
+function resetInvalidSelectedRoomAfterImport(validRoomIds, uiPath = UI_STATE_PATH){
+  try{
+    const ui = readJsonSafe(uiPath, null);
+    if(!ui || typeof ui !== 'object') return false;
+    const selected = String(ui.selectedRoom || '').trim();
+    if(selected && selected !== 'overview' && !validRoomIds.has(selected)){
+      ui.selectedRoom = 'overview';
+      atomicWriteJson(uiPath, ui);
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
 function entityDomain(entityId){ return String(entityId||'').split('.')[0] || ''; }
 function textForSuggestion(device, stateObj){
   const parts = [
@@ -1848,6 +1905,15 @@ function scoreStandardSensorSuggestion(key, entityId, device, stateObj, roomId){
   if(key === 'co2') { if(['carbon_dioxide','co2'].includes(dc)) score += 90; if(has('co2','carbon_dioxide','carbon dioxide','углекисл')) score += 60; if(unit.includes('ppm')) score += 10; }
   return score;
 }
+function standardSensorSuggestionReason(key, entityId, device, stateObj, roomId){
+  const dc = String(stateObj?.attributes?.device_class || device?.device_class || '').toLowerCase();
+  const unit = String(stateObj?.attributes?.unit_of_measurement || '').toLowerCase();
+  const roomLabel = friendlyRoomLabel(roomId);
+  if(String(device?.room || '') === roomId) return `найдено в комнате ${roomLabel}`;
+  if(dc) return `найдено по device_class ${dc}`;
+  if(unit) return `найдено по unit ${unit}`;
+  return `найдено по entity/name для комнаты ${roomLabel}`;
+}
 function standardSensorSuggestionsForRoom(roomId){
   const rid = assertKnownRoomId(roomId);
   const devices = parseJsAssignedArray(DEVICES_PATH, 'ALL_DEVICES');
@@ -1870,7 +1936,7 @@ function standardSensorSuggestionsForRoom(roomId){
       const eid=String(d.entity_id||'');
       const st=statesCache?.get?.(eid);
       const score=scoreStandardSensorSuggestion(key, eid, d, st, rid);
-      return { entity_id:eid, name:d.name || d.friendly_name || st?.attributes?.friendly_name || eid, domain:entityDomain(eid), score, device_class:st?.attributes?.device_class || d.device_class || '', unit:st?.attributes?.unit_of_measurement || '' };
+      return { entity_id:eid, name:d.name || d.friendly_name || st?.attributes?.friendly_name || eid, domain:entityDomain(eid), score, device_class:st?.attributes?.device_class || d.device_class || '', unit:st?.attributes?.unit_of_measurement || '', reason:standardSensorSuggestionReason(key, eid, d, st, rid) }; 
     }).filter(x=>x.score>25).sort((a,b)=>b.score-a.score || a.entity_id.localeCompare(b.entity_id)).slice(0,5);
     out[key]=scored;
   }
@@ -2365,8 +2431,11 @@ function writeDeviceOutputs(parsed){
   writeTextRuntimeFile(DEVICES_PATH, devicesJs, 'js');
   writeTextRuntimeFile(LOVELACE_PATH, lovelaceJs, 'js');
   atomicWriteJson(activeLevelPaths().deviceParseReportJson, parsed.stats);
+  const roomsSettings = mergeParsedRoomsIntoSettings(parsed, ROOMS_SETTINGS_PATH);
+  const validRoomIds = new Set(Object.keys(roomsSettings.rooms || {}));
+  const selectedRoomReset = resetInvalidSelectedRoomAfterImport(validRoomIds, UI_STATE_PATH);
   const md = [
-    '# Device parse report v3.4.13',
+    '# Device parse report v4.1.19',
     '',
     `Generated: ${parsed.stats.generatedAt}`,
     `Source: HA Lovelace RAW`,
@@ -2374,7 +2443,16 @@ function writeDeviceOutputs(parsed){
     `- Dashboards read: ${parsed.stats.dashboards}`,
     `- Views processed: ${parsed.stats.views}`,
     `- Cards with entities: ${parsed.stats.cards}`,
+    `- Rooms detected: ${parsed.stats.rooms || Object.keys(roomsSettings.rooms||{}).length}`,
+    `- Rooms from Lovelace card/section titles: ${parsed.stats.roomsFromCardTitles || 0}`,
     `- Unique entities: ${parsed.stats.entitiesFound}`,
+    `- Selected room reset: ${selectedRoomReset ? 'yes' : 'no'}`,
+    '',
+    '## Views / cards / rooms',
+    ...((parsed.stats.viewDetails||[]).length ? parsed.stats.viewDetails.map(v=>`- ${v.title} (${v.path || ''}, ${v.type || 'view'}): cards ${v.cards}, rooms ${v.rooms}, entities ${v.entities}`) : ['- none']),
+    '',
+    '## Rooms detected',
+    ...((parsed.stats.roomDetails||[]).length ? parsed.stats.roomDetails.map(r=>`- ${r.label || r.id} [${r.id}] · ${r.entities} entities · ${r.source}`) : ['- none']),
     `- Runtime storage: /data/devices.js, /data/lovelace-source.js, /data/devices.json`,
     `- Templates used: ${parsed.stats.templatesUsed.length ? parsed.stats.templatesUsed.join(', ') : 'none'}`,
     '',
@@ -2392,7 +2470,7 @@ async function importLovelaceRaw(paths){
   const registry = await loadHaEntityAreaMap();
   const parsed = parseLovelaceRawBundle(rawBundle, registry);
   writeDeviceOutputs(parsed);
-  return { ...rawBundle, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
+  return { ...rawBundle, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, rooms: parsed.stats.rooms || 0, roomsFromCardTitles: parsed.stats.roomsFromCardTitles || 0, viewDetails: parsed.stats.viewDetails || [], roomDetails: parsed.stats.roomDetails || [], templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
 async function importStoredLovelaceRaw(){
   const file = activeLevelPaths().lovelaceRaw;
@@ -2401,7 +2479,7 @@ async function importStoredLovelaceRaw(){
   const registry = await loadHaEntityAreaMap();
   const parsed = parseLovelaceRawBundle(rawBundle, registry);
   writeDeviceOutputs(parsed);
-  return { ok:true, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
+  return { ok:true, import: { devices: parsed.devices.length, views: parsed.stats.views, cards: parsed.stats.cards, rooms: parsed.stats.rooms || 0, roomsFromCardTitles: parsed.stats.roomsFromCardTitles || 0, viewDetails: parsed.stats.viewDetails || [], roomDetails: parsed.stats.roomDetails || [], templatesUsed: parsed.stats.templatesUsed.length, warnings: parsed.stats.templateWarnings.length, haRegistry: parsed.stats.haRegistry } };
 }
 
 function sendImageFile(res, file, kind='overview', roomId=''){
@@ -2612,6 +2690,8 @@ app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.jso
 app.get('/api/rooms', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...loadRoomsSettings(lp.rooms), knownRooms: roomSourcesForApi() }); }catch(e){res.status(500).json({error:e.message});} });
 app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id) }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); res.json({ ok:true, ...settings }); }catch(e){res.status(400).json({error:e.message});} });
+app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearAllRoomStandardSensors(req.params.room_id, lp.rooms); res.json({ ok:true, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id).suggestions, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); const settings=clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id).suggestions || {}; res.json({ ok:true, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null, ...settings }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
 app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
 app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){res.status(500).json({error:e.message});} });

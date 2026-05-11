@@ -2097,3 +2097,8 @@ body[data-theme="sepia"] .modal-card{background:#fdf5e2;color:#3b2a14;border-col
 .standard-sensor-suggestion code{font-size:11px;background:rgba(255,255,255,.08);border-radius:6px;padding:2px 5px;color:#dfe8f7}
 button.small-secondary{font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:inherit}
 button.small-secondary:disabled{opacity:.45}
+/* v4.1.19: clearer standard sensor suggestions */
+.standard-sensor-current{font-size:12px;color:#c9d5e6;line-height:1.25}
+.standard-sensor-current code{font-size:11px;background:rgba(255,255,255,.08);border-radius:6px;padding:2px 5px;color:#eef5ff}
+.standard-sensor-reason{display:block;color:#8596ad;font-size:11px;line-height:1.25;width:100%}
+.standard-sensors-details .small-danger{margin-left:6px}

@@ -97,10 +97,18 @@ function selectViews(config, viewFilters){
 function cardTitle(card, fallback){
   return String(card?.title || card?.name || card?.label || fallback || card?.type || 'Без группы');
 }
+function normalizeRoomTitle(value){ return String(value || '').replace(/\s+/g, ' ').trim(); }
+function roomIdFromLovelaceTitle(value){
+  const title = normalizeRoomTitle(value);
+  if(!title) return '';
+  // Keep the human Lovelace title as the room id. Unicode ids are safe in JSON and are URL-encoded in API calls.
+  // This prevents cards like "Прочее" from being reclassified as "media" because an entity name contains "Алиса".
+  return title;
+}
 function headingTitle(card){ return String(card?.heading || card?.title || card?.name || '').trim(); }
 function getCardsFromView(view){
   const cards=[];
-  if(Array.isArray(view.cards)) cards.push(...view.cards);
+  if(Array.isArray(view.cards)) cards.push(...view.cards.map(card=>({ ...card, _allhaRoomTitle: normalizeRoomTitle(card?.title || ''), _allhaCardTitleExplicit: !!normalizeRoomTitle(card?.title || '') }))); 
   if(Array.isArray(view.sections)){
     for(const section of view.sections){
       let currentHeading = section.title || '';
@@ -112,7 +120,7 @@ function getCardsFromView(view){
           }
           // В sections dashboard карточки часто идут под heading без title. Сохраняем heading как группу,
           // но name самой карточки оставляем для имени устройства и определения комнаты.
-          cards.push({ ...card, title: card.title || currentHeading || section.title || card.name });
+          cards.push({ ...card, title: card.title || currentHeading || section.title || card.name, _allhaRoomTitle: normalizeRoomTitle(card.title || currentHeading || section.title || ''), _allhaCardTitleExplicit: !!normalizeRoomTitle(card.title || currentHeading || section.title || '') });
         }
       }
     }
@@ -182,13 +190,16 @@ function makeDevice(ref, ctx){
   const category = ctx.cardTitle || 'Без группы';
   const name = ref.name || friendlyFromEntityId(ref.entity_id);
   const haArea = ctx.haArea || null;
+  const explicitRoomTitle = normalizeRoomTitle(ctx.roomTitle || '');
+  const explicitRoomId = ctx.cardTitleIsExplicit ? roomIdFromLovelaceTitle(explicitRoomTitle || category) : '';
   // Приоритет комнаты:
-  // 1) Lovelace card/section title, 2) имя устройства/entity_id, 3) HA Area API, 4) unassigned.
+  // 1) явный Lovelace card/section/heading title, 2) распознавание по названию карточки,
+  // 3) имя устройства/entity_id, 4) HA Area API, 5) unassigned.
   const roomFromCard = canonicalRoomFromText(category, ctx.viewTitle);
   const roomFromName = canonicalRoomFromText(name, ref.entity_id);
-  const panelRoom = roomFromCard !== 'unassigned' ? roomFromCard : roomFromName;
   const haRoom = haArea?.room && haArea.room !== 'unassigned' ? haArea.room : '';
-  const room = panelRoom !== 'unassigned' ? panelRoom : (haRoom || 'unassigned');
+  const room = explicitRoomId || (roomFromCard !== 'unassigned' ? roomFromCard : (roomFromName !== 'unassigned' ? roomFromName : (haRoom || 'unassigned')));
+  const roomLabel = explicitRoomId ? (explicitRoomTitle || category) : friendlyRoomLabel(room);
   const sourceKey = `${ctx.viewTitle || 'RAW'}::${category}`;
   return {
     entity_id: ref.entity_id,
@@ -202,8 +213,9 @@ function makeDevice(ref, ctx){
     label: name,
     category,
     room,
+    roomLabel,
     haArea: haArea ? { areaId: haArea.areaId || '', areaName: haArea.areaName || '', room: haArea.room || '' } : null,
-    roomSource: roomFromCard !== 'unassigned' ? 'lovelace-card' : (roomFromName !== 'unassigned' ? 'device-name' : (haRoom ? 'ha-area' : 'unassigned')),
+    roomSource: explicitRoomId ? 'lovelace-card-title' : (roomFromCard !== 'unassigned' ? 'lovelace-card' : (roomFromName !== 'unassigned' ? 'device-name' : (haRoom ? 'ha-area' : 'unassigned'))),
     zone: null,
     emoji: DOMAIN_EMOJI[domain] || '•',
     sourceKey,
@@ -215,7 +227,8 @@ function parseLovelaceRawBundle(bundle, haRegistry={}){
   const generatedAt = new Date().toISOString();
   const devicesById = new Map();
   const viewsOut = [];
-  const stats = { generatedAt, dashboards:0, views:0, cards:0, entitiesFound:0, templatesUsed:new Set(), templateWarnings:[], skippedViews:[], haRegistry: haRegistry.meta || null };
+  const stats = { generatedAt, dashboards:0, views:0, cards:0, rooms:0, roomsFromCardTitles:0, viewDetails:[], roomDetails:[], entitiesFound:0, templatesUsed:new Set(), templateWarnings:[], skippedViews:[], haRegistry: haRegistry.meta || null };
+  const roomsById = new Map();
   const results = bundle?.results || [];
   for(const result of results){
     if(!result.ok) continue;
@@ -227,9 +240,12 @@ function parseLovelaceRawBundle(bundle, haRegistry={}){
     for(const {view,index} of selectedViews){
       stats.views += 1;
       const viewTitle = view.title || view.path || `Вкладка ${index}`;
+      const viewDetail = { dashboardPath: result.dashboardPath || '', title:viewTitle, path:view.path || String(index), type:view.type || (Array.isArray(view.sections)?'sections':'cards'), cards:0, rooms:0, entities:0 };
+      const viewRoomIds = new Set();
       const cardsOut=[];
       for(const originalCard of getCardsFromView(view)){
         const cTitle = cardTitle(originalCard, viewTitle);
+        const explicitTitle = normalizeRoomTitle(originalCard._allhaRoomTitle || (originalCard._allhaCardTitleExplicit ? cTitle : ''));
         const sourceKey = `${viewTitle}::${cTitle}`;
         const resolved = flattenCardForEntityCollection(originalCard, config, stats);
         const refs = collectEntityRefs(resolved, [], { name: resolved.name || resolved.label, icon: resolved.icon });
@@ -241,15 +257,28 @@ function parseLovelaceRawBundle(bundle, haRegistry={}){
         const cardDevices = [];
         for(const ref of uniqueRefs){
           const existing = devicesById.get(ref.entity_id);
-          const device = existing || makeDevice(ref, { viewTitle, cardTitle:cTitle, cardType:originalCard.type || resolved.type || '', haArea: haRegistry.entityArea?.get(ref.entity_id) });
+          const device = existing || makeDevice(ref, { viewTitle, cardTitle:cTitle, roomTitle:explicitTitle, cardTitleIsExplicit:!!originalCard._allhaCardTitleExplicit, cardType:originalCard.type || resolved.type || '', haArea: haRegistry.entityArea?.get(ref.entity_id) });
           if(!existing) devicesById.set(ref.entity_id, device);
           cardDevices.push(device);
+          if(device.room && device.room !== 'unassigned'){
+            viewRoomIds.add(device.room);
+            if(!roomsById.has(device.room)) roomsById.set(device.room, { id:device.room, label:device.roomLabel || friendlyRoomLabel(device.room), source:device.roomSource || 'detected', firstSourceKey:sourceKey, entities:0 });
+            roomsById.get(device.room).entities += 1;
+          }
         }
-        cardsOut.push({ title:cTitle, canonicalRoom:canonicalRoomFromText(cTitle, viewTitle), zone:null, sourceKey, devices:cardDevices });
+        viewDetail.cards += 1;
+        viewDetail.entities += cardDevices.length;
+        const cardRoom = explicitTitle ? roomIdFromLovelaceTitle(explicitTitle) : canonicalRoomFromText(cTitle, viewTitle);
+        cardsOut.push({ title:cTitle, roomTitle: explicitTitle || cTitle, canonicalRoom:cardRoom, zone:null, sourceKey, devices:cardDevices });
       }
-      viewsOut.push({ title:viewTitle, path:view.path || String(index), cards:cardsOut });
+      viewDetail.rooms = viewRoomIds.size;
+      stats.viewDetails.push(viewDetail);
+      viewsOut.push({ title:viewTitle, path:view.path || String(index), type:view.type || (Array.isArray(view.sections)?'sections':'cards'), cards:cardsOut });
     }
   }
+  stats.roomDetails = [...roomsById.values()].sort((a,b)=>String(a.label||a.id).localeCompare(String(b.label||b.id),'ru'));
+  stats.rooms = stats.roomDetails.length;
+  stats.roomsFromCardTitles = stats.roomDetails.filter(r=>r.source==='lovelace-card-title').length;
   const devices = [...devicesById.values()].sort((a,b)=>String(a.sourceKey).localeCompare(String(b.sourceKey),'ru') || a.entity_id.localeCompare(b.entity_id));
   stats.entitiesFound = devices.length;
   const source = { version:2, generatedAt, generatedFrom:'ha-lovelace-raw', haRegistry: haRegistry.meta || null, views:viewsOut };
@@ -276,6 +305,8 @@ module.exports = {
   unwrapLovelaceConfig,
   selectViews,
   cardTitle,
+  normalizeRoomTitle,
+  roomIdFromLovelaceTitle,
   headingTitle,
   getCardsFromView,
   resolveButtonCardTemplates,

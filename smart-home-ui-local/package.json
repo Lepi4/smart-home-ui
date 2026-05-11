@@ -1,6 +1,6 @@
 {
   "name": "allha-2d-ha-addon",
-  "version": "4.1.18",
+  "version": "4.1.19",
   "private": true,
   "type": "commonjs",
   "scripts": {
