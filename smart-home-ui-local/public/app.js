@@ -3869,7 +3869,7 @@ async function loadStandardSensorSuggestions(roomId){
     showToast('Предложения датчиков обновлены');
   }catch(e){ showToast('Не удалось подобрать датчики: '+e.message); }
 }
-function acceptStandardSensorSuggestion(roomId, key){
+async function acceptStandardSensorSuggestion(roomId, key){
   const rid=normalizedRoomId(roomId);
   const s=suggestionForStandardSensor(rid, key);
   if(!s?.entity_id){ showToast('Нет предложенного датчика для принятия'); return false; }
@@ -3889,7 +3889,8 @@ function acceptStandardSensorSuggestion(roomId, key){
   if(current) current.textContent=s.entity_id;
   const btn=field?.querySelector('[data-accept-standard-sensor]');
   if(btn) btn.disabled=true;
-  showToast('Датчик принят. Нажмите «Сохранить датчики».');
+  showToast('Датчик принят. Сохраняю в БД...');
+  await saveOneStandardSensor(rid, key, s.entity_id);
   return true;
 }
 
@@ -3930,8 +3931,8 @@ function handleStandardSensorControlClick(e){
   }
   if(btn.matches('[data-accept-standard-sensor]')){
     const key = btn.dataset.acceptStandardSensor || '';
-    if(!beginStandardSensorAction('accept', roomId, key, 800)) return true;
-    try{ acceptStandardSensorSuggestion(roomId, key); } finally { setTimeout(()=>endStandardSensorAction('accept', roomId, key), 250); }
+    if(!beginStandardSensorAction('accept', roomId, key, 2500)) return true;
+    Promise.resolve(acceptStandardSensorSuggestion(roomId, key)).finally(()=>endStandardSensorAction('accept', roomId, key));
     return true;
   }
   if(btn.matches('[data-save-standard-sensors]')){
@@ -4015,6 +4016,31 @@ function readStandardSensorInputs(roomId){
   console.debug('[ALLHA-2D][standardSensors] read inputs', {roomId:rid, keys:Object.keys(standardSensors), fromDom:!!card});
   return standardSensors;
 }
+
+async function saveOneStandardSensor(roomId, key, entityId){
+  if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return false; }
+  const rid=normalizedRoomId(roomId);
+  const value=String(entityId||'').trim();
+  if(!value){ showToast('entity_id не указан'); return false; }
+  try{
+    const prev=state.roomsSettings;
+    const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/${encodeURIComponent(key)}/save`, { method:'POST', body:JSON.stringify({entity_id:value}) });
+    const verified = response?.verifiedRoomBinding && typeof response.verifiedRoomBinding==='object' ? response.verifiedRoomBinding : {};
+    if(String(verified?.[key]||'').trim() !== value) throw new Error('Сервер не подтвердил сохранение датчика');
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, verified));
+    clearLocalStandardSensorDrafts(rid);
+    renderRoomsZonesManager(true);
+    render();
+    showToast('Датчик сохранён и подтверждён БД');
+    return true;
+  }catch(e){
+    showToast('Ошибка сохранения датчика: '+e.message);
+    console.error('[ALLHA-2D][standardSensors] save-one failed', e);
+    return false;
+  }
+}
+
+
 async function saveRoomStandardSensors(roomId){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
   const rid=normalizedRoomId(roomId);
