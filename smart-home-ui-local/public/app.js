@@ -898,11 +898,8 @@ const STANDARD_SENSOR_DEFS = [
 ];
 function standardSensorsForRoom(roomId){
   const rid=normalizedRoomId(roomId);
-  const entry = state.roomsSettings?.rooms?.[rid];
-  if(entry && entry.standardSensors && typeof entry.standardSensors === 'object' && Object.keys(entry.standardSensors).length) return entry.standardSensors;
-  const bindings = state.roomsSettings?.standardSensorBindings?.[rid];
-  if(bindings && typeof bindings === 'object' && Object.keys(bindings).length) return bindings;
-  return null;
+  const sensors = standardSensorsForSettings(rid);
+  return Object.keys(sensors).length ? sensors : null;
 }
 function findClimateEntity(r, kind){
   const configured = standardSensorsForRoom(r.id);
@@ -3712,7 +3709,7 @@ async function loadImagesInfo(){
 async function loadRoomsSettings(){
   try{
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson('api/rooms'));
-    clientTrace('loadRoomsSettings api/rooms hydrated', {rooms:Object.keys(state.roomsSettings?.rooms||{}).length, bindingRooms:Object.keys(state.roomsSettings?.standardSensorBindings||{}).length});
+    clientTrace('loadRoomsSettings api/rooms hydrated', {rooms:Object.keys(state.roomsSettings?.rooms||{}).length, bindingRooms:Object.keys(state.roomsSettings?.standardSensorBindings||{}).length, cacheRooms:Object.keys(state.standardSensorBindingsCache||{}).length, standardSensorBindings:state.roomsSettings?.standardSensorBindings, cache:state.standardSensorBindingsCache});
     refreshRuntimeRooms();
     renderRooms();
     renderRoomsZonesManager();
@@ -3752,10 +3749,24 @@ function isEditingStandardSensorInputs(){
   return !!(active && active.closest && active.closest('#rooms-zones-manager') && active.matches('[data-standard-sensor-input]'));
 }
 
+
+function mergeStandardSensorBindingsIntoCache(bindings){
+  if(!state.standardSensorBindingsCache || typeof state.standardSensorBindingsCache!=='object') state.standardSensorBindingsCache = {};
+  const src = bindings && typeof bindings==='object' ? bindings : {};
+  for(const [ridRaw, sensorsRaw] of Object.entries(src)){
+    const rid = normalizedRoomId(ridRaw);
+    const clean = canonicalStandardSensorsForCompare(sensorsRaw || {});
+    if(Object.keys(clean).length) state.standardSensorBindingsCache[rid] = { ...(state.standardSensorBindingsCache[rid]||{}), ...clean };
+  }
+  clientTrace('standardSensorBindings cache updated', {bindingRooms:Object.keys(state.standardSensorBindingsCache||{}), cache:state.standardSensorBindingsCache});
+}
+
+
 function hydrateRoomsSettingsFromStandardSensorBindings(settings){
   const out = settings && typeof settings==='object' ? settings : {version:1, rooms:{}};
   out.rooms = out.rooms && typeof out.rooms==='object' ? out.rooms : {};
   const bindings = out.standardSensorBindings && typeof out.standardSensorBindings==='object' ? out.standardSensorBindings : {};
+  mergeStandardSensorBindingsIntoCache(bindings);
   for(const [ridRaw, sensorsRaw] of Object.entries(bindings)){
     const rid = normalizedRoomId(ridRaw);
     const clean = {};
@@ -3787,9 +3798,14 @@ function standardSensorsForSettings(roomId){
   const rid=normalizedRoomId(roomId);
   const fromRoom = state.roomsSettings?.rooms?.[rid]?.standardSensors;
   const fromBindings = state.roomsSettings?.standardSensorBindings?.[rid];
-  const merged = { ...(fromRoom && typeof fromRoom==='object' ? fromRoom : {}), ...(fromBindings && typeof fromBindings==='object' ? fromBindings : {}) };
+  const fromCache = state.standardSensorBindingsCache?.[rid];
+  const merged = {
+    ...(fromRoom && typeof fromRoom==='object' ? fromRoom : {}),
+    ...(fromBindings && typeof fromBindings==='object' ? fromBindings : {}),
+    ...(fromCache && typeof fromCache==='object' ? fromCache : {})
+  };
   const cleanMerged = canonicalStandardSensorsForCompare(merged);
-  clientTrace('standardSensorsForSettings', {roomId:rid, fromRoom, fromBindings, result:cleanMerged});
+  clientTrace('standardSensorsForSettings', {roomId:rid, fromRoom, fromBindings, fromCache, result:cleanMerged});
   return cleanMerged;
 }
 
@@ -3979,7 +3995,9 @@ function renderRoomsZonesManager(force=false){
     rememberAllStandardSensorInputs();
     return;
   }
-  rememberAllStandardSensorInputs();
+  // Forced renders happen after save/clear/API hydration and are about to replace the old DOM.
+  // Do not re-read old inputs here, otherwise cleared/old drafts are written back to localStorage.
+  if(!force) rememberAllStandardSensorInputs();
   const admin = canEditLayout();
   const rooms=layoutEditableRooms();
   if(!rooms.length){ box.innerHTML='<p class="muted">Комнаты пока не найдены. Список комнат появится только после настройки источников текущего уровня и сканирования Lovelace / HA Areas / entity names.</p>'; return; }
@@ -4076,8 +4094,8 @@ async function saveRoomStandardSensors(roomId){
       throw new Error('Сервер не подтвердил сохранение датчиков в базе данных');
     }
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, verified));
-    clearLocalStandardSensorDrafts(rid);
     renderRoomsZonesManager(true);
+    clearLocalStandardSensorDrafts(rid);
     render();
     showToast(Object.keys(verified).length ? 'Стандартные датчики сохранены и подтверждены БД' : 'Все стандартные датчики комнаты очищены');
   }catch(e){
