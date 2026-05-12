@@ -153,10 +153,10 @@ function currentLogLevel(){
   if(cachedLogLevel && (now - cachedLogLevelLoadedAt) < 30000) return cachedLogLevel;
   try{
     const cfg = readJsonSafe(ADDON_CONFIG_PATH, {}) || {};
-    cachedLogLevel = String(cfg.logLevel || 'debug').toLowerCase();
+    cachedLogLevel = String(cfg.logLevel || 'info').toLowerCase();
     cachedLogLevelLoadedAt = now;
     return cachedLogLevel;
-  }catch(e){ return cachedLogLevel || 'debug'; }
+  }catch(e){ return cachedLogLevel || 'info'; }
 }
 function setCachedLogLevel(level){
   cachedLogLevel = String(level || 'info').toLowerCase();
@@ -182,7 +182,7 @@ function redactForLog(value){
     }));
   }catch(e){ return value; }
 }
-const LOG_BUFFER_LIMIT = 2000;
+const LOG_BUFFER_LIMIT = 300;
 const logBuffer = [];
 function allhaLog(level, scope, message, details){
   if(!shouldLog(level)) return;
@@ -2644,14 +2644,8 @@ app.use((req, res, next) => {
 });
 app.use(express.json({limit:'1mb'}));
 
-app.use((req,res,next)=>{
-  try{
-    if(req.path.includes('/standard-sensors') || req.path === '/api/rooms' || req.path === '/api/rooms/debug' || req.path.includes('/diagnostics')){
-      logDebug('http-trace', 'request', {method:req.method, path:req.path, query:req.query, body:req.body});
-    }
-  }catch(e){}
-  next();
-});
+// Diagnostic HTTP trace disabled in clean build.
+app.use((req,res,next)=>next());
 
 app.get('/api/dashboard-info', (req,res)=>{
   try{

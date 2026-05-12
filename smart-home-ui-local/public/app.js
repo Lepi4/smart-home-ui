@@ -1,11 +1,11 @@
 
-window.ALLHA_DIAGNOSTIC_BUILD = true;
+window.ALLHA_DIAGNOSTIC_BUILD = false;
 window.ALLHA_CLIENT_TRACE = window.ALLHA_CLIENT_TRACE || [];
 function clientTrace(message, details){
+  if(!window.ALLHA_DIAGNOSTIC_BUILD) return;
   const row={ts:new Date().toISOString(), message:String(message||''), details:details||{}};
-  try{ window.ALLHA_CLIENT_TRACE.push(row); if(window.ALLHA_CLIENT_TRACE.length>500) window.ALLHA_CLIENT_TRACE.shift(); }catch(e){}
+  try{ window.ALLHA_CLIENT_TRACE.push(row); if(window.ALLHA_CLIENT_TRACE.length>200) window.ALLHA_CLIENT_TRACE.shift(); }catch(e){}
   try{ console.debug('[ALLHA-2D][client-trace]', row.message, row.details); }catch(e){}
-  try{ fetch('api/diagnostics/client-trace', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(row)}).catch(()=>{}); }catch(e){}
 }
 
 const state = {
