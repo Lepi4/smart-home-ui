@@ -1160,3 +1160,9 @@ Cleanup release after virtual rooms and StandardSensors stabilization. Docker ar
 
 Cleanup release after v4.3.2. Keeps the working virtual rooms, StandardSensors, Attention mode, and control/viewer/admin access fixes. Diagnostics now include a consistent one-minute client-side view of SSE/render load: batch/min, state_changed/min, patch/min and render/min.
 
+
+
+## v5.0.2
+- HA Ingress root uses a fixed Server UI identity for per-client profile/settings actions.
+- FAQ/Diagnostics modals open above Settings without stacked backdrops.
+- Modal-open state hides mobile bottom bar reliably.

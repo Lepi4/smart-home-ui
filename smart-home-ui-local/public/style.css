@@ -4032,6 +4032,10 @@ body.kiosk-mode.kiosk-rooms-open .kiosk-rooms-btn{
 @media(max-width:760px){.attention-row{grid-template-columns:1fr!important}.attention-row-actions button{flex:1 1 150px}}
 
 
-/* v5.0.1: FAQ/Diagnostics opened from Settings must appear above Settings. */
-.modal.modal-top{z-index:2600!important;}
-.modal.modal-top .modal-card{box-shadow:0 28px 100px rgba(0,0,0,.58)!important;}
+/* v5.0.2: FAQ/Diagnostics opened from Settings must appear above Settings without stacked translucent backdrops. */
+.modal.modal-top{z-index:3600!important;background:rgba(0,0,0,.62)!important;}
+.modal.modal-top .modal-card{box-shadow:0 28px 100px rgba(0,0,0,.62)!important;}
+body.child-modal-open #settings-modal:not(.hidden){background:transparent!important;pointer-events:none!important;}
+body.child-modal-open #settings-modal:not(.hidden) .modal-card{visibility:hidden!important;}
+body.modal-open .mobile-menu-bar,
+body.child-modal-open .mobile-menu-bar{display:none!important;visibility:hidden!important;pointer-events:none!important;}

@@ -6520,7 +6520,9 @@ function renderKioskWidget(){
 }
 function startClock(){ if(state.clockTimer) clearInterval(state.clockTimer); renderKioskWidget(); state.clockTimer=setInterval(renderKioskWidget, 1000); }
 async function openInfoModal(tab='summary'){
-  state.infoTab=tab; el('info-modal').classList.remove('hidden'); await loadDiagnostics();
+  state.infoTab=tab;
+  openModal('info-modal');
+  await loadDiagnostics();
 }
 async function loadDiagnostics(){
   const box=el('info-content'); if(box) box.textContent='Загрузка диагностики...';
@@ -7067,8 +7069,8 @@ function bindGlobal(){
   const bwr=el('btn-level-setup-refresh'); if(bwr) bwr.onclick=async()=>{ await loadLevelsInfo(); renderLevelSetupWizard(state.levelSetupWizardId); };
   el('btn-close-device').onclick=closeDeviceModal;
   el('device-modal').addEventListener('click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
-  el('btn-close-info').onclick=()=>el('info-modal').classList.add('hidden');
-  el('info-modal').addEventListener('click',e=>{if(e.target.id==='info-modal')el('info-modal').classList.add('hidden')});
+  el('btn-close-info').onclick=()=>closeModal('info-modal');
+  el('info-modal').addEventListener('click',e=>{if(e.target.id==='info-modal')closeModal('info-modal')});
   async function loadFaqContent(){
     const box=el('faq-content');
     if(!box || box.dataset.loaded==='1') return;
@@ -7510,8 +7512,11 @@ document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-
 
 /* v3.4.12: keep mobile bottom bar and kiosk controls from covering open modals */
 function syncModalOpenClass(){
-  const anyOpen = Array.from(document.querySelectorAll('.modal')).some(m=>!m.classList.contains('hidden'));
+  const openModals = Array.from(document.querySelectorAll('.modal')).filter(m=>!m.classList.contains('hidden'));
+  const anyOpen = openModals.length > 0;
+  const topOpen = openModals.some(m=>m.classList.contains('modal-top'));
   document.body.classList.toggle('modal-open', anyOpen);
+  document.body.classList.toggle('child-modal-open', topOpen);
 }
 const _modalClassObserver = new MutationObserver(syncModalOpenClass);
 window.addEventListener('DOMContentLoaded',()=>{

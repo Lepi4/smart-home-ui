@@ -3627,7 +3627,7 @@ app.get('/', (req,res)=>{
     || !!req.query?._mt
     || !!req.query?._did
     || String(req.query?._mobile || req.query?.mobile || '') === '1';
-  // v5.0.1: LAN/local root must keep the web-client registration/start page.
+  // v5.0.2: LAN/local root must keep the web-client registration/start page.
   // Only real Home Assistant Ingress (headers/path) or explicit ingress flags open the app on root.
   // This prevents http://IP:8099/ from becoming an anonymous server UI without /client/<slug>.
   const addonEntry = isIngressRequest(req) || String(req.query?.ingress || req.query?.ha_addon || '') === '1';
@@ -4149,23 +4149,19 @@ app.post('/api/profiles/:id/activate', (req,res)=>{
   }catch(e){ validationErrorResponse(req,res,e); }
 });
 app.post('/api/profiles/:id/activate-for-client', express.json(), (req,res)=>{
-  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
-  if(!cid) return res.status(400).json({ ok:false, error: 'X-Client-ID required' });
   try{
+    const ident = currentClientIdentity(req);
     const profileId = sanitizeProfileId(req.params.id);
     const meta = loadProfilesMeta();
     if(!meta.profiles.some(p=>p.id===profileId)) return res.status(404).json({ ok:false, error: 'Profile not found' });
-    const existing = getClientPrefs(cid);
     const levels = loadLevelsMeta(profileId);
     const levelId = levels.activeLevelId || 'level-1';
-    existing.activeProfileId = profileId;
-    existing.activeLevelId = levelId;
-    existing.navigation = { ...(existing.navigation || {}), profileId, levelId };
-    saveClientPrefs(cid, existing, req);
-    // v5.0.1: per-client activation must not change the global/server active profile.
-    // It only stores the active profile/level for the requesting web/mobile client.
+    const patch = { activeProfileId: profileId, activeLevelId: levelId, navigation: { profileId, levelId } };
+    // v5.0.2: use the resolved request identity. HA Ingress/root is the fixed Server client,
+    // while /client/<slug> remains a normal web client and mobile remains a mobile device.
+    saveCurrentClientSettings(req, patch);
     ensureLevelDirs(profileId, levelId);
-    res.json({ ok:true, activeProfileId: profileId, activeLevelId: levelId, profiles: profilesDiagnostics(), levels: levelsDiagnostics(profileId) });
+    res.json({ ok:true, client: { type: ident.type, id: ident.id, label: identityLabel(ident) }, activeProfileId: profileId, activeLevelId: levelId, profiles: profilesDiagnostics(), levels: levelsDiagnostics(profileId) });
   }catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/profiles/:id/copy-from', (req,res)=>{ try{res.json(copyProfileData(req.params.id, req.body||{}, req));}catch(e){ validationErrorResponse(req,res,e); } });
@@ -5457,6 +5453,11 @@ function currentClientIdentity(req){
       return { type:'server_ui', id:'server-ui', mobile:false, device:null };
     }
   }catch(_){}
+  // v5.0.2: HA add-on / Ingress root is a fixed server-side client, not a /client/<slug> web client.
+  // Ignore random/stale browser X-Client-ID values in Ingress so "Для этого устройства" can target Server UI only.
+  if(isIngressRequest(req)){
+    return { type:'server_ui', id:'server-ui', mobile:false, device:null, server:true, name:'Server' };
+  }
   // v4.2.0.26: never let a random X-Client-ID create/touch a web client.
   // It is valid only when it belongs to an existing web client, or when a valid
   // /client/<slug> is present in header/cookie. This prevents mobile failed-pairing
@@ -5895,7 +5896,7 @@ function resolveRequestContext(req, levelIdOverride = null){
 function identityLabel(ident){
   if(!ident) return 'Неизвестный клиент';
   if(ident.type === 'default') return 'Настройки по умолчанию';
-  if(ident.type === 'server_ui') return 'Серверный UI по умолчанию';
+  if(ident.type === 'server_ui') return 'Server';
   if(ident.type === 'web_client') return `Web-клиент ${ident.name || ident.alias || ident.id}`;
   if(ident.type === 'mobile_device') return `Mobile ${ident.name || ident.alias || ident.id}`;
   return `${ident.type}:${ident.id}`;

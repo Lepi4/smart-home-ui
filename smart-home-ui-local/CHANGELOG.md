@@ -273,3 +273,9 @@ See package reports and roadmap documents for earlier v4.2.0.x changes.
 - Открытая панель действий теперь находится выше стрелок по z-index и может перекрывать их, как задумано.
 - В режиме редактирования расширены безопасные пределы pan: край карты можно довести примерно на 20% за центр экрана, но карту нельзя полностью потерять.
 - Long-tap pan не добавлялся, чтобы не конфликтовать с выбором объектов.
+
+
+## v5.0.2
+- HA Ingress root uses a fixed Server UI identity for per-client profile/settings actions.
+- FAQ/Diagnostics modals open above Settings without stacked backdrops.
+- Modal-open state hides mobile bottom bar reliably.
