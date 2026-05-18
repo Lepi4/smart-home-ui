@@ -52,12 +52,15 @@ function _cleanText(value, max = 120) {
 function _normalizeDeviceSettings(raw = {}) { return db.normalizeMobileSettings(raw); }
 function _normalizeDeviceAccess(raw = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
-  const accessMode = ['viewer','control','admin'].includes(String(source.accessMode || '')) ? String(source.accessMode) : 'viewer';
+  const accessMode = ['viewer','control','admin'].includes(String(source.accessMode || '')) ? String(source.accessMode) : 'control';
   const profileAccess = db.normalizeProfileAccess(source.profileAccess || {});
   return { accessMode, profileAccess };
 }
+function _mobileAliasFromMeta(meta = {}) {
+  return _cleanText(meta.mobileDeviceAlias || meta.alias || meta.deviceName || meta.clientAlias || meta.deviceAlias || meta.name, 64);
+}
 function _deviceDefaultName(device_id, meta = {}) {
-  const explicit = _cleanText(meta.deviceName || meta.name, 64);
+  const explicit = _mobileAliasFromMeta(meta);
   if (explicit) return explicit;
   const model = _cleanText(meta.model || meta.deviceModel, 64);
   if (model) return model;
@@ -66,8 +69,8 @@ function _deviceDefaultName(device_id, meta = {}) {
     || ua.match(/Android\s+[0-9.]+;\s*([^;)]+)/i)?.[1];
   if (androidModel && !/wv|mobile|linux/i.test(androidModel)) return androidModel.slice(0, 64);
   const platform = _cleanText(meta.platform, 32);
-  if (/android/i.test(platform || ua)) return `Android ${String(device_id).slice(0, 6)}`;
-  if (/iphone|ipad|ios/i.test(platform || ua)) return `iOS ${String(device_id).slice(0, 6)}`;
+  if (/android/i.test(platform || ua)) return `Мобильное устройство ${String(device_id).replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase() || String(device_id).slice(0, 6)}`;
+  if (/iphone|ipad|ios/i.test(platform || ua)) return `Мобильное устройство ${String(device_id).replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase() || String(device_id).slice(0, 6)}`;
   const count = db.hasDb() ? ((db.listMobileDevices() || []).length) : Object.keys(_devs()).length;
   return `Устройство ${count + 1}`;
 }
@@ -77,17 +80,29 @@ function consumeCode(code, device_id, meta = {}) {
   if (!_pendingCode) throw Object.assign(new Error('Нет активного кода. Создайте новый в настройках аддона.'), { status: 410 });
   if (_pendingCode.used || Date.now() > _pendingCode.expires) { _pendingCode = null; throw Object.assign(new Error('Код истёк или уже использован'), { status: 410 }); }
   if (_pendingCode.code !== String(code).toUpperCase().trim()) throw Object.assign(new Error('Неверный код'), { status: 401 });
-  _pendingCode.used = true; _pendingCode = null;
 
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = _hashToken(token);
   const now = new Date().toISOString();
-  const existing = db.hasDb() ? (db.getMobileDevice(device_id) || {}) : (_devs()[device_id] || {});
+  const requestedAlias = _mobileAliasFromMeta(meta);
+  let existing = db.hasDb() ? (db.getMobileDevice(device_id) || {}) : (_devs()[device_id] || {});
+
+  // Re-pair after app reset: the phone may generate a new device_id but the user enters
+  // the same alias. In that case treat alias as recovery identity, transfer settings and
+  // delete the old device row first so the UNIQUE(alias) index does not reject INSERT.
+  if (db.hasDb() && !existing.device_id && requestedAlias && db.getMobileDeviceByAlias) {
+    const byAlias = db.getMobileDeviceByAlias(requestedAlias);
+    if (byAlias && byAlias.device_id && byAlias.device_id !== device_id) {
+      existing = byAlias;
+      try { db.deleteMobileDevice(byAlias.device_id); } catch (e) { /* keep pairing error generic */ }
+    }
+  }
+
   const device = {
     device_id,
     tokenHash,
-    name: existing.name || _deviceDefaultName(device_id, meta),
-    alias: existing.alias || _cleanText(meta.alias || meta.deviceAlias, 48),
+    name: requestedAlias || existing.name || _deviceDefaultName(device_id, meta),
+    alias: requestedAlias || existing.alias || '',
     description: existing.description || _cleanText(meta.description, 160),
     platform: _cleanText(meta.platform, 32),
     model: _cleanText(meta.model || meta.deviceModel, 64),
@@ -98,7 +113,7 @@ function consumeCode(code, device_id, meta = {}) {
     screen: _cleanText(meta.screen, 32),
     paired_at: existing.paired_at || now,
     last_seen: now,
-    accessMode: existing.accessMode || 'viewer',
+    accessMode: existing.accessMode || 'control',
     profileAccess: existing.profileAccess || { mode: 'all', profileIds: [] },
     settings: _normalizeDeviceSettings(existing.settings || {})
   };
@@ -106,9 +121,24 @@ function consumeCode(code, device_id, meta = {}) {
     db.upsertMobileDevice(device);
   } else {
     const devs = _devs();
+    if (!existing.device_id && requestedAlias) {
+      for (const [id, value] of Object.entries(devs)) {
+        if (id !== device_id && String(value?.alias || '').trim() === requestedAlias) {
+          existing = value || {};
+          delete devs[id];
+          device.accessMode = existing.accessMode || device.accessMode;
+          device.profileAccess = existing.profileAccess || device.profileAccess;
+          device.settings = _normalizeDeviceSettings(existing.settings || device.settings || {});
+          break;
+        }
+      }
+    }
     devs[device_id] = { ...device, token };
     _saveDevices();
   }
+  // Burn pairing code only after device write succeeds. If DB write fails, the user can retry
+  // with the same code instead of generating a new one.
+  if (_pendingCode) { _pendingCode.used = true; _pendingCode = null; }
   return token;
 }
 
@@ -141,6 +171,10 @@ function validateWebSession(session) {
   if (db.hasDb()) return db.validateWebSession(session);
   return false;
 }
+function getWebSessionDeviceId(session) {
+  if (db.hasDb() && db.getWebSessionDeviceId) return db.getWebSessionDeviceId(session);
+  return '';
+}
 
 function listDevices() {
   if (db.hasDb()) return db.listMobileDevices() || [];
@@ -158,7 +192,7 @@ function listDevices() {
     userAgent: d.userAgent || '',
     paired_at: d.paired_at,
     last_seen: d.last_seen,
-    accessMode: d.accessMode || 'viewer',
+    accessMode: d.accessMode || 'control',
     profileAccess: d.profileAccess || { mode: 'all', profileIds: [] },
     settings: _normalizeDeviceSettings(d.settings || {})
   }));
@@ -171,13 +205,16 @@ function getDevice(device_id) {
 }
 function renameDevice(device_id, name) {
   if (db.hasDb()) {
-    const d = db.updateMobileDevice(device_id, { name: _cleanText(name, 64) });
+    const cleanName = _cleanText(name, 64);
+    const d = db.updateMobileDevice(device_id, { name: cleanName, alias: cleanName });
     if (!d) throw Object.assign(new Error('Устройство не найдено'), { status: 404 });
     return;
   }
   const d = _devs()[device_id];
   if (!d) throw Object.assign(new Error('Устройство не найдено'), { status: 404 });
-  d.name = String(name || '').trim().slice(0, 64) || d.name; _saveDevices();
+  const cleanName = _cleanText(name, 64);
+  if (cleanName) { d.name = cleanName; d.alias = cleanName; }
+  _saveDevices();
 }
 function updateDevice(device_id, patch = {}) {
   if (db.hasDb()) {
@@ -211,7 +248,7 @@ function revokeAllDevices() {
 module.exports = {
   generatePairingCode, getPendingCode, cancelPendingCode,
   consumeCode, validateToken, getDevice,
-  createWebSession, validateWebSession,
+  createWebSession, validateWebSession, getWebSessionDeviceId,
   listDevices, renameDevice, updateDevice, revokeDevice, revokeAllDevices,
   getDbInfo: db.getInfo
 };

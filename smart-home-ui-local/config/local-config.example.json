@@ -1,0 +1,10 @@
+{
+  "haUrl": "http://192.168.1.16:8123",
+  "haToken": "PASTE_HOME_ASSISTANT_LONG_LIVED_ACCESS_TOKEN_HERE",
+  "port": 8099,
+  "directDashboardPort": 8099,
+  "mobilePort": 32457,
+  "dataDir": "/data",
+  "logLevel": "info",
+  "haWsUrl": ""
+}

@@ -3,7 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
 const crypto = require('crypto');
-const { HA_API_BASE, HA_WS_URL, HA_TOKEN, haFetch, haWsCommand, statesCache, sseClients, broadcastSseEvent, startHaWsSubscription } = require('./src/ha');
+const zlib = require('zlib');
+const { HA_API_BASE, HA_WS_URL, HA_TOKEN, haFetch, haWsCommand, haCallService, statesCache, sseClients, broadcastSseEvent, setSseBatchMs, noteSseClientConnected, noteSseClientDisconnected, noteSseClientRejected, noteSseHeartbeat, startHaWsSubscription, getHaStatus, stopHaWsSubscription } = require('./src/ha');
 const mobileAuth = require('./src/mobile-auth');
 const allhaDb = require('./src/db');
 const { ENTITY_DOMAINS, ENTITY_RE, ROOM_PATTERNS, ROOM_LABELS, DOMAIN_EMOJI, friendlyRoomLabel, domainOf, isEntityId, extractEntityIdsFromString, friendlyFromEntityId, canonicalRoomFromText, asArray, deepClone, deepMerge, variablesToMap, substituteDeclutteringVars, unwrapLovelaceConfig, selectViews, cardTitle, headingTitle, getCardsFromView, resolveButtonCardTemplates, resolveDeclutteringCard, collectEntityRefs, flattenCardForEntityCollection, makeDevice, parseLovelaceRawBundle } = require('./src/lovelace');
@@ -11,6 +12,15 @@ let sharp = null;
 try { sharp = require('sharp'); } catch (e) { sharp = null; }
 
 const app = express();
+let _inFlightRequests = 0;
+let _lastInFlightChangeAt = null;
+app.use((req,res,next)=>{
+  _inFlightRequests++;
+  _lastInFlightChangeAt = new Date().toISOString();
+  res.on('finish', ()=>{ _inFlightRequests=Math.max(0,_inFlightRequests-1); _lastInFlightChangeAt = new Date().toISOString(); });
+  res.on('close', ()=>{ if(!res.writableEnded){ _inFlightRequests=Math.max(0,_inFlightRequests-1); _lastInFlightChangeAt = new Date().toISOString(); } });
+  next();
+});
 
 // Security + CORS headers
 app.use((req, res, next) => {
@@ -20,14 +30,16 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
   // Mobile app / Capacitor CORS.
-  // Capacitor 6 on Android commonly sends Origin: https://localhost.
-  // Chrome/WebView may also send a Private Network Access preflight when
-  // https://localhost calls http://192.168.x.x:32457. This must be answered
-  // before mobile auth middleware, otherwise the APK only reports "server unavailable".
+  // v4.2.0: do not return wildcard CORS for empty Origin. Non-browser clients do not need it.
+  // Origin: null is allowed only on the mobile port, because some Android WebView/Capacitor
+  // flows may use it; this must stay covered by mobile auth/device-token checks.
   const origin = req.headers.origin || '';
+  const localPort = Number(req.socket?.localPort || req.headers.host?.split(':').pop() || 0);
+  const isMobilePort = localPort === MOBILE_PORT;
   const allowedOrigins = /^(capacitor|ionic):\/\/localhost$|^https?:\/\/localhost(?::\d+)?$/i;
-  if (!origin || origin === 'null' || allowedOrigins.test(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  const allowCors = !!origin && (allowedOrigins.test(origin) || (origin === 'null' && isMobilePort));
+  if (allowCors) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin, Access-Control-Request-Headers, Access-Control-Request-Method, Access-Control-Request-Private-Network');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-ID, X-Client-ID, Accept, Origin, X-Requested-With');
@@ -40,29 +52,268 @@ app.use((req, res, next) => {
   next();
 });
 
-// Simple rate limiter (no external deps) — max 30 service calls per minute per IP
+// Per-request id for logs and safe client-facing errors.
+app.use((req, res, next) => {
+  const incoming = String(req.headers['x-request-id'] || '').trim();
+  req.requestId = /^[a-zA-Z0-9_.:-]{6,96}$/.test(incoming) ? incoming : crypto.randomBytes(8).toString('hex');
+  res.setHeader('X-Request-ID', req.requestId);
+  next();
+});
+
+// Lightweight rate limiter (no external deps).
+// v4.1.21.18.44: keep it on sensitive endpoints only and cap internal Map growth.
 const _rlStore = new Map();
+const RATE_LIMIT_MAX_KEYS = Number(process.env.ALLHA_RATE_LIMIT_MAX_KEYS || 2000);
+let _lastRateLimitCleanupAt = 0;
+const _perfStats = {
+  startedAt: new Date().toISOString(),
+  logWrites: 0,
+  logBytes: 0,
+  logFlushes: 0,
+  logRotationChecks: 0,
+  logRotations: 0,
+  rateLimitChecks: 0,
+  rateLimitBlocked: 0,
+  rateLimitCleanups: 0,
+  rateLimitDeleted: 0,
+  rateLimitMaxStoreSize: 0
+};
+function trustedProxyEnabled(){ return String(process.env.ALLHA_TRUST_PROXY || process.env.TRUST_PROXY || '0') === '1'; }
+function getForwardedIp(req){
+  if(!trustedProxyEnabled()) return '';
+  const xff=String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return xff || String(req.headers['x-real-ip'] || '').trim();
+}
+function getRateLimitKey(req){
+  // Avoid expensive parsing on every request. This middleware is used only for sensitive routes.
+  const h = req.headers || {};
+  const rawDevice = h['x-device-id'] || h['x-allha-device-id'] || '';
+  if(rawDevice) return 'mobile:' + sanitizeClientId(rawDevice);
+  const rawClient = h['x-client-id'] || '';
+  if(rawClient) return 'client:' + sanitizeClientId(rawClient);
+  const fwd=getForwardedIp(req);
+  return 'ip:' + (fwd || req.socket?.remoteAddress || 'unknown');
+}
+function cleanupRateLimitStore(now = Date.now(), force=false){
+  if(!force && now - _lastRateLimitCleanupAt < 30_000 && _rlStore.size <= RATE_LIMIT_MAX_KEYS) return 0;
+  _lastRateLimitCleanupAt = now;
+  let removed = 0;
+  for(const [k,e] of _rlStore){
+    if(now > e.resetAt || (RATE_LIMIT_MAX_KEYS > 0 && _rlStore.size - removed > RATE_LIMIT_MAX_KEYS && e.count <= 1)){
+      _rlStore.delete(k); removed++;
+    }
+  }
+  _perfStats.rateLimitCleanups++;
+  _perfStats.rateLimitDeleted += removed;
+  return removed;
+}
 function makeRateLimit(maxReq, windowMs) {
   return (req, res, next) => {
-    const ip = req.socket.remoteAddress || 'unknown';
+    _perfStats.rateLimitChecks++;
     const now = Date.now();
-    let e = _rlStore.get(ip);
-    if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + windowMs }; _rlStore.set(ip, e); }
-    if (++e.count > maxReq) return res.status(429).json({ error: 'Слишком много запросов, подождите немного' });
+    cleanupRateLimitStore(now, _rlStore.size > RATE_LIMIT_MAX_KEYS);
+    const key = getRateLimitKey(req);
+    let e = _rlStore.get(key);
+    if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + windowMs }; _rlStore.set(key, e); }
+    if(_rlStore.size > _perfStats.rateLimitMaxStoreSize) _perfStats.rateLimitMaxStoreSize = _rlStore.size;
+    if (++e.count > maxReq) { _perfStats.rateLimitBlocked++; return res.status(429).json({ error: 'Слишком много запросов, подождите немного' }); }
     next();
   };
 }
-// Clean up stale entries every 5 minutes
-setInterval(() => { const now = Date.now(); _rlStore.forEach((e, k) => { if (now > e.resetAt) _rlStore.delete(k); }); }, 300_000).unref();
+// Clean up stale entries periodically and keep the timer cheap.
+setInterval(() => cleanupRateLimitStore(Date.now(), true), 60_000).unref();
+const writeRouteRateLimit = makeRateLimit(Number(process.env.ALLHA_WRITE_RATE_LIMIT_MAX || 60), Number(process.env.ALLHA_WRITE_RATE_LIMIT_WINDOW_MS || 60_000));
+function isWriteOrDestructiveRoute(req){
+  const method = String(req.method || '').toUpperCase();
+  if(!['POST','PUT','PATCH','DELETE'].includes(method)) return false;
+  const p = String(req.path || req.url || '').split('?')[0];
+  return /^\/api\/(profiles|levels|layout|factory-reset|source-config|config|security|attention|ui-state|maintenance|backups|ha\/(service|lovelace|dashboard-paths)|import|mobile\/(code|devices|settings)|web-clients|client-layout|prefs)/.test(p);
+}
+app.use((req,res,next)=>{
+  if(!isWriteOrDestructiveRoute(req)) return next();
+  return writeRouteRateLimit(req,res,next);
+});
+function serverPerformanceStats(){
+  return {
+    ..._perfStats,
+    debugLogEnabled: DEBUG_LOG_ENABLED,
+    rateLimitStoreSize: _rlStore.size,
+    rateLimitMaxKeys: RATE_LIMIT_MAX_KEYS,
+    trustedProxy: trustedProxyEnabled()
+  };
+}
 
-const PORT = process.env.PORT || 8080;
-const MOBILE_PORT = Number(process.env.MOBILE_PORT || 32457);
+function readPortEnv(name, fallback) {
+  const raw = process.env[name];
+  const value = raw === undefined || raw === '' ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new Error(`${name} must be a TCP port number between 1 and 65535`);
+  }
+  return value;
+}
+const PORT = readPortEnv('PORT', 8080);
+const MOBILE_PORT = readPortEnv('MOBILE_PORT', 32457);
 const MOBILE_OPEN_PATHS = new Set(['/api/health', '/api/mobile/debug', '/api/mobile/pair', '/mobile-lock.html']);
 const MOBILE_WEB_COOKIE = 'allha_mobile_session';
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const FALLBACK_DATA_DIR = path.join(__dirname, 'data');
+
+const DEBUG_LOG_DIR = path.join(DATA_DIR, 'logs');
+const DEBUG_LOG_PATH = path.join(DEBUG_LOG_DIR, 'allha2d-debug.log');
+const DEBUG_LOG_ENABLED = String(process.env.ALLHA_DEBUG_LOG || '0') === '1';
+const DEBUG_LOG_HTTP = String(process.env.ALLHA_DEBUG_HTTP || '0') === '1';
+const DEBUG_LOG_CLIENT_EVENTS = String(process.env.ALLHA_DEBUG_CLIENT_EVENTS || '0') === '1';
+const DEBUG_LOG_MAX_BYTES = Number(process.env.ALLHA_DEBUG_LOG_MAX_BYTES || 5 * 1024 * 1024);
+const DEBUG_LOG_MAX_FILES = Number(process.env.ALLHA_DEBUG_LOG_MAX_FILES || 3);
+const DEBUG_LOG_ROTATE_CHECK_MS = Number(process.env.ALLHA_DEBUG_LOG_ROTATE_CHECK_MS || 60_000);
+let _debugLogQueue = [];
+let _debugLogFlushTimer = null;
+let _debugLogKnownSize = 0;
+let _debugLogKnownSizeLoaded = false;
+let _debugLogLastRotateCheckAt = 0;
+function maskSecretValue(value){
+  const s = String(value ?? '');
+  if(!s) return s;
+  if(s.length <= 12) return '***';
+  return s.slice(0,4) + '…' + s.slice(-4);
+}
+function sanitizeForDebugLog(value, depth=0){
+  if(depth > 4) return '[depth-limit]';
+  if(value === null || value === undefined) return value;
+  if(typeof value === 'string') return value.length > 350 ? value.slice(0,350)+'…' : value;
+  if(typeof value !== 'object') return value;
+  if(Array.isArray(value)) return value.slice(0,25).map(v=>sanitizeForDebugLog(v, depth+1));
+  const out = {};
+  for(const [k,v] of Object.entries(value)){
+    const lk = String(k).toLowerCase();
+    const secretKeys = ['token','authorization','password','pin','secret','apikey','api_key','bearer','bearertoken','credentials','cookie','set-cookie','session','accesskey','access_key','refreshtoken','refresh_token'];
+    if(secretKeys.some(x => lk.includes(x))){
+      out[k] = maskSecretValue(v);
+    } else {
+      out[k] = sanitizeForDebugLog(v, depth+1);
+    }
+  }
+  return out;
+}
+function rotateDebugLogIfNeeded(extraBytes=0){
+  try{
+    if(!DEBUG_LOG_MAX_BYTES) return;
+    const now = Date.now();
+    const add = Number(extraBytes||0);
+    if(!_debugLogKnownSizeLoaded){
+      _debugLogKnownSizeLoaded = true;
+      try { _debugLogKnownSize = fs.existsSync(DEBUG_LOG_PATH) ? fs.statSync(DEBUG_LOG_PATH).size : 0; } catch { _debugLogKnownSize = 0; }
+    }
+    _debugLogKnownSize += add;
+    // v4.1.21.18.44: do not stat/rename synchronously on every log flush.
+    if(_debugLogKnownSize <= DEBUG_LOG_MAX_BYTES && now - _debugLogLastRotateCheckAt < DEBUG_LOG_ROTATE_CHECK_MS) return;
+    _debugLogLastRotateCheckAt = now;
+    _perfStats.logRotationChecks++;
+    if(!fs.existsSync(DEBUG_LOG_PATH)) { _debugLogKnownSize = 0; return; }
+    const st=fs.statSync(DEBUG_LOG_PATH);
+    _debugLogKnownSize = st.size + add;
+    if(_debugLogKnownSize <= DEBUG_LOG_MAX_BYTES) return;
+    fs.mkdirSync(DEBUG_LOG_DIR,{recursive:true});
+    const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+    const rotated=path.join(DEBUG_LOG_DIR, `allha2d-debug.${stamp}.log`);
+    fs.renameSync(DEBUG_LOG_PATH, rotated);
+    _debugLogKnownSize = 0;
+    _perfStats.logRotations++;
+    const files=fs.readdirSync(DEBUG_LOG_DIR)
+      .filter(n=>/^allha2d-debug\..+\.log$/.test(n))
+      .map(n=>({name:n, path:path.join(DEBUG_LOG_DIR,n), mtime:fs.statSync(path.join(DEBUG_LOG_DIR,n)).mtimeMs}))
+      .sort((a,b)=>b.mtime-a.mtime);
+    files.slice(Math.max(0, DEBUG_LOG_MAX_FILES)).forEach(f=>{ try{fs.unlinkSync(f.path);}catch(e){} });
+  }catch(e){}
+}
+function flushDebugLog(){
+  if(!_debugLogQueue.length) return;
+  const lines = _debugLogQueue.splice(0, _debugLogQueue.length).join('');
+  const bytes = Buffer.byteLength(lines);
+  _perfStats.logFlushes++;
+  _perfStats.logBytes += bytes;
+  fs.mkdir(DEBUG_LOG_DIR, {recursive:true}, () => {
+    rotateDebugLogIfNeeded(bytes);
+    fs.appendFile(DEBUG_LOG_PATH, lines, 'utf8', () => {});
+  });
+}
+function writeDebugLog(scope, message, data){
+  if(!DEBUG_LOG_ENABLED) return;
+  try{
+    _perfStats.logWrites++;
+    _debugLogQueue.push(JSON.stringify({
+      ts:new Date().toISOString(),
+      scope,
+      message,
+      data:sanitizeForDebugLog(data)
+    }) + '\n');
+    if(_debugLogQueue.length > 100) flushDebugLog();
+    else if(!_debugLogFlushTimer){
+      _debugLogFlushTimer = setTimeout(() => {
+        _debugLogFlushTimer = null;
+        flushDebugLog();
+      }, 500);
+      _debugLogFlushTimer.unref?.();
+    }
+  }catch(e){}
+}
+function debugLogResponse(req, res, scope, extra){
+  if(!DEBUG_LOG_HTTP) return;
+  const start = Date.now();
+  res.on('finish', () => {
+    if(res.statusCode < 400) return;
+    writeDebugLog(scope || 'http-error', `${req.method} ${req.originalUrl || req.url}`, {
+      method:req.method,
+      url:req.originalUrl || req.url,
+      status:res.statusCode,
+      ms:Date.now()-start,
+      deviceId:req.headers['x-device-id'] || '',
+      clientId:req.headers['x-client-id'] || '',
+      mobile: !!req.headers.authorization,
+      ...extra
+    });
+  });
+}
+function logRequestError(req, scope, err, extra={}){
+  try{
+    writeDebugLog(scope || 'server-error', err?.message || 'error', {
+      requestId: req?.requestId || '',
+      url: req?.originalUrl || req?.url || '',
+      method: req?.method || '',
+      error: err?.message || String(err || 'error'),
+      stack: err?.stack || '',
+      ...extra
+    });
+  }catch(e){}
+}
+function safeErrorResponse(req, res, err, status=500, message='Внутренняя ошибка'){
+  const code = Number(status || 500);
+  logRequestError(req, code >= 500 ? 'server-error' : 'request-error', err);
+  return res.status(code).json({ ok:false, error: message, requestId: req?.requestId || '' });
+}
+function validationErrorResponse(req, res, err, message){
+  return safeErrorResponse(req, res, err, 400, message || 'Некорректный запрос');
+}
+function publicSafeErrorMessage(err, fallback='Внутренняя ошибка'){
+  const msg = String(err?.message || err || '').trim();
+  if(!msg) return fallback;
+  // Keep user-actionable errors visible, but strip control chars and keep it short.
+  return msg.replace(/[\r\n\t]+/g, ' ').slice(0, 240);
+}
+function importErrorResponse(req, res, err, message='Ошибка перечитывания уровня'){
+  logRequestError(req, 'lovelace-import-error', err);
+  const detail = publicSafeErrorMessage(err);
+  return res.status(500).json({ ok:false, error: `${message}: ${detail}`, requestId: req?.requestId || '' });
+}
+
+
 const ADDON_CONFIG_PATH = path.join(DATA_DIR, 'addon_config.json');
+const MOBILE_ACCESS_PATH = path.join(DATA_DIR, 'mobile_access.json');
 const LAYOUT_BACKUP_DIR = path.join(DATA_DIR, 'backups');
+// v4.2.5: backups are manual-only by default. Automatic safety backups can be
+// re-enabled only explicitly for local/debug use with ALLHA_ENABLE_AUTO_BACKUPS=1.
+function autoBackupsEnabled(){ return String(process.env.ALLHA_ENABLE_AUTO_BACKUPS || '').trim() === '1'; }
+function autoBackupSkipped(reason){ return { skipped:true, reason:String(reason||'automatic-backups-disabled'), automaticBackups:false }; }
 const PROFILES_DIR = path.join(DATA_DIR, 'profiles');
 const PROFILES_META_PATH = path.join(DATA_DIR, 'profiles.json');
 let ACTIVE_PROFILE_ID = 'profile-1';
@@ -230,6 +481,10 @@ function readJsonSafe(file, fallback){
       const fromDb = allhaDb.getProjectDocument(key, undefined);
       if(fromDb !== undefined){
         if(!fs.existsSync(file)) runtimeAudit.mirrorMissingButDbPresent += 1;
+        if(fromDb === null){
+          writeDebugLog('runtime-json', 'db document is null', {key, file, fallbackType:typeof fallback});
+          return fallback;
+        }
         return fromDb;
       }
       if(fs.existsSync(file)){
@@ -238,6 +493,7 @@ function readJsonSafe(file, fallback){
         allhaDb.setProjectDocument(key, parsed, 'json-migration-fallback');
         return parsed;
       }
+      writeDebugLog('runtime-json', 'document missing, fallback used', {key, file, fallbackType:typeof fallback});
       return fallback;
     }
     if(fs.existsSync(file)){
@@ -245,7 +501,10 @@ function readJsonSafe(file, fallback){
       return JSON.parse(fs.readFileSync(file,'utf8'));
     }
     return fallback;
-  }catch(e){return fallback;}
+  }catch(e){
+    writeDebugLog('runtime-json', 'read failed, fallback used', {file, error:e.message});
+    return fallback;
+  }
 }
 function readJsonFileOnly(file, fallback){
   try{ return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : fallback; }
@@ -304,6 +563,34 @@ function copyRuntimeFile(src, dst){
   const txt = readTextRuntimeFile(src, null);
   if(txt === null || txt === undefined) return false;
   writeTextRuntimeFile(dst, txt, path.extname(dst).slice(1) || 'text');
+  return true;
+}
+
+function clearRuntimeStoragePrefix(prefix){
+  const clean = String(prefix || '').replace(/\\/g,'/').replace(/^\/+/, '').replace(/\.\./g, '_');
+  if(!clean) return false;
+  try{
+    if(allhaDb.clearProjectDocuments) allhaDb.clearProjectDocuments(clean.endsWith('/') ? clean : clean + '/');
+    writeDebugLog('runtime-cleanup', 'cleared runtime storage prefix', {prefix:clean});
+    return true;
+  }catch(e){
+    writeDebugLog('runtime-cleanup', 'failed to clear runtime storage prefix', {prefix:clean, error:e.message});
+    return false;
+  }
+}
+function clearProfileRuntimeStorage(profileId){
+  const pid = sanitizeProfileId(profileId);
+  if(!pid) return false;
+  clearRuntimeStoragePrefix(`profiles/${pid}/`);
+  try{ if(allhaDb.clearStandardSensorBindings) allhaDb.clearStandardSensorBindings(pid); }catch(e){ writeDebugLog('runtime-cleanup','failed to clear profile standard sensors',{profileId:pid,error:e.message}); }
+  return true;
+}
+function clearLevelRuntimeStorage(profileId, levelId){
+  const pid = sanitizeProfileId(profileId);
+  const lid = sanitizeLevelId(levelId);
+  if(!pid || !lid) return false;
+  clearRuntimeStoragePrefix(`profiles/${pid}/levels/${lid}/`);
+  try{ if(allhaDb.clearStandardSensorBindings) allhaDb.clearStandardSensorBindings(pid, lid); }catch(e){ writeDebugLog('runtime-cleanup','failed to clear level standard sensors',{profileId:pid,levelId:lid,error:e.message}); }
   return true;
 }
 function importRuntimeMirrorToDb(file){
@@ -496,6 +783,10 @@ function scanStandardSensorBackups(roomsPath = ROOMS_SETTINGS_PATH){
 /* ── Mobile access helpers ───────────────────────────── */
 const LOCAL_IP_RE = /^(127\.|::1$|::ffff:(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/;
 function isLocalIp(req) {
+  // local-dev Docker: browser requests often come from docker bridge / host-gateway.
+  // Treat the local dev runtime as local management context so pairing-code
+  // creation works from http://localhost:8099 and Windows LAN browser.
+  if (process.env.ALLHA_MODE === 'local-dev') return true;
   const ip = req.socket?.remoteAddress || req.ip || '';
   return LOCAL_IP_RE.test(ip);
 }
@@ -510,7 +801,7 @@ function allowMobileManagement(req) {
 }
 
 function mobileAccessEnabled() {
-  try { return !!loadAddonConfig().mobileAccess?.enabled; } catch { return false; }
+  try { return !!loadMobileAccessConfig().enabled; } catch { return false; }
 }
 function parseCookies(req){
   const out = {};
@@ -538,14 +829,14 @@ function isMobileApiRequest(req){
 }
 function effectivePanelModeForRequest(req, security){
   const auth = mobileAuthFromHeaders(req);
-  if(auth.ok && auth.device) return auth.device.accessMode || 'viewer';
+  if(auth.ok && auth.device) return auth.device.accessMode || 'control';
   return (security?.panelMode === 'user' ? 'viewer' : (security?.panelMode || 'admin'));
 }
 function requireMobileAdminForWrite(req, res, next){
   if(!isMobileApiRequest(req)) return next();
   const auth = mobileAuthFromHeaders(req);
   if(!auth.ok) return res.status(401).json({ error:'Токен устройства отозван или недействителен' });
-  if((auth.device?.accessMode || 'viewer') !== 'admin') return res.status(403).json({ error:'Мобильное устройство не имеет admin-доступа' });
+  if((auth.device?.accessMode || 'control') !== 'admin') return res.status(403).json({ error:'Мобильное устройство не имеет admin-доступа' });
   return next();
 }
 function buildHashFromQuery(q){
@@ -603,6 +894,19 @@ app.use((req, res, next) => {
   if(MOBILE_ADMIN_WRITE_PREFIXES.some(p => req.path === p || req.path.startsWith(p + '/'))) return requireMobileAdminForWrite(req, res, next);
   return next();
 });
+
+
+function isHomeAssistantAddonMode(){
+  return String(process.env.ALLHA_MODE || process.env.ALLHA_RUNTIME_MODE || '').toLowerCase() !== 'local-dev';
+}
+function isIngressRequest(req){
+  return !!normalizeIngressProxyPath(req?.headers?.['x-ingress-path'] || '')
+    || !!normalizeIngressProxyPath(req?.headers?.['x-forwarded-prefix'] || '')
+    || !!normalizeIngressProxyPath(req?.headers?.['x-forwarded-uri'] || '')
+    || !!normalizeIngressProxyPath(req?.headers?.['x-original-uri'] || '')
+    || !!normalizeIngressProxyPath(req?.headers?.referer || '')
+    || /^\/api\/hassio_ingress\//.test(String(req?.originalUrl || req?.url || ''));
+}
 
 function requestHostname(req){
   const raw = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim();
@@ -714,7 +1018,8 @@ function normalizeAttentionRules(payload){
       name: String(raw.name || entity_id),
       normal_state: String(raw.normal_state ?? 'unknown'),
       enabled: raw.enabled !== false,
-      created_at: raw.created_at || null
+      created_at: raw.created_at || null,
+      updated_at: raw.updated_at || null
     });
   }
   return { version: Number(src.version) || 1, rules: normalized };
@@ -1086,6 +1391,7 @@ function createLevel(payload={}){
   if(meta.levels.length >= 12) throw new Error('Слишком много уровней/областей');
   const id = nextLevelId(pid);
   const name = String(payload.name || `Уровень ${meta.levels.length + 1}`).trim().slice(0,80) || `Уровень ${meta.levels.length + 1}`;
+  clearLevelRuntimeStorage(pid, id);
   const lp = ensureLevelDirs(pid, id);
   const baseLayout = emptyLayout();
   const currentLayout = normalizeLayoutPayload(loadLayout(), {strict:false}).layout;
@@ -1106,13 +1412,21 @@ function createLevel(payload={}){
     copyIfExists(LOVELACE_PATH, lp.lovelaceJs);
     copyIfExists(activeLevelPaths().lovelaceRaw, lp.lovelaceRaw);
   }
-  if(!runtimeDocumentExists(lp.rooms)) atomicWriteJson(lp.rooms, defaultRoomsSettings());
-  if(!runtimeDocumentExists(lp.sourceConfig)) atomicWriteJson(lp.sourceConfig, defaultSourceConfig());
-  if(!runtimeDocumentExists(lp.uiState)) atomicWriteJson(lp.uiState, defaultUiState());
-  if(!runtimeFileExists(lp.devicesJs)) writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
-  if(!runtimeFileExists(lp.lovelaceJs)) writeTextRuntimeFile(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
+  if(payload.duplicateSources){
+    if(!runtimeDocumentExists(lp.rooms)) atomicWriteJson(lp.rooms, defaultRoomsSettings());
+  } else {
+    atomicWriteJson(lp.rooms, defaultRoomsSettings());
+    atomicWriteJson(lp.sourceConfig, defaultSourceConfig());
+    writeJsAssignedArray(lp.devicesJs, 'ALL_DEVICES', []);
+    atomicWriteJson(lp.devicesJson, []);
+    writeTextRuntimeFile(lp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
+    atomicWriteJson(lp.lovelaceRaw, { version:1, views:[] });
+    atomicWriteJson(lp.deviceParseReportJson, { ok:true, empty:true, reason:'new-level', devices:0, rooms:0, cards:0, generatedAt:new Date().toISOString() });
+  }
+  atomicWriteJson(lp.uiState, defaultUiState());
   const now = new Date().toISOString();
   meta.levels.push({id, name, createdAt:now, updatedAt:now});
+  meta.activeLevelId = id;
   saveLevelsMeta(pid, meta);
   return levelsDiagnostics(pid);
 }
@@ -1128,10 +1442,12 @@ function duplicateLevel(levelId, payload={}){
   const now = new Date().toISOString();
   const name = String(payload.name || `Копия ${srcMeta.name}`).trim().slice(0,80) || `Копия ${srcMeta.name}`;
   meta.levels.push({id:newId, name, createdAt:now, updatedAt:now});
+  meta.activeLevelId = newId;
   saveLevelsMeta(pid, meta);
   return levelsDiagnostics(pid);
 }
 function backupLevelDirectory(profileId, levelId, reason='level-backup'){
+  if(!autoBackupsEnabled()) return null;
   const lp = levelPaths(profileId, levelId);
   if(!fs.existsSync(lp.dir)) return null;
   const stamp = timestampForFile();
@@ -1174,6 +1490,7 @@ function deleteLevel(levelId){
   if(meta.activeLevelId === id) meta.activeLevelId = meta.levels[0].id;
   saveLevelsMeta(pid, meta);
   removePathSafe(levelPaths(pid, id).dir);
+  clearLevelRuntimeStorage(pid, id);
   updateActiveProfilePaths();
   ensureDataStore();
   const diag = levelsDiagnostics(pid);
@@ -1188,6 +1505,8 @@ function createProfile(payload={}){
   do { id = 'profile-' + (++n); } while(meta.profiles.some(p=>p.id===id) && n < 20);
   const now = new Date().toISOString();
   const name = String(payload.name || `Профиль ${meta.profiles.length + 1}`).trim().slice(0,60) || `Профиль ${meta.profiles.length + 1}`;
+  // A newly created profile must never reuse stale DB mirror data from a previously deleted profile with the same id.
+  clearProfileRuntimeStorage(id);
   ensureProfileDirs(id);
   let levelsMeta = defaultLevelsMeta();
   levelsMeta.levels[0].name = 'Основной уровень';
@@ -1208,14 +1527,22 @@ function createProfile(payload={}){
     }
   }
   atomicWriteJson(pp.layout, baseLayout);
-  if(!runtimeDocumentExists(pp.rooms)) atomicWriteJson(pp.rooms, defaultRoomsSettings());
-  if(!runtimeDocumentExists(pp.sourceConfig)) atomicWriteJson(pp.sourceConfig, defaultSourceConfig());
+  // Always overwrite the new profile runtime bundle with empty defaults unless the user explicitly selected a copy action.
+  // This prevents old SQLite mirror documents from reappearing when a deleted profile id is reused.
+  atomicWriteJson(pp.rooms, defaultRoomsSettings());
+  atomicWriteJson(pp.sourceConfig, defaultSourceConfig());
   atomicWriteJson(pp.uiState, defaultUiState());
   atomicWriteJson(pp.imagesMeta, defaultImagesMeta());
-  if(!runtimeFileExists(pp.devicesJs)) writeJsAssignedArray(pp.devicesJs, 'ALL_DEVICES', []);
-  if(!runtimeFileExists(pp.lovelaceJs)) writeTextRuntimeFile(pp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
+  writeJsAssignedArray(pp.devicesJs, 'ALL_DEVICES', []);
+  atomicWriteJson(pp.devicesJson, []);
+  writeTextRuntimeFile(pp.lovelaceJs, 'window.LOVELACE_SOURCE = '+JSON.stringify({version:1, views:[]}, null, 2)+';\n', 'js');
+  atomicWriteJson(pp.lovelaceRaw, { version:1, views:[] });
+  atomicWriteJson(pp.deviceParseReportJson, { ok:true, empty:true, reason:'new-profile', devices:0, rooms:0, cards:0, generatedAt:new Date().toISOString() });
   meta.profiles.push({id, name, createdAt:now, updatedAt:now});
+  meta.activeProfileId = id;
   saveProfilesMeta(meta);
+  updateActiveProfilePaths();
+  ensureDataStore();
   return profilesDiagnostics();
 }
 function duplicateProfile(id, payload={}){
@@ -1283,12 +1610,12 @@ function replacePathIfExists(src, dst){
   if(fs.existsSync(src)){ if(fs.existsSync(dst)) removePathSafe(dst); return copyPathRecursive(src, dst); }
   return false;
 }
-function copyProfileData(targetProfileId, payload={}){
+function copyProfileData(targetProfileId, payload={}, req=null){
   const meta = loadProfilesMeta();
   const targetId = sanitizeProfileId(targetProfileId);
   const sourceId = sanitizeProfileId(payload.sourceProfileId || payload.source || '');
   const kind = String(payload.kind || payload.copyKind || '').trim();
-  const allowed = new Set(['zones','sensors','markers','rooms','overview','all']);
+  const allowed = new Set(['zones','sensors','markers','rooms','overview','display','all']);
   if(!allowed.has(kind)) throw new Error('Некорректный тип копирования');
   if(!meta.profiles.some(p=>p.id===targetId)) throw new Error('Профиль назначения не найден');
   if(!meta.profiles.some(p=>p.id===sourceId)) throw new Error('Профиль-источник не найден');
@@ -1315,6 +1642,15 @@ function copyProfileData(targetProfileId, payload={}){
   }
   if(kind === 'zones' || kind === 'markers' || kind === 'all') atomicWriteJson(dstLp.layout, dstLayout);
   if(kind === 'sensors' || kind === 'rooms' || kind === 'all') copyJsonFileWithFallback(srcLp.rooms, dstLp.rooms, defaultRoomsSettings());
+  if(kind === 'display'){
+    const srcUiState = loadUiState(srcLp.uiState);
+    const dstUiState = loadUiState(dstLp.uiState);
+    const displayKeys = ['hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','haloScale','showAllDevicesInRoom','compact','theme','darkTheme','kioskMode','kioskTileMode','kioskNavigationMode','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','mobileMode','autoHide','hideSidebar','hideDevicePanel','hideToolbar','showZones','invisibleZones','showMarkers','showSensors','debugMode'];
+    const nextUi = { ...(dstUiState.ui || {}) };
+    for(const k of displayKeys){ if(srcUiState.ui && Object.prototype.hasOwnProperty.call(srcUiState.ui, k)) nextUi[k] = srcUiState.ui[k]; }
+    atomicWriteJson(dstLp.uiState, { ...dstUiState, ui: nextUi, updatedAt:new Date().toISOString() });
+    try{ copyDisplayUiForCurrentClientBetweenProfileContexts(req, sourceId, srcLp.id, targetId, dstLp.id, nextUi); }catch(e){ writeDebugLog('profiles','copy display client context failed',{requestId:req?.requestId, sourceId, targetId, error:e.message}); }
+  }
   if(kind === 'overview' || kind === 'all'){
     removePathSafe(path.join(dstLp.images,'overview'));
     fs.mkdirSync(path.join(dstLp.images,'overview'), {recursive:true});
@@ -1344,6 +1680,7 @@ function copyProfileData(targetProfileId, payload={}){
   return { ok:true, copiedKind:kind, sourceProfileId:sourceId, targetProfileId:targetId, backup: backup ? path.basename(backup) : null, comparison:overviewCompare, profiles:profilesDiagnostics() };
 }
 function backupProfileDirectory(profileId, reason='profile-backup'){
+  if(!autoBackupsEnabled()) return null;
   const id = sanitizeProfileId(profileId);
   const src = profilePaths(id).dir;
   if(!fs.existsSync(src)) return null;
@@ -1366,6 +1703,7 @@ function deleteProfile(id, payload={}){
   }
   saveProfilesMeta(meta);
   removePathSafe(profilePaths(profileId).dir);
+  clearProfileRuntimeStorage(profileId);
   updateActiveProfilePaths();
   ensureDataStore();
   const diag = profilesDiagnostics();
@@ -1448,9 +1786,10 @@ function defaultUiState(){
   };
 }
 function loadUiState(uiPath = UI_STATE_PATH){
-  const loaded = readJsonSafe(uiPath, {});
+  const raw = readJsonSafe(uiPath, {});
+  const loaded = isPlainObject(raw) ? raw : {};
   const def = defaultUiState();
-  const legacyUi = (loaded && loaded.ui && typeof loaded.ui === 'object') ? loaded.ui : {};
+  const legacyUi = isPlainObject(loaded.ui) ? loaded.ui : {};
   const cleanUi = { ...def.ui };
   for(const key of Object.keys(def.ui)){
     if(Object.prototype.hasOwnProperty.call(legacyUi, key)) cleanUi[key] = legacyUi[key];
@@ -1458,12 +1797,20 @@ function loadUiState(uiPath = UI_STATE_PATH){
   // Older resets could revive the legacy left sidebar. New/current defaults keep it hidden
   // unless the user explicitly opens it after the reset.
   if(Number(loaded?.version || 0) < 2 && !Object.prototype.hasOwnProperty.call(legacyUi, 'hideSidebar')) cleanUi.hideSidebar = true;
+  const loadedViewport = isPlainObject(loaded.viewport) ? loaded.viewport : {};
+  const loadedOverview = isPlainObject(loadedViewport.overview) ? loadedViewport.overview : {};
+  const loadedRooms = isPlainObject(loadedViewport.rooms) ? loadedViewport.rooms : {};
   return {
     ...def,
     ...loaded,
     version: Math.max(Number(loaded?.version)||0, def.version),
     ui: cleanUi,
-    viewport: { ...def.viewport, ...(loaded.viewport||{}), overview:{...def.viewport.overview, ...(loaded.viewport?.overview||{})}, rooms: loaded.viewport?.rooms || {} }
+    viewport: {
+      ...def.viewport,
+      ...loadedViewport,
+      overview:{...def.viewport.overview, ...loadedOverview},
+      rooms: loadedRooms
+    }
   };
 }
 function saveUiState(payload, uiPath = UI_STATE_PATH){
@@ -1533,27 +1880,89 @@ function dirSizeBytes(dir){
   for(const name of fs.readdirSync(dir)) total += dirSizeBytes(path.join(dir, name));
   return total;
 }
+function backupManifestPath(dir){ return path.join(dir, 'backup-manifest.json'); }
+function readBackupManifest(dir){
+  try{
+    const file = backupManifestPath(dir);
+    if(fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8')) || null;
+  }catch(e){}
+  return null;
+}
+function writeBackupManifest(dir, meta={}){
+  try{
+    const manifest = {
+      version: 1,
+      appVersion: require('./package.json').version || '',
+      createdAt: meta.createdAt || new Date().toISOString(),
+      reason: meta.reason || 'manual',
+      backupType: meta.backupType || 'manual',
+      sizeBytes: Number(meta.sizeBytes || 0),
+      copied: Array.isArray(meta.copied) ? meta.copied : [],
+      secretsPolicy: 'secrets-redacted'
+    };
+    fs.writeFileSync(backupManifestPath(dir), JSON.stringify(manifest, null, 2), 'utf8');
+    return manifest;
+  }catch(e){ return null; }
+}
+function sanitizedForBackup(value){
+  const secretKey = /(password|passwd|pass|token|secret|cookie|pin|qrpassword|apikey|api_key|bearer|credential|session|refresh|accesskey)/i;
+  function walk(v, key=''){
+    if(Array.isArray(v)) return v.map(x=>walk(x, key));
+    if(v && typeof v === 'object'){
+      const out = {};
+      for(const [k,val] of Object.entries(v)) out[k] = secretKey.test(k) ? '[REDACTED]' : walk(val, k);
+      return out;
+    }
+    return secretKey.test(key) ? '[REDACTED]' : v;
+  }
+  return walk(value);
+}
+function copyJsonForBackup(src, dst){
+  const data = JSON.parse(fs.readFileSync(src, 'utf8'));
+  fs.mkdirSync(path.dirname(dst), {recursive:true});
+  fs.writeFileSync(dst, JSON.stringify(sanitizedForBackup(data), null, 2), 'utf8');
+  return true;
+}
+function copyPathForBackup(src, dst){
+  if(!fs.existsSync(src)) return false;
+  const st = fs.statSync(src);
+  if(st.isDirectory()){
+    fs.mkdirSync(dst, {recursive:true});
+    for(const name of fs.readdirSync(src)){
+      if(name === 'backups' || name === 'logs' || name === 'sessions' || /allha2d\.db(-wal|-shm)?$/i.test(name)) continue;
+      copyPathForBackup(path.join(src,name), path.join(dst,name));
+    }
+    return true;
+  }
+  if(/\.json$/i.test(src)) return copyJsonForBackup(src, dst);
+  fs.mkdirSync(path.dirname(dst), {recursive:true});
+  fs.copyFileSync(src, dst);
+  return true;
+}
+function backupItemFromPath(full, rel=''){
+  const st = fs.statSync(full);
+  if(st.isDirectory()){
+    const manifest = readBackupManifest(full);
+    return {
+      name: rel || path.basename(full),
+      type: 'directory',
+      size: Number(manifest?.sizeBytes || 0),
+      mtime: st.mtime.toISOString(),
+      createdAt: manifest?.createdAt || st.mtime.toISOString(),
+      manifest: !!manifest,
+      reason: manifest?.reason || ''
+    };
+  }
+  return { name: rel || path.basename(full), type:'file', size:st.size, mtime:st.mtime.toISOString(), manifest:false };
+}
 function walkBackupItems(){
   if(!fs.existsSync(LAYOUT_BACKUP_DIR)) return [];
   const items = [];
-  function walk(dir, rel=''){
-    for(const name of fs.readdirSync(dir)){
-      const full = path.join(dir, name);
-      const r = rel ? path.join(rel, name) : name;
-      const st = fs.statSync(full);
-      if(st.isDirectory()){
-        const hasNested = fs.readdirSync(full).some(x=>fs.statSync(path.join(full,x)).isDirectory());
-        const hasFiles = fs.readdirSync(full).some(x=>fs.statSync(path.join(full,x)).isFile());
-        if(hasFiles || !hasNested){
-          items.push({ name:r, type:'directory', size:dirSizeBytes(full), mtime:st.mtime.toISOString() });
-        } else walk(full, r);
-      } else {
-        items.push({ name:r, type:'file', size:st.size, mtime:st.mtime.toISOString() });
-      }
-    }
+  for(const name of fs.readdirSync(LAYOUT_BACKUP_DIR)){
+    const full = path.join(LAYOUT_BACKUP_DIR, name);
+    try{ items.push(backupItemFromPath(full, name)); }catch(e){}
   }
-  walk(LAYOUT_BACKUP_DIR);
-  return items.sort((a,b)=>new Date(b.mtime)-new Date(a.mtime));
+  return items.sort((a,b)=>new Date(b.createdAt || b.mtime)-new Date(a.createdAt || a.mtime));
 }
 function backupSummary(){
   const items = walkBackupItems();
@@ -1563,9 +1972,293 @@ function backupSummary(){
     totalSize,
     oldest: items.length ? items.reduce((a,b)=>new Date(a.mtime)<new Date(b.mtime)?a:b).mtime : null,
     newest: items.length ? items[0].mtime : null,
-    items
+    items,
+    sizeMode: 'manifest-or-file-stat'
   };
 }
+
+function stableJsonForHash(value){
+  if(value === null || typeof value !== 'object') return JSON.stringify(value);
+  if(Array.isArray(value)) return '[' + value.map(stableJsonForHash).join(',') + ']';
+  return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + stableJsonForHash(value[k])).join(',') + '}';
+}
+function hashText(value){ return crypto.createHash('sha1').update(String(value ?? ''), 'utf8').digest('hex'); }
+function hashJson(value){ return hashText(stableJsonForHash(value)); }
+function mirrorDiagnostics(){
+  const out = { ok:true, generatedAt:new Date().toISOString(), mode:'diagnostics-only', repairAvailable:false, db:{documents:0, files:0}, disk:{json:0}, counts:{dbOnly:0,fileOnly:0,different:0,same:0}, dbOnly:[], fileOnly:[], different:[], sameSamples:[], notes:[
+    'DB is primary; JSON files are mirrors for inspection, portability and rollback.',
+    'This endpoint does not repair anything. Full DB↔JSON repair remains a later guarded maintenance step.',
+    'Backups are manual-only by default; automatic backups are disabled unless ALLHA_ENABLE_AUTO_BACKUPS=1.'
+  ] };
+  const ignoreRel = (rel) => {
+    const r = String(rel||'').replace(/\\/g,'/');
+    return !r || r.startsWith('backups/') || r.startsWith('logs/') || r.startsWith('sessions/') || r.includes('/sessions/') || /(^|\/)allha2d\.db(-wal|-shm)?$/i.test(r) || /(^|\.)tmp$/i.test(r);
+  };
+  const diskJson = new Map();
+  function walk(dir){
+    if(!fs.existsSync(dir)) return;
+    for(const name of fs.readdirSync(dir)){
+      const full = path.join(dir,name);
+      const rel = path.relative(DATA_DIR, full).replace(/\\/g,'/');
+      if(ignoreRel(rel)) continue;
+      const st = fs.statSync(full);
+      if(st.isDirectory()) walk(full);
+      else if(/\.json$/i.test(name)){
+        try{ diskJson.set(rel, { key:rel, hash:hashJson(JSON.parse(fs.readFileSync(full,'utf8'))), size:st.size, mtime:st.mtime.toISOString() }); }
+        catch(e){ diskJson.set(rel, { key:rel, parseError:e.message, size:st.size, mtime:st.mtime.toISOString() }); }
+      }
+    }
+  }
+  walk(DATA_DIR);
+  out.disk.json = diskJson.size;
+  const dbDocs = new Map();
+  try{
+    for(const row of (allhaDb.listProjectDocumentKeys ? allhaDb.listProjectDocumentKeys() : [])){
+      const key = String(row.doc_key || '');
+      if(ignoreRel(key)) continue;
+      const value = allhaDb.getProjectDocument ? allhaDb.getProjectDocument(key, undefined) : undefined;
+      dbDocs.set(key, { key, type:row.doc_type||'json', updatedAt:row.updated_at||'', hash:hashJson(value) });
+    }
+  }catch(e){ out.dbError = e.message; }
+  out.db.documents = dbDocs.size;
+  try{ out.db.files = (allhaDb.listProjectFileKeys ? allhaDb.listProjectFileKeys() : []).length; }catch(_){ }
+  for(const [key, d] of dbDocs.entries()){
+    const f = diskJson.get(key);
+    if(!f){ out.dbOnly.push({key, updatedAt:d.updatedAt}); continue; }
+    if(f.parseError){ out.different.push({key, reason:'file-parse-error', error:f.parseError, dbUpdatedAt:d.updatedAt, fileMtime:f.mtime}); continue; }
+    if(f.hash !== d.hash){ out.different.push({key, dbUpdatedAt:d.updatedAt, fileMtime:f.mtime, dbHash:d.hash, fileHash:f.hash}); continue; }
+    if(out.sameSamples.length < 20) out.sameSamples.push({key, updatedAt:d.updatedAt, fileMtime:f.mtime});
+  }
+  for(const [key, f] of diskJson.entries()){
+    if(!dbDocs.has(key)) out.fileOnly.push({key, mtime:f.mtime, parseError:f.parseError||null});
+  }
+  const staleClientSettings = collectStaleClientSettingsDocuments(500);
+  out.staleClientSettings = staleClientSettings;
+  out.counts.staleClientSettings = staleClientSettings.length;
+  out.counts.deletedOrMissingClientSettings = staleClientSettings.length;
+  out.counts.skippedDeletedClients = staleClientSettings.length;
+  out.counts.dbOnly = out.dbOnly.length;
+  out.counts.fileOnly = out.fileOnly.length;
+  out.counts.different = out.different.length;
+  out.counts.same = Math.max(0, dbDocs.size - out.counts.dbOnly - out.counts.different);
+  out.truncated = { dbOnly:out.dbOnly.length>200, fileOnly:out.fileOnly.length>200, different:out.different.length>200 };
+  out.dbOnly = out.dbOnly.slice(0,200); out.fileOnly = out.fileOnly.slice(0,200); out.different = out.different.slice(0,200);
+  return out;
+}
+
+
+function isBackupMirrorKey(key){
+  const k = String(key || '').replace(/\\/g,'/').replace(/^\/+/, '');
+  return k === 'backups' || k.startsWith('backups/');
+}
+function clientSettingsKeyStatus(key){
+  const k = String(key || '').replace(/\\/g,'/');
+  if(!k.startsWith('client_settings/')) return null;
+  if(k === 'client_settings/server_ui.json') return {type:'server', id:'server', active:true, protected:true};
+  if(k === 'client_settings/default_client_settings.json') return {type:'default', id:'default', active:true, protected:true};
+  const m = k.match(/^client_settings\/(web_client|mobile_device)\/([^\/]+)/);
+  if(!m) return {type:'unknown', id:'', active:false, protected:false};
+  try{
+    if(m[1] === 'web_client'){
+      const c = allhaDb.getWebClient && allhaDb.getWebClient(m[2]);
+      return {type:m[1], id:m[2], active:!!c, protected:m[2] === 'server'};
+    }
+    if(m[1] === 'mobile_device'){
+      const d = allhaDb.getMobileDevice && allhaDb.getMobileDevice(m[2]);
+      return {type:m[1], id:m[2], active:!!d, protected:false};
+    }
+  }catch(e){}
+  return {type:m[1], id:m[2], active:false, protected:false};
+}
+function collectStaleClientSettingsDocuments(limit=500){
+  const out = [];
+  if(!allhaDb.hasDb || !allhaDb.hasDb() || !allhaDb.listProjectDocumentKeys) return out;
+  for(const row of allhaDb.listProjectDocumentKeys()){
+    const key = String(row.doc_key || '');
+    const status = clientSettingsKeyStatus(key);
+    if(!status || status.protected || status.active) continue;
+    out.push({key, type:status.type, id:status.id, updatedAt:row.updated_at || ''});
+    if(out.length >= limit) break;
+  }
+  return out;
+}
+function cleanupStaleClientSettingsDocuments(){
+  const stale = collectStaleClientSettingsDocuments(5000);
+  let deletedDocuments = 0;
+  let deletedFiles = 0;
+  const errors = [];
+  for(const item of stale){
+    try{ if(allhaDb.deleteProjectDocument && allhaDb.deleteProjectDocument(item.key)) deletedDocuments++; }
+    catch(e){ errors.push({key:item.key, error:e.message}); }
+    try{
+      if(allhaDb.deleteProjectFile && allhaDb.deleteProjectFile(item.key)){ deletedFiles++; }
+    }catch(e){ /* older DB module may not expose deleteProjectFile */ }
+    try{
+      const target = path.join(DATA_DIR, item.key);
+      if(pathInside(DATA_DIR, target) && fs.existsSync(target)) fs.rmSync(target, {recursive:true, force:true});
+    }catch(e){ errors.push({key:item.key, error:e.message}); }
+  }
+  writeDebugLog('maintenance','cleanup-stale-client-settings',{stale:stale.length, deletedDocuments, deletedFiles, errors:errors.length});
+  return {stale:stale.length, deletedDocuments, deletedFiles, errors, items:stale.slice(0,200)};
+}
+
+function mirrorRepairClientKeyAllowed(key, includeDeletedClients=false){
+  const k = String(key || '').replace(/\\/g,'/');
+  if(!k.startsWith('client_settings/')) return true;
+  if(k === 'client_settings/server_ui.json' || k === 'client_settings/default_client_settings.json') return true;
+  const m = k.match(/^client_settings\/(web_client|mobile_device)\/([^\/]+)/);
+  if(!m) return !includeDeletedClients;
+  if(includeDeletedClients) return true;
+  try{
+    if(m[1] === 'web_client') return !!(allhaDb.getWebClient && allhaDb.getWebClient(m[2]));
+    if(m[1] === 'mobile_device') return !!(allhaDb.getMobileDevice && allhaDb.getMobileDevice(m[2]));
+  }catch(e){}
+  return false;
+}
+function normalizeMirrorRepairKeys(input){
+  if(Array.isArray(input)) return input.map(x=>String(x||'').replace(/\\/g,'/').trim()).filter(Boolean);
+  const single = String(input || '').replace(/\\/g,'/').trim();
+  return single ? [single] : [];
+}
+function mirrorRepair(payload={}){
+  const includeBackups = payload.includeBackups === true;
+  const expectedConfirm = includeBackups ? 'REPAIR MIRROR BACKUPS' : 'REPAIR MIRROR';
+  if(String(payload.confirm || '') !== expectedConfirm){
+    const msg = includeBackups
+      ? 'Для восстановления mirror вместе с backups нужно подтверждение REPAIR MIRROR BACKUPS'
+      : 'Для восстановления mirror нужно подтверждение REPAIR MIRROR';
+    throw Object.assign(new Error(msg), {status:400});
+  }
+  if(!allhaDb.hasDb || !allhaDb.hasDb()) throw Object.assign(new Error('SQLite недоступен'), {status:503});
+  const direction = String(payload.direction || '').trim();
+  const includeDeletedClients = payload.includeDeletedClients === true;
+  const selectedKeys = new Set(normalizeMirrorRepairKeys(payload.keys || payload.key));
+  const allMode = selectedKeys.size === 0 || payload.all === true;
+  const result = { ok:true, direction, generatedAt:new Date().toISOString(), repaired:[], skipped:[], errors:[] };
+  const shouldInclude = (key) => (allMode || selectedKeys.has(key));
+  const safeTarget = (key) => {
+    const clean = String(key || '').replace(/\\/g,'/').replace(/^\/+/, '').replace(/\.\./g, '_');
+    const target = path.join(DATA_DIR, clean);
+    if(!pathInside(DATA_DIR, target)) throw new Error('Некорректный mirror key');
+    return target;
+  };
+  if(direction === 'db-to-json'){
+    const docRows = allhaDb.listProjectDocumentKeys ? allhaDb.listProjectDocumentKeys() : [];
+    for(const row of docRows){
+      const key = String(row.doc_key || '');
+      if(!shouldInclude(key)) continue;
+      if(isBackupMirrorKey(key) && !includeBackups){ result.skipped.push({key, reason:'backup-skipped'}); continue; }
+      if(isBackupMirrorKey(key) && !includeBackups){ result.skipped.push({key, reason:'backup-skipped'}); continue; }
+      if(!mirrorRepairClientKeyAllowed(key, includeDeletedClients)){ result.skipped.push({key, reason:'deleted-or-missing-client'}); continue; }
+      try{
+        const value = allhaDb.getProjectDocument(key, undefined);
+        const target = safeTarget(key);
+        fs.mkdirSync(path.dirname(target), {recursive:true});
+        fs.writeFileSync(target, JSON.stringify(value, null, 2), 'utf8');
+        result.repaired.push({key, type:'json', action:'db-to-json'});
+      }catch(e){ result.errors.push({key, error:e.message}); }
+    }
+    const fileRows = allhaDb.listProjectFileKeys ? allhaDb.listProjectFileKeys() : [];
+    for(const row of fileRows){
+      const key = String(row.file_key || '');
+      if(!shouldInclude(key)) continue;
+      if(isBackupMirrorKey(key) && !includeBackups){ result.skipped.push({key, reason:'backup-skipped'}); continue; }
+      if(!mirrorRepairClientKeyAllowed(key, includeDeletedClients)){ result.skipped.push({key, reason:'deleted-or-missing-client'}); continue; }
+      try{
+        const value = allhaDb.getProjectFile(key, null);
+        if(value === null || value === undefined){ result.skipped.push({key, reason:'missing-db-file'}); continue; }
+        const target = safeTarget(key);
+        fs.mkdirSync(path.dirname(target), {recursive:true});
+        fs.writeFileSync(target, String(value), 'utf8');
+        result.repaired.push({key, type:'text', action:'db-to-json'});
+      }catch(e){ result.errors.push({key, error:e.message}); }
+    }
+  } else if(direction === 'json-to-db'){
+    const keys = allMode ? [] : Array.from(selectedKeys);
+    if(allMode){
+      function walk(dir){
+        if(!fs.existsSync(dir)) return;
+        for(const name of fs.readdirSync(dir)){
+          const full = path.join(dir, name);
+          const rel = path.relative(DATA_DIR, full).replace(/\\/g,'/');
+          if((!includeBackups && rel.startsWith('backups/')) || rel.startsWith('logs/') || rel.startsWith('sessions/') || /(^|\/)allha2d\.db(-wal|-shm)?$/i.test(rel)) continue;
+          const st = fs.statSync(full);
+          if(st.isDirectory()) walk(full);
+          else if(/\.(json|js|txt|md)$/i.test(name)) keys.push(rel);
+        }
+      }
+      walk(DATA_DIR);
+    }
+    for(const key of keys){
+      if(!mirrorRepairClientKeyAllowed(key, includeDeletedClients)){ result.skipped.push({key, reason:'deleted-or-missing-client'}); continue; }
+      try{
+        const target = safeTarget(key);
+        if(!fs.existsSync(target)){ result.skipped.push({key, reason:'missing-file'}); continue; }
+        if(/\.json$/i.test(key)){
+          const value = JSON.parse(fs.readFileSync(target,'utf8'));
+          if(allhaDb.setProjectDocument) allhaDb.setProjectDocument(key, value, 'json-repair');
+          result.repaired.push({key, type:'json', action:'json-to-db'});
+        } else if(/\.(js|txt|md)$/i.test(key)){
+          const value = fs.readFileSync(target,'utf8');
+          if(allhaDb.setProjectFile) allhaDb.setProjectFile(key, value, path.extname(key).slice(1) || 'text');
+          result.repaired.push({key, type:'text', action:'json-to-db'});
+        } else result.skipped.push({key, reason:'unsupported-extension'});
+      }catch(e){ result.errors.push({key, error:e.message}); }
+    }
+  } else {
+    throw Object.assign(new Error('direction должен быть db-to-json или json-to-db'), {status:400});
+  }
+  result.counts = { repaired:result.repaired.length, skipped:result.skipped.length, errors:result.errors.length };
+  writeDebugLog('maintenance','mirror-repair',{direction, counts:result.counts, includeDeletedClients, includeBackups});
+  return result;
+}
+
+function tarOctal(value, length){
+  const s = Math.max(0, Number(value)||0).toString(8);
+  return Buffer.from(s.padStart(length - 1, '0').slice(-(length - 1)) + '\0');
+}
+function tarHeader(name, size, mtime, type='0'){
+  const buf = Buffer.alloc(512, 0);
+  const clean = String(name || 'file').replace(/\\/g,'/').replace(/^\/+/, '').slice(0, 100);
+  buf.write(clean, 0, Math.min(Buffer.byteLength(clean), 100), 'utf8');
+  tarOctal(0o644, 8).copy(buf, 100);
+  tarOctal(0, 8).copy(buf, 108);
+  tarOctal(0, 8).copy(buf, 116);
+  tarOctal(size, 12).copy(buf, 124);
+  tarOctal(Math.floor(new Date(mtime || Date.now()).getTime()/1000), 12).copy(buf, 136);
+  Buffer.from('        ').copy(buf, 148);
+  buf.write(type, 156, 1, 'ascii');
+  buf.write('ustar\0', 257, 6, 'ascii');
+  buf.write('00', 263, 2, 'ascii');
+  let sum = 0; for(const b of buf) sum += b;
+  const chk = sum.toString(8).padStart(6,'0');
+  buf.write(chk, 148, 6, 'ascii');
+  buf[154] = 0; buf[155] = 32;
+  return buf;
+}
+function createTarGzBuffer(srcDir, rootName){
+  const chunks = [];
+  const root = path.resolve(srcDir);
+  const base = String(rootName || path.basename(srcDir)).replace(/[^a-z0-9_.-]/gi,'-') || 'backup';
+  function addFile(full){
+    const st = fs.statSync(full);
+    if(st.isDirectory()){
+      for(const name of fs.readdirSync(full)) addFile(path.join(full, name));
+      return;
+    }
+    const rel = path.relative(root, full).replace(/\\/g,'/');
+    const name = `${base}/${rel}`;
+    const data = fs.readFileSync(full);
+    chunks.push(tarHeader(name, data.length, st.mtime, '0'));
+    chunks.push(data);
+    const pad = (512 - (data.length % 512)) % 512;
+    if(pad) chunks.push(Buffer.alloc(pad, 0));
+  }
+  addFile(root);
+  chunks.push(Buffer.alloc(1024, 0));
+  return zlib.gzipSync(Buffer.concat(chunks));
+}
+
 function createManualBackup(reason='manual'){
   ensureDataStore();
   const stamp = timestampForFile();
@@ -1577,9 +2270,11 @@ function createManualBackup(reason='manual'){
   ];
   const copied=[];
   for(const src of candidates){
-    try{ if(fs.existsSync(src) && copyPathRecursive(src, path.join(dst, path.basename(src)))) copied.push(path.basename(src)); }catch(e){}
+    try{ if(fs.existsSync(src) && copyPathForBackup(src, path.join(dst, path.basename(src)))) copied.push(path.basename(src)); }catch(e){ console.warn('[ALLHA-2D] backup copy failed:', path.basename(src), e.message); }
   }
-  return { name:path.basename(dst), type:'directory', copied, path:dst };
+  const sizeBytes = dirSizeBytes(dst);
+  const manifest = writeBackupManifest(dst, {reason:safeReason, copied, sizeBytes});
+  return { name:path.basename(dst), type:'directory', copied, path:dst, size:sizeBytes, manifest:!!manifest };
 }
 
 function restoreManualBackup(name, confirmWord){
@@ -1588,7 +2283,7 @@ function restoreManualBackup(name, confirmWord){
   if(String(confirmWord||'') !== 'RESTORE BACKUP') throw new Error('Для восстановления backup требуется RESTORE BACKUP');
   const srcDir = path.join(LAYOUT_BACKUP_DIR, rel);
   if(!pathInside(LAYOUT_BACKUP_DIR, srcDir) || !fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) throw new Error('Backup не найден или не является директорией');
-  const before = createManualBackup('before-restore');
+  const before = autoBackupsEnabled() ? createManualBackup('before-restore') : null;
   const restoreMap = [
     ['profiles.json', PROFILES_META_PATH],
     ['profiles', PROFILES_DIR],
@@ -1608,7 +2303,7 @@ function restoreManualBackup(name, confirmWord){
     }catch(e){ console.warn('[ALLHA-2D] restore backup failed:', name0, e.message); }
   }
   updateActiveProfilePaths();
-  return { ok:true, restored, preRestoreBackup: before.name, backups: backupSummary(), reloadRecommended:true };
+  return { ok:true, restored, preRestoreBackup: before?.name || null, automaticPreRestoreBackup: !!before, backups: backupSummary(), reloadRecommended:true };
 }
 function deleteBackupItem(name){
   const rel = String(name||'').replace(/\\/g,'/');
@@ -1712,6 +2407,7 @@ function normalizeStoredLayout(){
 }
 
 function backupLayoutWithPrefix(prefix){
+  if(!autoBackupsEnabled()) return null;
   const layout = loadLayout();
   if(!layout) return null;
   fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
@@ -1763,6 +2459,10 @@ function copyPathRecursive(src, dst){
 }
 function removePathSafe(target){
   if(!target || !target.startsWith(DATA_DIR)) return;
+  try{
+    const rel = path.relative(DATA_DIR, target).replace(/\\/g,'/');
+    if(rel && !rel.startsWith('..')) clearRuntimeStoragePrefix(rel.endsWith('/') ? rel : rel + '/');
+  }catch(e){}
   try{ if(fs.existsSync(target)) fs.rmSync(target, {recursive:true, force:true}); }catch(e){ console.warn('[ALLHA-2D] factory reset remove failed:', target, e.message); }
 }
 function projectFileKeyForFile(file){
@@ -1827,8 +2527,8 @@ function factoryResetProject(confirmWord){
   if(String(confirmWord||'') !== 'RESET') throw new Error('Для полного сброса требуется подтверждение RESET');
   ensureDataStore();
   const stamp = timestampForFile();
-  const backupDir = path.join(LAYOUT_BACKUP_DIR, `factory-reset-${stamp}`);
-  fs.mkdirSync(backupDir, {recursive:true});
+  const backupDir = autoBackupsEnabled() ? path.join(LAYOUT_BACKUP_DIR, `factory-reset-${stamp}`) : null;
+  if(backupDir) fs.mkdirSync(backupDir, {recursive:true});
   const candidates = [
     ADDON_CONFIG_PATH, PROFILES_META_PATH, PROFILES_DIR,
     SOURCE_CONFIG_PATH, UI_STATE_PATH, LAYOUT_PATH, ROOMS_SETTINGS_PATH, DEVICES_PATH, activeLevelPaths().devicesJson, LOVELACE_PATH, activeLevelPaths().lovelaceRaw,
@@ -1837,16 +2537,18 @@ function factoryResetProject(confirmWord){
     ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH
   ];
   const backedUp = [];
-  const seenBackup = new Set();
-  for(const src of candidates){
-    try{
-      if(!src || seenBackup.has(src)) continue;
-      seenBackup.add(src);
-      if(fs.existsSync(src)){
-        const dst = path.join(backupDir, path.basename(src));
-        if(copyPathRecursive(src, dst)) backedUp.push(path.basename(src));
-      }
-    }catch(e){ console.warn('[ALLHA-2D] factory reset backup failed:', src, e.message); }
+  if(backupDir){
+    const seenBackup = new Set();
+    for(const src of candidates){
+      try{
+        if(!src || seenBackup.has(src)) continue;
+        seenBackup.add(src);
+        if(fs.existsSync(src)){
+          const dst = path.join(backupDir, path.basename(src));
+          if(copyPathRecursive(src, dst)) backedUp.push(path.basename(src));
+        }
+      }catch(e){ console.warn('[ALLHA-2D] factory reset backup failed:', src, e.message); }
+    }
   }
 
   // Полный сброс должен удалять не только картинки, но и все runtime-данные:
@@ -1892,7 +2594,7 @@ function factoryResetProject(confirmWord){
   atomicWriteJson(path.join(DATA_DIR,'lovelace_raw.json'), { version:1, views:[] });
 
   ensureDataStore();
-  return { ok:true, reset:true, backup:path.basename(backupDir), backedUp, config: publicConfig(loadAddonConfig()), layout: loadLayout(), uiState: loadUiState(), profiles: profilesDiagnostics(), levels: levelsDiagnostics() };
+  return { ok:true, reset:true, backup:backupDir ? path.basename(backupDir) : null, automaticBackup:!!backupDir, backedUp, config: publicConfig(loadAddonConfig()), layout: loadLayout(), uiState: loadUiState(), profiles: profilesDiagnostics(), levels: levelsDiagnostics() };
 }
 
 function defaultImagesMeta(){
@@ -1944,18 +2646,52 @@ function getImageSize(file){
 function mediaUrlForOverview(){ return 'media/images/overview.webp'; }
 function mediaUrlForRoom(roomId){ return `media/images/rooms/${encodeURIComponent(String(roomId||'default'))}.webp`; }
 function customOverviewImagePath(){ return path.join(DATA_IMAGES_OVERVIEW_DIR, 'overview.webp'); }
-function safeRoomImageFileBase(roomId){ return String(roomId||'default').replace(/[^a-zA-Z0-9_-]/g,'_'); }
+function legacyUnsafeRoomImageFileBase(roomId){ return String(roomId||'default').replace(/[^a-zA-Z0-9_-]/g,'_'); }
+function safeRoomImageFileBase(roomId){
+  const raw = String(roomId || 'default').trim() || 'default';
+  const slug = raw
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40) || 'room';
+  const hash = crypto.createHash('sha1').update(raw).digest('hex').slice(0, 12);
+  return `${slug}-${hash}`;
+}
 function customRoomImagePath(roomId){ return path.join(DATA_IMAGES_ROOMS_DIR, `${safeRoomImageFileBase(roomId)}.webp`); }
 function activeCustomRoomImagePath(roomId){
   const meta = loadImagesMeta();
-  const src = meta.rooms?.[String(roomId||'')]?.file;
-  if(src && path.resolve(src).startsWith(path.resolve(DATA_IMAGES_ROOMS_DIR)) && fs.existsSync(src)) return src;
-  const base = path.join(DATA_IMAGES_ROOMS_DIR, safeRoomImageFileBase(roomId));
-  for(const ext of ['webp','png','jpg','jpeg']){
-    const f = `${base}.${ext}`;
-    if(fs.existsSync(f)) return f;
+  const rid = String(roomId||'');
+  const expectedBase = safeRoomImageFileBase(roomId);
+  const expectedPath = path.join(DATA_IMAGES_ROOMS_DIR, `${expectedBase}.webp`);
+
+  // In local-dev, old legacy room image names were derived from room_id by
+  // replacing non-latin characters. Several Russian room_ids could therefore
+  // point to the same file (for example many underscores). Do not trust those
+  // legacy paths, because they can show another room's image. Only accept the
+  // new hash-based per-room filename.
+  const strictRoomImageFiles = process.env.ALLHA_MODE === 'local-dev';
+
+  const metaEntry = meta.rooms?.[rid];
+  const src = metaEntry?.file;
+  if(src && path.resolve(src).startsWith(path.resolve(DATA_IMAGES_ROOMS_DIR)) && fs.existsSync(src)){
+    if(!strictRoomImageFiles || path.basename(src) === `${expectedBase}.webp`){
+      return src;
+    }
   }
-  return customRoomImagePath(roomId);
+
+  if(fs.existsSync(expectedPath)) return expectedPath;
+
+  if(!strictRoomImageFiles){
+    const legacyBase = path.join(DATA_IMAGES_ROOMS_DIR, legacyUnsafeRoomImageFileBase(roomId));
+    for(const ext of ['webp','png','jpg','jpeg']){
+      const f = `${legacyBase}.${ext}`;
+      if(fs.existsSync(f)) return f;
+    }
+  }
+
+  return null;
 }
 function placeholderSvg(kind='overview', roomId=''){
   const title = kind === 'overview' ? 'ALLHA-2D overview' : `ALLHA-2D room ${String(roomId||'')}`;
@@ -2185,8 +2921,45 @@ function normalizeStandardSensors(src, options={}){
 function normalizeRoomSettingsRoom(roomId, value){
   const current = isPlainObject(value) ? value : {};
   const out = { ...current };
+  out.virtual = current.virtual === true;
+  if(Array.isArray(current.hiddenDevices)) out.hiddenDevices = [...new Set(current.hiddenDevices.map(v=>normalizeEntityId(v, {strict:false})).filter(Boolean))];
+  else if(Object.prototype.hasOwnProperty.call(current, 'hiddenDevices')) out.hiddenDevices = [];
   if(Object.prototype.hasOwnProperty.call(current, 'standardSensors')) out.standardSensors = normalizeStandardSensors(current.standardSensors);
+  if(current.standardSensorOrientation === 'vertical') out.standardSensorOrientation = 'vertical';
+  else if(Object.prototype.hasOwnProperty.call(current, 'standardSensorOrientation')) out.standardSensorOrientation = 'horizontal';
+  if(current.standardSensorOverviewOrientation === 'vertical') out.standardSensorOverviewOrientation = 'vertical';
+  else if(Object.prototype.hasOwnProperty.call(current, 'standardSensorOverviewOrientation')) out.standardSensorOverviewOrientation = 'horizontal';
+  if(current.standardSensorRoomOrientation === 'vertical') out.standardSensorRoomOrientation = 'vertical';
+  else if(Object.prototype.hasOwnProperty.call(current, 'standardSensorRoomOrientation')) out.standardSensorRoomOrientation = 'horizontal';
   return out;
+}
+
+function setRoomStandardSensorOrientation(roomId, orientation, roomsPath = ROOMS_SETTINGS_PATH, scope = 'room'){
+  const id = assertKnownRoomId(roomId, roomsPath);
+  const value = String(orientation || '').trim() === 'vertical' ? 'vertical' : 'horizontal';
+  const normalizedScope = String(scope || '').trim() === 'overview' ? 'overview' : 'room';
+  const key = normalizedScope === 'overview' ? 'standardSensorOverviewOrientation' : 'standardSensorRoomOrientation';
+  const current = loadRoomsSettings(roomsPath);
+  current.rooms[id] = { ...(current.rooms[id] || {}), [key]: value };
+  const saved = saveRoomsSettings(current, roomsPath);
+  return { ok:true, roomId:id, scope:normalizedScope, orientation:saved.rooms?.[id]?.[key] || 'horizontal', rooms:saved };
+}
+
+function setRoomHiddenDevices(roomId, hiddenDevices, roomsPath = ROOMS_SETTINGS_PATH){
+  const id = assertKnownRoomId(roomId, roomsPath);
+  const list = Array.isArray(hiddenDevices) ? hiddenDevices : [];
+  const normalized = [...new Set(list.map(v=>normalizeEntityId(v, {strict:false})).filter(Boolean))];
+  const current = loadRoomsSettings(roomsPath);
+  current.rooms[id] = { ...(current.rooms[id] || {}), hiddenDevices: normalized };
+  const saved = saveRoomsSettings(current, roomsPath);
+  return { ok:true, roomId:id, hiddenDevices:saved.rooms?.[id]?.hiddenDevices || [], rooms:saved };
+}
+function setRoomVirtualFlag(roomId, virtual, roomsPath = ROOMS_SETTINGS_PATH){
+  const id = assertKnownRoomId(roomId, roomsPath);
+  const current = loadRoomsSettings(roomsPath);
+  current.rooms[id] = { ...(current.rooms[id] || {}), virtual: virtual === true };
+  const saved = saveRoomsSettings(current, roomsPath);
+  return { ok:true, roomId:id, virtual:!!saved.rooms?.[id]?.virtual, rooms:saved };
 }
 function normalizeRoomsSettings(payload, options={}){
   const src = isPlainObject(payload) ? payload : defaultRoomsSettings();
@@ -2384,7 +3157,23 @@ function textForSuggestion(device, stateObj){
   ];
   return parts.map(x=>String(x||'').toLowerCase()).join(' ');
 }
+function standardSensorTypeEvidence(key, entityId, device, stateObj){
+  const domain = entityDomain(entityId);
+  const txt = textForSuggestion(device, stateObj);
+  const dc = String(stateObj?.attributes?.device_class || device?.device_class || '').toLowerCase();
+  const unit = String(stateObj?.attributes?.unit_of_measurement || '').toLowerCase();
+  const has = (...words)=>words.some(w=>txt.includes(w));
+  if(key === 'temperature') return (domain === 'sensor') && (dc === 'temperature' || has('temperature','temp','температур'));
+  if(key === 'humidity') return (domain === 'sensor') && (dc === 'humidity' || has('humidity','влажн'));
+  if(key === 'motion') return (domain === 'binary_sensor' || domain === 'sensor') && (['motion','presence','occupancy'].includes(dc) || has('motion','presence','occupancy','движ','присутств'));
+  if(key === 'illuminance') return (domain === 'sensor') && (dc === 'illuminance' || has('illuminance','lux','light_level','освещ'));
+  if(key === 'noise') return (domain === 'sensor') && (['sound_pressure','sound_level'].includes(dc) || has('sound_level','noise','sound','шум'));
+  if(key === 'co2') return (domain === 'sensor') && (['carbon_dioxide','co2'].includes(dc) || has('co2','carbon_dioxide','carbon dioxide','углекисл'));
+  return false;
+}
 function scoreStandardSensorSuggestion(key, entityId, device, stateObj, roomId){
+  // Strict matcher: if there is no type evidence, do not suggest anything. Same-room alone is not enough.
+  if(!standardSensorTypeEvidence(key, entityId, device, stateObj)) return 0;
   const domain = entityDomain(entityId);
   const txt = textForSuggestion(device, stateObj);
   let score = 0;
@@ -2395,10 +3184,10 @@ function scoreStandardSensorSuggestion(key, entityId, device, stateObj, roomId){
   const dc = String(stateObj?.attributes?.device_class || device?.device_class || '').toLowerCase();
   const unit = String(stateObj?.attributes?.unit_of_measurement || '').toLowerCase();
   const has = (...words)=>words.some(w=>txt.includes(w));
-  if(key === 'temperature') { if(dc === 'temperature') score += 80; if(has('temperature','temp','температур')) score += 45; if(unit.includes('°') || unit.includes('c')) score += 10; }
+  if(key === 'temperature') { if(dc === 'temperature') score += 80; if(has('temperature','temp','температур')) score += 45; if(unit.includes('°') || unit === 'c' || unit.includes('°c')) score += 10; }
   if(key === 'humidity') { if(dc === 'humidity') score += 80; if(has('humidity','влажн')) score += 45; if(unit === '%' || unit.includes('%')) score += 10; }
   if(key === 'motion') { if(['motion','presence','occupancy'].includes(dc)) score += 80; if(has('motion','presence','occupancy','движ','присутств')) score += 45; }
-  if(key === 'illuminance') { if(['illuminance'].includes(dc)) score += 80; if(has('illuminance','lux','light_level','освещ','свет')) score += 45; if(unit.includes('lx') || unit.includes('lux')) score += 10; }
+  if(key === 'illuminance') { if(dc === 'illuminance') score += 80; if(has('illuminance','lux','light_level','освещ')) score += 45; if(unit.includes('lx') || unit.includes('lux')) score += 10; }
   if(key === 'noise') { if(['sound_pressure','sound_level'].includes(dc)) score += 80; if(has('sound_level','noise','sound','шум')) score += 45; if(unit.includes('db')) score += 10; }
   if(key === 'co2') { if(['carbon_dioxide','co2'].includes(dc)) score += 90; if(has('co2','carbon_dioxide','carbon dioxide','углекисл')) score += 60; if(unit.includes('ppm')) score += 10; }
   return score;
@@ -2407,10 +3196,10 @@ function standardSensorSuggestionReason(key, entityId, device, stateObj, roomId)
   const dc = String(stateObj?.attributes?.device_class || device?.device_class || '').toLowerCase();
   const unit = String(stateObj?.attributes?.unit_of_measurement || '').toLowerCase();
   const roomLabel = friendlyRoomLabel(roomId);
-  if(String(device?.room || '') === roomId) return `найдено в комнате ${roomLabel}`;
-  if(dc) return `найдено по device_class ${dc}`;
-  if(unit) return `найдено по unit ${unit}`;
-  return `найдено по entity/name для комнаты ${roomLabel}`;
+  if(dc) return `найдено по device_class ${dc}${String(device?.room || '') === roomId ? ` · комната ${roomLabel}` : ''}`;
+  if(unit) return `найдено по unit ${unit}${String(device?.room || '') === roomId ? ` · комната ${roomLabel}` : ''}`;
+  if(String(device?.room || '') === roomId) return `найдено по entity/name и комнате ${roomLabel}`;
+  return `найдено по entity/name`;
 }
 function standardSensorSuggestionsForRoom(roomId, options={}){
   const roomsPath = options.roomsPath || ROOMS_SETTINGS_PATH;
@@ -2483,10 +3272,20 @@ function imagesDiagnostics(){
   };
 }
 
+function cachedHaStatesList(){
+  return statesCache instanceof Map && statesCache.size > 0 ? [...statesCache.values()] : [];
+}
+async function haStatesForDiagnostics(){
+  const cached = cachedHaStatesList();
+  if(cached.length) return { states: cached, source: 'cache', error: null };
+  try{ return { states: await haFetch('/states'), source: 'http', error: null }; }
+  catch(e){ return { states: [], source: 'error', error: e.message }; }
+}
+
 async function buildDiagnostics(req=null){
   const devices=loadAllDevicesForDiagnostics();
-  let haStates=[]; let haError=null;
-  try{ haStates=await haFetch('/states'); }catch(e){ haError=e.message; }
+  const haStatePack = await haStatesForDiagnostics();
+  let haStates=haStatePack.states || []; let haError=haStatePack.error || null;
   const haIds=new Set(haStates.map(s=>s.entity_id));
   const counts={}; const duplicates=[];
   for(const d of devices){ if(!d.entity_id) continue; counts[d.entity_id]=(counts[d.entity_id]||0)+1; }
@@ -2506,6 +3305,7 @@ async function buildDiagnostics(req=null){
     dataDir: DATA_DIR,
     hasSupervisorToken: !!HA_TOKEN,
     liveStatesCache: statesCache.size,
+    haStatesSource: haStatePack.source,
     dashboardProxy: { ...dashboardProxyInfo(req), directLocal: directLocalDashboardInfo(req) },
     haError,
     counts: { devices: devices.length, haStates: haStates.length, missingInHa: missing.length, duplicates: duplicates.length, noRoom: noRoom.length, noCoordinates: noCoordinates.length, backups: backupSummary().count },
@@ -2526,6 +3326,7 @@ async function buildDiagnostics(req=null){
 function loadLayout(layoutPath = LAYOUT_PATH){ return readJsonSafe(layoutPath, {version:1, markers:{}}); }
 function timestampForFile(){ return new Date().toISOString().replace(/[:.]/g,'-'); }
 function backupLayout(){
+  if(!autoBackupsEnabled()) return null;
   const layout = loadLayout();
   if(!layout) return null;
   fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
@@ -2538,13 +3339,13 @@ function saveLayout(layout, layoutPath = LAYOUT_PATH){
   const normalized = normalizeLayoutPayload(layout || {version:8}, {strict:false});
   const payload = normalized.layout;
   let backupPath = null;
-  if(runtimeDocumentExists(layoutPath)){
+  if(autoBackupsEnabled() && runtimeDocumentExists(layoutPath)){
     fs.mkdirSync(LAYOUT_BACKUP_DIR,{recursive:true});
     backupPath = path.join(LAYOUT_BACKUP_DIR, `layout-${timestampForFile()}.json`);
     fs.writeFileSync(backupPath, JSON.stringify(readJsonSafe(layoutPath, emptyLayout()), null, 2), 'utf8');
+    pruneLayoutBackups(20);
   }
   atomicWriteJson(layoutPath, payload);
-  pruneLayoutBackups(20);
   return backupPath;
 }
 
@@ -2619,6 +3420,94 @@ async function importLovelaceRawForLevel(profileId, levelId, paths){
   });
 }
 
+function summarizeLovelaceRawConfig(result){
+  if(!result || !result.ok) return { ok:false, dashboardPath:result?.dashboardPath || '', error:result?.error || 'not read', viewFilters:result?.viewFilters || [] };
+  const config = unwrapLovelaceConfig(result.rawConfig ?? result.raw ?? {});
+  const views = Array.isArray(config.views) ? config.views : [];
+  let cards = 0;
+  let entities = new Set();
+  for(const view of views){
+    const viewCards = getCardsFromView(view);
+    cards += viewCards.length;
+    for(const card of viewCards){
+      const refs = collectEntityRefs(card, []);
+      for(const ref of refs) if(ref?.entity_id) entities.add(ref.entity_id);
+    }
+  }
+  return {
+    ok:true,
+    dashboardPath:result.dashboardPath || result.raw || 'lovelace',
+    viewFilters:result.viewFilters || [],
+    views:views.length,
+    cards,
+    entities:entities.size,
+    modeHint:'storage/dashboard API',
+    yamlMode:'unknown'
+  };
+}
+function buildLovelaceDiagnosticsForLevel(profileId, levelId){
+  const pid = sanitizeProfileId(profileId || ACTIVE_PROFILE_ID);
+  const lid = sanitizeLevelId(levelId || ACTIVE_LEVEL_ID);
+  const lp = ensureLevelDirs(pid, lid);
+  const cfg = loadSourceConfigForLevel(pid, lid);
+  const dashboardPaths = normalizeDashboardPaths(cfg.dashboardPaths ?? cfg.dashboardPathText ?? '');
+  const rawBundle = readJsonSafe(lp.lovelaceRaw, null);
+  const parseReport = readJsonSafe(lp.deviceParseReportJson, null);
+  let devices = [];
+  try{ devices = parseJsAssignedArray(lp.devicesJs, 'ALL_DEVICES'); }catch(e){ try{ devices = readJsonSafe(lp.devicesJson, []); }catch(_){ devices=[]; } }
+  const sourceKeys = new Map();
+  for(const d of Array.isArray(devices)?devices:[]){
+    const key = String(d.sourceKey || `${d.viewTitle || 'RAW'}::${d.cardTitle || d.category || 'Без группы'}`);
+    if(!sourceKeys.has(key)) sourceKeys.set(key, { sourceKey:key, count:0, roomIds:new Set(), domains:new Set(), enabled:true });
+    const item = sourceKeys.get(key);
+    item.count++;
+    if(d.room) item.roomIds.add(d.room);
+    if(d.domain) item.domains.add(d.domain);
+  }
+  const selectedCards = cfg.selectedCards || {};
+  const excludedCards = cfg.excludedCards || {};
+  const sourceSummary = [...sourceKeys.values()].map(x=>({
+    sourceKey:x.sourceKey,
+    devices:x.count,
+    rooms:[...x.roomIds],
+    domains:[...x.domains],
+    enabled:Object.prototype.hasOwnProperty.call(selectedCards, x.sourceKey) ? !!selectedCards[x.sourceKey] : (!(excludedCards||{})[x.sourceKey] && cfg.defaultInclude !== false)
+  })).sort((a,b)=>a.sourceKey.localeCompare(b.sourceKey,'ru'));
+  const unassignedDevices = (Array.isArray(devices)?devices:[]).filter(d=>!d.room || d.room==='unassigned').slice(0,200).map(d=>({ entity_id:d.entity_id, name:d.name || d.label || '', sourceKey:d.sourceKey || '', reason:'room not detected' }));
+  const rawResults = Array.isArray(rawBundle?.results) ? rawBundle.results : [];
+  return {
+    ok:true,
+    profileId:pid,
+    levelId:lid,
+    generatedAt:new Date().toISOString(),
+    sourceConfig:{ dashboardPaths, defaultInclude:cfg.defaultInclude!==false, selectedCardsCount:Object.keys(selectedCards||{}).length, excludedCardsCount:Object.keys(excludedCards||{}).length, includeUnknownFromApi:!!cfg.includeUnknownFromApi },
+    raw:{ exists:!!rawBundle, generatedAt:rawBundle?.generatedAt || null, requested:rawBundle?.requested || dashboardPaths, dashboards:rawResults.map(summarizeLovelaceRawConfig), errors:rawResults.filter(r=>!r.ok).map(r=>({dashboardPath:r.dashboardPath||r.raw||'', error:r.error||''})) },
+    import:{ exists:!!parseReport, devices:Array.isArray(devices)?devices.length:0, views:Number(parseReport?.views||0), cards:Number(parseReport?.cards||0), rooms:Number(parseReport?.rooms||0), entitiesFound:Number(parseReport?.entitiesFound||0), roomsFromCardTitles:Number(parseReport?.roomsFromCardTitles||0), templatesUsed:Array.isArray(parseReport?.templatesUsed)?parseReport.templatesUsed:[], templateWarnings:Array.isArray(parseReport?.templateWarnings)?parseReport.templateWarnings:[], skippedViews:Array.isArray(parseReport?.skippedViews)?parseReport.skippedViews:[], viewDetails:Array.isArray(parseReport?.viewDetails)?parseReport.viewDetails:[], roomDetails:Array.isArray(parseReport?.roomDetails)?parseReport.roomDetails:[], haRegistry:parseReport?.haRegistry || null },
+    sources:sourceSummary,
+    notPlacedOrUnassigned:unassignedDevices,
+    notes:[
+      'RAW читается через persistent HA WebSocket command lovelace/config.',
+      'YAML/storage режим определяется Home Assistant; если dashboard не читается через lovelace/config, ошибка будет в raw.errors.',
+      'Перечитать уровень использует сохранённые sources, если request не передал новые dashboardPaths/dashboardPathText.'
+    ]
+  };
+}
+function buildLovelaceDiagnosticsAllLevels(){
+  const profilesMeta = loadProfilesMeta();
+  return profilesMeta.profiles.map(p=>{
+    const levelsMeta = loadLevelsMeta(p.id);
+    return {
+      profileId:p.id,
+      profileName:p.name,
+      activeLevelId:levelsMeta.activeLevelId,
+      levels:levelsMeta.levels.map(l=>{
+        const d = buildLovelaceDiagnosticsForLevel(p.id, l.id);
+        return { levelId:l.id, levelName:l.name, sourceConfig:d.sourceConfig, raw:d.raw, import:d.import, sourcesCount:d.sources.length, unassignedCount:d.notPlacedOrUnassigned.length };
+      })
+    };
+  });
+}
+
 
 ensureDataStore();
 
@@ -2644,14 +3533,72 @@ app.use((req, res, next) => {
 });
 app.use(express.json({limit:'1mb'}));
 
-// Diagnostic HTTP trace disabled in clean build.
-app.use((req,res,next)=>next());
+// Lightweight debug log: no full HTTP trace by default. Only errors when ALLHA_DEBUG_HTTP=1.
+app.use((req,res,next)=>{
+  if(DEBUG_LOG_HTTP) debugLogResponse(req,res,'http-error');
+  next();
+});
+
+app.post('/api/debug/client-event', express.json({limit:'64kb'}), (req,res)=>{
+  try{
+    if(DEBUG_LOG_CLIENT_EVENTS){
+      writeDebugLog('client-event', String(req.body?.event || 'event'), {
+        client:req.body?.client || {},
+        payload:req.body?.payload || {},
+        deviceId:req.headers['x-device-id'] || '',
+        clientId:req.headers['x-client-id'] || ''
+      });
+    }
+    res.json({ok:true});
+  }catch(e){ safeErrorResponse(req,res,e); }
+});
+
+function logFilesSummary(){
+  try{
+    fs.mkdirSync(DEBUG_LOG_DIR,{recursive:true});
+    return fs.readdirSync(DEBUG_LOG_DIR).filter(n=>n.startsWith('allha2d-debug') && n.endsWith('.log')).map(n=>{
+      const fp=path.join(DEBUG_LOG_DIR,n); const st=fs.statSync(fp);
+      return { name:n, size:st.size, mtime:st.mtime.toISOString() };
+    }).sort((a,b)=>String(b.mtime).localeCompare(String(a.mtime)));
+  }catch(e){ return []; }
+}
+function clearDebugLogs(){
+  let removed=0;
+  try{ for(const f of logFilesSummary()){ fs.unlinkSync(path.join(DEBUG_LOG_DIR,f.name)); removed++; } }catch(e){}
+  return { removed };
+}
+
+app.get('/api/debug/log/status', (req,res)=>{
+  try{
+    const exists = fs.existsSync(DEBUG_LOG_PATH);
+    const st = exists ? fs.statSync(DEBUG_LOG_PATH) : null;
+    res.json({ok:true, enabled:DEBUG_LOG_ENABLED, httpTrace:DEBUG_LOG_HTTP, clientEvents:DEBUG_LOG_CLIENT_EVENTS, path:DEBUG_LOG_PATH, exists, size:st?.size || 0});
+  }catch(e){ safeErrorResponse(req,res,e); }
+});
+app.get('/api/debug/log/tail', (req,res)=>{
+  try{
+    flushDebugLog();
+    const limit = Math.max(1, Math.min(1000, Number(req.query.limit || 300)));
+    if(!fs.existsSync(DEBUG_LOG_PATH)) return res.type('text/plain').send('');
+    const text = fs.readFileSync(DEBUG_LOG_PATH, 'utf8');
+    const lines = text.trim().split(/\n/).slice(-limit).join('\n');
+    res.type('text/plain').send(lines + (lines ? '\n' : ''));
+  }catch(e){ safeErrorResponse(req,res,e); }
+});
+app.post('/api/debug/log/clear', (req,res)=>{
+  try{
+    fs.mkdirSync(DEBUG_LOG_DIR,{recursive:true});
+    fs.writeFileSync(DEBUG_LOG_PATH, '', 'utf8');
+    writeDebugLog('debug-log','cleared',{});
+    res.json({ok:true,path:DEBUG_LOG_PATH});
+  }catch(e){ safeErrorResponse(req,res,e); }
+});
 
 app.get('/api/dashboard-info', (req,res)=>{
   try{
     const info = dashboardProxyInfo(req);
     res.json({ ok:true, ...info, directRoute:'/allha-2d-direct/', directLocal: directLocalDashboardInfo(req), recommended: info.dashboardUrl || directLocalDashboardInfo(req).url || 'Откройте add-on через ingress, затем обновите эту страницу.', candidates: info.candidates || dashboardUrlCandidates(info.dashboardUrl) });
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 app.get('/devices.js', (req,res)=>{
   const generated = DEVICES_PATH;
@@ -2671,29 +3618,128 @@ app.get('/lovelace-source.js', (req,res)=>{
   const txt = readTextRuntimeFile(generated, 'window.LOVELACE_SOURCE = {"version":1,"views":[]};\n');
   return res.send(txt);
 });
+app.get('/', (req,res)=>{
+  // Local Docker web root keeps the persistent /client/<slug> landing screen.
+  // HA add-on / Ingress root must open the actual app, because Home Assistant
+  // already provides the outer entry point/auth and the Ingress path is not a
+  // stable /client URL. Mobile port still opens the authenticated app entry.
+  const mobileEntry = isMobilePortRequest(req)
+    || !!req.query?._mt
+    || !!req.query?._did
+    || String(req.query?._mobile || req.query?.mobile || '') === '1';
+  const addonEntry = isHomeAssistantAddonMode() || isIngressRequest(req) || String(req.query?.ingress || req.query?.ha_addon || '') === '1';
+  res.sendFile(path.join(__dirname, 'public', (mobileEntry || addonEntry) ? 'index.html' : 'client-start.html'));
+});
 app.get('/client/:slug', (req,res)=>{
   try{
     const client = allhaDb.getWebClientBySlug ? allhaDb.getWebClientBySlug(req.params.slug) : null;
-    if(client) res.setHeader('Set-Cookie', `allha_web_client_slug=${encodeURIComponent(client.slug)}; Path=/; SameSite=Lax; Max-Age=31536000`);
-  }catch(e){}
+    if(!client){
+      return res.redirect('/?missingClient=' + encodeURIComponent(req.params.slug || ''));
+    }
+    const cookieParts = [`allha_web_client_slug=${encodeURIComponent(client.slug)}; Path=/; SameSite=Lax; Max-Age=31536000`];
+    const webClientId = client.clientId || client.client_id || client.id || '';
+    if(webClientId) cookieParts.push(`allha_web_client_id=${encodeURIComponent(webClientId)}; Path=/; SameSite=Lax; Max-Age=31536000`);
+    res.setHeader('Set-Cookie', cookieParts);
+  }catch(e){
+    return res.redirect('/?clientError=1');
+  }
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { index:false }));
 
 
 function defaultAddonConfig(){
   return {
-    pollIntervalMs: 6000,
+    pollIntervalMs: 30000,
+    sseBatchMs: 1000,
     dashboardPaths: [],
     ui: {
       darkTheme:true, kioskWidget:false, weatherEntity:'', showAllDevicesInRoom:false,
       haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00
     },
     security: { panelMode:'admin', confirmDangerousServices:true, dangerousRequirePin:false, pinEnabled:false },
-    mobileAccess: { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '' }
+    mobileAccess: { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '', qrPassword: '', externalEnabled: false, externalUrl: '', externalMode: 'keendns_http' }
   };
 }
+
+function defaultMobileAccessConfig(){
+  return { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '', qrPassword: '', pairingPasswordHash: '', pairingPasswordSalt: '', externalEnabled: false, externalUrl: '', externalMode: 'keendns_http' };
+}
+function hashMobilePairingPassword(password, salt){
+  const pwd = String(password || '');
+  const s = String(salt || crypto.randomBytes(16).toString('hex'));
+  return { salt:s, hash: crypto.createHash('sha256').update(s + ':' + pwd).digest('hex') };
+}
+function mobilePairingPasswordIsSet(cfg){
+  return !!(String(cfg?.pairingPasswordHash || '').trim() || String(cfg?.pairingPassword || '').trim());
+}
+function verifyMobilePairingPassword(cfg, given){
+  const pwd = String(given || '').trim();
+  if(String(cfg?.pairingPasswordHash || '').trim()){
+    const h = hashMobilePairingPassword(pwd, cfg.pairingPasswordSalt || '').hash;
+    return h === String(cfg.pairingPasswordHash || '');
+  }
+  const legacy = String(cfg?.pairingPassword || '').trim();
+  return !legacy || pwd === legacy;
+}
+function normalizeMobileAccessConfig(input, fallback){
+  const fb = fallback || defaultMobileAccessConfig();
+  const src = input && typeof input === 'object' ? input : {};
+  const out = {
+    enabled: !!src.enabled,
+    localUrl: String(src.localUrl ?? fb.localUrl ?? '').trim(),
+    remoteUrl: String(src.remoteUrl ?? fb.remoteUrl ?? '').trim(),
+    pairingPassword: String(fb.pairingPassword || '').trim(),
+    qrPassword: String(src.qrPassword ?? fb.qrPassword ?? '').trim(),
+    pairingPasswordHash: String(src.pairingPasswordHash ?? fb.pairingPasswordHash ?? '').trim(),
+    pairingPasswordSalt: String(src.pairingPasswordSalt ?? fb.pairingPasswordSalt ?? '').trim(),
+    externalEnabled: !!(src.externalEnabled ?? fb.externalEnabled ?? false),
+    externalUrl: String(src.externalUrl ?? fb.externalUrl ?? '').trim(),
+    externalMode: ['keendns_http','manual_http','future_https_proxy'].includes(String(src.externalMode || fb.externalMode || '')) ? String(src.externalMode || fb.externalMode) : 'keendns_http'
+  };
+  if(Object.prototype.hasOwnProperty.call(src, 'pairingPassword')){
+    const pwd = String(src.pairingPassword || '').trim();
+    if(pwd){
+      const hp = hashMobilePairingPassword(pwd);
+      out.pairingPassword = '';
+      // Keep a dedicated plaintext copy only for the mobile-app first-screen QR payload.
+      // It is not exposed in public config and must be masked in logs/diagnostics.
+      out.qrPassword = pwd;
+      out.pairingPasswordHash = hp.hash;
+      out.pairingPasswordSalt = hp.salt;
+    }
+  }
+  return out;
+}
+function loadMobileAccessConfig(){
+  try{
+    const dedicated = readJsonSafe(MOBILE_ACCESS_PATH, null);
+    if(dedicated && typeof dedicated === 'object'){
+      return normalizeMobileAccessConfig(dedicated, defaultMobileAccessConfig());
+    }
+  }catch(e){}
+  try{
+    const addonRaw = readJsonSafe(ADDON_CONFIG_PATH, {});
+    return normalizeMobileAccessConfig(addonRaw?.mobileAccess || {}, defaultMobileAccessConfig());
+  }catch(e){
+    return defaultMobileAccessConfig();
+  }
+}
+function saveMobileAccessConfig(input){
+  const current = loadMobileAccessConfig();
+  const next = normalizeMobileAccessConfig(input || {}, current);
+  atomicWriteJson(MOBILE_ACCESS_PATH, next);
+
+  // Compatibility mirror: keep mobileAccess in addon_config.json too.
+  const addonRaw = readJsonSafe(ADDON_CONFIG_PATH, defaultAddonConfig());
+  const addonNext = { ...(addonRaw || {}), mobileAccess: next };
+  atomicWriteJson(ADDON_CONFIG_PATH, addonNext);
+
+  const reloaded = loadMobileAccessConfig();
+  return { next, reloaded };
+}
+
 function normalizeUiConfig(input){
   const d=defaultAddonConfig().ui, src=input||{};
   const pct=(v,def,min=0.1,max=2)=>{ const n=Number(v); return Number.isFinite(n)?clamp(n,min,max):def; };
@@ -2726,14 +3772,33 @@ function normalizeSecurityConfig(input){
     pinSalt: typeof src.pinSalt==='string' ? src.pinSalt : ''
   };
 }
-function loadCommandLog(){ return readJsonSafe(COMMAND_LOG_PATH, []); }
+let _commandLogCache = null;
+let _commandLogFlushTimer = null;
+function loadCommandLog(){
+  if(Array.isArray(_commandLogCache)) return _commandLogCache;
+  _commandLogCache = Array.isArray(readJsonSafe(COMMAND_LOG_PATH, [])) ? readJsonSafe(COMMAND_LOG_PATH, []) : [];
+  return _commandLogCache;
+}
+function flushCommandLog(){
+  if(_commandLogFlushTimer){ clearTimeout(_commandLogFlushTimer); _commandLogFlushTimer = null; }
+  if(!Array.isArray(_commandLogCache)) return;
+  try{ atomicWriteJson(COMMAND_LOG_PATH, _commandLogCache.slice(0,100)); }
+  catch(e){ console.warn('[Smart Home UI] command log flush failed:', e.message); }
+}
+function scheduleCommandLogFlush(){
+  if(_commandLogFlushTimer) return;
+  _commandLogFlushTimer = setTimeout(() => { _commandLogFlushTimer = null; flushCommandLog(); }, Number(process.env.ALLHA_COMMAND_LOG_FLUSH_MS || 1000));
+  _commandLogFlushTimer.unref?.();
+}
 function appendCommandLog(entry){
   try{
-    const list=Array.isArray(loadCommandLog())?loadCommandLog():[];
+    const list = loadCommandLog();
     list.unshift({...entry, time:new Date().toISOString()});
-    atomicWriteJson(COMMAND_LOG_PATH, list.slice(0,100));
+    if(list.length > 100) list.length = 100;
+    scheduleCommandLogFlush();
   }catch(e){ console.warn('[Smart Home UI] command log failed:', e.message); }
 }
+
 function serviceCategory(domain, service){
   if((SAFE_SERVICES[String(domain)]||[]).includes(String(service))) return 'safe';
   if((DANGEROUS_SERVICES[String(domain)]||[]).includes(String(service))) return 'dangerous';
@@ -2799,7 +3864,9 @@ function loadAddonConfig(){
     const merged = { ...defaults, ...options, ...local };
     return {
       ...merged,
+      mobileAccess: loadMobileAccessConfig(),
       pollIntervalMs: Number(local.pollIntervalMs || options.pollIntervalMs || defaults.pollIntervalMs),
+      sseBatchMs: Math.max(0, Math.min(60000, Number(local.sseBatchMs ?? options.sseBatchMs ?? process.env.ALLHA_SSE_BATCH_MS ?? defaults.sseBatchMs))),
       dashboardPaths: normalizeDashboardPaths(local.dashboardPaths ?? local.dashboardPathText ?? options.dashboardPaths ?? options.dashboardPathText ?? ''),
       ui: normalizeUiConfig({ ...(options.ui||{}), ...(local.ui||{}), ...Object.fromEntries(Object.entries(local).filter(([k])=>Object.prototype.hasOwnProperty.call(defaults.ui,k))) }),
       security: normalizeSecurityConfig({ ...(options.security||{}), ...(local.security||{}) })
@@ -2813,18 +3880,19 @@ function saveAddonConfig(cfg){
   const current = loadAddonConfig();
   const next = {
     ...current,
-    pollIntervalMs: Math.max(2000, Number(cfg?.pollIntervalMs || current.pollIntervalMs || 6000)),
+    pollIntervalMs: Math.max(10000, Math.min(60000, Number(cfg?.pollIntervalMs || current.pollIntervalMs || 30000))),
+    sseBatchMs: Math.max(0, Math.min(60000, Number(cfg?.sseBatchMs ?? current.sseBatchMs ?? process.env.ALLHA_SSE_BATCH_MS ?? 1000))),
     dashboardPaths: normalizeDashboardPaths(cfg?.dashboardPaths ?? cfg?.dashboardPathText ?? current.dashboardPaths ?? ''),
     ui: normalizeUiConfig({ ...current.ui, ...(cfg?.ui||{}) }),
     security: normalizeSecurityConfig({ ...current.security, ...(cfg?.security||{}) }),
-    mobileAccess: cfg?.mobileAccess !== undefined ? {
-      enabled: !!cfg.mobileAccess.enabled,
-      localUrl: String(cfg.mobileAccess.localUrl || current.mobileAccess?.localUrl || '').trim(),
-      remoteUrl: String(cfg.mobileAccess.remoteUrl || current.mobileAccess?.remoteUrl || '').trim(),
-      pairingPassword: String(cfg.mobileAccess.pairingPassword ?? current.mobileAccess?.pairingPassword ?? '').trim()
-    } : (current.mobileAccess || { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '' })
+    mobileAccess: cfg?.mobileAccess !== undefined
+      ? normalizeMobileAccessConfig(cfg.mobileAccess, current.mobileAccess || defaultMobileAccessConfig())
+      : (current.mobileAccess || defaultMobileAccessConfig())
   };
   atomicWriteJson(ADDON_CONFIG_PATH, next);
+  if(cfg?.mobileAccess !== undefined){
+    atomicWriteJson(MOBILE_ACCESS_PATH, next.mobileAccess || defaultMobileAccessConfig());
+  }
   return next;
 }
 function normalizeDashboardPathEntry(value){
@@ -2851,18 +3919,25 @@ function publicConfig(cfg){
     mode: 'home-assistant-addon',
     haUrl: 'Home Assistant Supervisor API',
     hasToken: !!HA_TOKEN,
-    pollIntervalMs: cfg?.pollIntervalMs || 6000,
+    pollIntervalMs: cfg?.pollIntervalMs || 30000,
+    sseBatchMs: cfg?.sseBatchMs ?? 1000,
     dashboardPaths,
     dashboardPathText: dashboardPaths.join('\n'),
     ui: normalizeUiConfig(cfg?.ui||{}),
     security: publicSecurityConfig(cfg?.security||{}),
-    mobileAccess: {
-      enabled: !!cfg?.mobileAccess?.enabled,
-      localUrl: String(cfg?.mobileAccess?.localUrl || ''),
-      remoteUrl: String(cfg?.mobileAccess?.remoteUrl || ''),
-      hasPairingPassword: !!(String(cfg?.mobileAccess?.pairingPassword || '').trim()),
-      pairedDevices: mobileAuth.listDevices().length
-    }
+    mobileAccess: (() => {
+      const m = loadMobileAccessConfig();
+      return {
+        enabled: !!m.enabled,
+        localUrl: String(m.localUrl || ''),
+        remoteUrl: String(m.remoteUrl || ''),
+        externalEnabled: !!m.externalEnabled,
+        externalUrl: String(m.externalUrl || ''),
+        externalMode: String(m.externalMode || 'keendns_http'),
+        hasPairingPassword: mobilePairingPasswordIsSet(m),
+        pairedDevices: mobileAuth.listDevices().length
+      };
+    })()
   };
 }
 function splitDashboardPath(raw){
@@ -2996,22 +4071,80 @@ function sendImageFile(res, file, kind='overview', roomId=''){
   if(file && fs.existsSync(file)) return res.sendFile(file);
   res.type('image/svg+xml').send(placeholderSvg(kind, roomId));
 }
+function overviewImagePathForLevel(lp){
+  const dir = path.join(lp.imagesDir || lp.images || DATA_IMAGES_DIR, 'overview');
+  for(const ext of ['webp','png','jpg','jpeg']){
+    const f = path.join(dir, `overview.${ext}`);
+    if(fs.existsSync(f)) return f;
+  }
+  return path.join(dir, 'overview.webp');
+}
+function roomImagePathForLevel(lp, roomId){
+  return path.join(lp.imagesDir || lp.images || DATA_IMAGES_DIR, 'rooms', `${safeRoomImageFileBase(roomId)}.webp`);
+}
 app.get(['/media/overview','/media/overview/:filename','/media/images/overview.webp'], (req,res)=>{
-  const custom = activeCustomOverviewImagePath();
-  sendImageFile(res, custom && fs.existsSync(custom) ? custom : null, 'overview');
+  try{
+    // v4.2.1: media should use request-scoped paths directly. Do not mutate
+    // ACTIVE_PROFILE_ID/ACTIVE_LEVEL_ID with withTemporaryLevel() for image sends.
+    const lp = requestProfileLevelContext(req);
+    const custom = overviewImagePathForLevel(lp);
+    sendImageFile(res, custom && fs.existsSync(custom) ? custom : null, 'overview');
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 app.get(['/media/rooms/:room_id','/media/rooms/:room_id/:filename','/media/images/rooms/:room_id.webp'], (req,res)=>{
-  const roomId = req.params.room_id;
-  const custom = activeCustomRoomImagePath(roomId);
-  sendImageFile(res, custom && fs.existsSync(custom) ? custom : null, 'room', roomId);
+  try{
+    const lp = requestProfileLevelContext(req);
+    const roomId = req.params.room_id;
+    const custom = roomImagePathForLevel(lp, roomId);
+    sendImageFile(res, custom && fs.existsSync(custom) ? custom : null, 'room', roomId);
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
-app.use('/media', express.static(DATA_IMAGES_DIR, {fallthrough:true}));
+// v4.2.0.14: /media must be request-scoped. A static middleware created at
+// server startup captures the initial DATA_IMAGES_DIR and can serve files from
+// the previous profile/level after a client switches context.
+app.use('/media', (req,res,next)=>{
+  withRequestLevel(req, null, async(lp)=>{
+    const handler = express.static(lp.imagesDir || DATA_IMAGES_DIR, {fallthrough:true});
+    handler(req,res,next);
+  }).catch(next);
+});
 
 
-app.get('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...profilesDiagnostics()});}catch(e){res.status(500).json({ok:false,error:e.message});} });
-app.post('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...createProfile(req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/profiles/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...duplicateProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/profiles/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateProfile(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.get('/api/profiles', (req,res)=>{ try{res.json({ok:true, ...profilesDiagnostics()});}catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/profiles', (req,res)=>{
+  try{
+    const data = createProfile(req.body||{});
+    const profileId = data.activeProfileId || loadProfilesMeta().activeProfileId;
+    const levelId = data.activeLevelId || loadLevelsMeta(profileId).activeLevelId || 'level-1';
+    resetCurrentClientContextForNewProfile(req, profileId, levelId);
+    // v4.2.0.13: make the profile create path identical to level create/activate paths.
+    // resetCurrentClientContextForNewProfile writes default UI for the new context;
+    // syncProfileLevelForRequest then explicitly persists activeProfileId/activeLevelId/navigation
+    // for the current web/mobile/server-ui client in the same request. This prevents
+    // per-client endpoints from reading the previous valid profile before the frontend reloads.
+    syncProfileLevelForRequest(req, profileId, levelId);
+    activateProfileLevelForCurrentServer(profileId, levelId);
+    res.json({ok:true, ...profilesDiagnostics(), levels:levelsDiagnostics(profileId), activeProfileId:profileId, activeLevelId:levelId, reloadRecommended:true});
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
+app.post('/api/profiles/:id/duplicate', (req,res)=>{
+  try{
+    const data = duplicateProfile(req.params.id, req.body||{});
+    const profileId = data.activeProfileId || loadProfilesMeta().activeProfileId;
+    const levelId = data.activeLevelId || loadLevelsMeta(profileId).activeLevelId || 'level-1';
+    syncProfileLevelForRequest(req, profileId, levelId);
+    res.json({ok:true, ...profilesDiagnostics(), levels:levelsDiagnostics(profileId), activeProfileId:profileId, activeLevelId:levelId, reloadRecommended:true});
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
+app.post('/api/profiles/:id/activate', (req,res)=>{
+  try{
+    const data = activateProfile(req.params.id);
+    const profileId = data.activeProfileId || sanitizeProfileId(req.params.id);
+    const levelId = data.activeLevelId || loadLevelsMeta(profileId).activeLevelId || 'level-1';
+    syncProfileLevelForRequest(req, profileId, levelId);
+    res.json({ok:true, ...profilesDiagnostics(), levels:levelsDiagnostics(profileId), activeProfileId:profileId, activeLevelId:levelId, reloadRecommended:true});
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
 app.post('/api/profiles/:id/activate-for-client', express.json(), (req,res)=>{
   const cid = sanitizeClientId(req.headers['x-client-id'] || '');
   if(!cid) return res.status(400).json({ ok:false, error: 'X-Client-ID required' });
@@ -3020,57 +4153,96 @@ app.post('/api/profiles/:id/activate-for-client', express.json(), (req,res)=>{
     const meta = loadProfilesMeta();
     if(!meta.profiles.some(p=>p.id===profileId)) return res.status(404).json({ ok:false, error: 'Profile not found' });
     const existing = getClientPrefs(cid);
+    const levels = loadLevelsMeta(profileId);
+    const levelId = levels.activeLevelId || 'level-1';
     existing.activeProfileId = profileId;
+    existing.activeLevelId = levelId;
+    existing.navigation = { ...(existing.navigation || {}), profileId, levelId };
     saveClientPrefs(cid, existing, req);
-    res.json({ ok:true, activeProfileId: profileId });
-  }catch(e){ res.status(500).json({ ok:false, error: e.message }); }
+    activateProfileLevelForCurrentServer(profileId, levelId);
+    res.json({ ok:true, activeProfileId: profileId, activeLevelId: levelId, profiles: profilesDiagnostics(), levels: levelsDiagnostics(profileId) });
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
-app.post('/api/profiles/:id/copy-from', (req,res)=>{ try{res.json(copyProfileData(req.params.id, req.body||{}));}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.delete('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...deleteProfile(req.params.id, req.body||{}), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.patch('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...patchProfile(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.post('/api/profiles/:id/copy-from', (req,res)=>{ try{res.json(copyProfileData(req.params.id, req.body||{}, req));}catch(e){ validationErrorResponse(req,res,e); } });
+app.delete('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...deleteProfile(req.params.id, req.body||{}), reloadRecommended:true});}catch(e){ validationErrorResponse(req,res,e); } });
+app.patch('/api/profiles/:id', (req,res)=>{ try{res.json({ok:true, ...patchProfile(req.params.id, req.body||{})});}catch(e){ validationErrorResponse(req,res,e); } });
 
-app.get('/api/levels', (req,res)=>{ try{res.json({ok:true, ...levelsDiagnostics()});}catch(e){res.status(500).json({ok:false,error:e.message});} });
-app.post('/api/levels', (req,res)=>{ try{res.json({ok:true, ...createLevel(req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/levels/:id/duplicate', (req,res)=>{ try{res.json({ok:true, ...duplicateLevel(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/levels/:id/activate', (req,res)=>{ try{res.json({ok:true, ...activateLevel(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.delete('/api/levels/:id', (req,res)=>{ try{res.json({ok:true, ...deleteLevel(req.params.id), reloadRecommended:true});}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.patch('/api/levels/:id', (req,res)=>{ try{res.json({ok:true, ...patchLevel(req.params.id, req.body||{})});}catch(e){res.status(400).json({ok:false,error:e.message});} });
+app.get('/api/levels', (req,res)=>{ try{ const lp=requestProfileLevelContext(req); res.json({ok:true, ...levelsDiagnostics(lp.profileId)}); }catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/levels', async (req,res)=>{ try{ const lp=requestProfileLevelContext(req); const data=await withTemporaryLevel(lp.profileId, lp.id, async()=>createLevel(req.body||{})); const activeLevelId=sanitizeLevelId(data.activeLevelId || data.meta?.activeLevelId || ''); if(activeLevelId){ syncProfileLevelForRequest(req, lp.profileId, activeLevelId); } res.json({ok:true, ...data, reloadRecommended:true}); }catch(e){ validationErrorResponse(req,res,e); } });
+app.post('/api/levels/:id/duplicate', async (req,res)=>{ try{ const lp=requestProfileLevelContext(req); const data=await withTemporaryLevel(lp.profileId, lp.id, async()=>duplicateLevel(req.params.id, req.body||{})); const activeLevelId=sanitizeLevelId(data.activeLevelId || data.meta?.activeLevelId || ''); if(activeLevelId){ syncProfileLevelForRequest(req, lp.profileId, activeLevelId); } res.json({ok:true, ...data, reloadRecommended:true}); }catch(e){ validationErrorResponse(req,res,e); } });
+app.post('/api/levels/:id/activate', async (req,res)=>{ try{ const lp=requestProfileLevelContext(req); const data=await withTemporaryLevel(lp.profileId, lp.id, async()=>activateLevel(req.params.id)); const cid=sanitizeClientId(req.headers['x-client-id'] || ''); if(cid){ const prefs=getClientPrefs(cid); const levelId=sanitizeLevelId(req.params.id); prefs.activeProfileId=lp.profileId; prefs.activeLevelId=levelId; prefs.navigation={...(prefs.navigation||{}), profileId:lp.profileId, levelId}; saveClientPrefs(cid, prefs, req); } res.json({ok:true, ...data, reloadRecommended:true}); }catch(e){ validationErrorResponse(req,res,e); } });
+app.delete('/api/levels/:id', async (req,res)=>{ try{ const lp=requestProfileLevelContext(req); const data=await withTemporaryLevel(lp.profileId, lp.id, async()=>deleteLevel(req.params.id)); res.json({ok:true, ...data, reloadRecommended:true}); }catch(e){ validationErrorResponse(req,res,e); } });
+app.patch('/api/levels/:id', async (req,res)=>{ try{ const lp=requestProfileLevelContext(req); const data=await withTemporaryLevel(lp.profileId, lp.id, async()=>patchLevel(req.params.id, req.body||{})); res.json({ok:true, ...data}); }catch(e){ validationErrorResponse(req,res,e); } });
 app.get('/api/levels/:id/source-config', (req,res)=>{
   try{
-    const cfg = loadSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id);
+    const lp = requestProfileLevelContext(req, req.params.id);
+    const cfg = loadSourceConfigForLevel(lp.profileId, lp.id);
     const dashboardPaths = normalizeDashboardPaths(cfg.dashboardPaths ?? cfg.dashboardPathText ?? '');
-    res.json({ok:true, levelId:sanitizeLevelId(req.params.id), config:{...cfg, dashboardPaths, dashboardPathText:dashboardPaths.join('\n')}});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
+    res.json({ok:true, profileId:lp.profileId, levelId:lp.id, config:{...cfg, dashboardPaths, dashboardPathText:dashboardPaths.join('\n')}});
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 app.patch('/api/levels/:id/source-config', (req,res)=>{
   try{
-    const current = loadSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id);
-    const cfg = saveSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id, {...current, ...(req.body||{})});
+    const lp = requestProfileLevelContext(req, req.params.id);
+    const current = loadSourceConfigForLevel(lp.profileId, lp.id);
+    const cfg = saveSourceConfigForLevel(lp.profileId, lp.id, {...current, ...(req.body||{})});
     const dashboardPaths = normalizeDashboardPaths(cfg.dashboardPaths ?? cfg.dashboardPathText ?? '');
-    res.json({ok:true, levelId:sanitizeLevelId(req.params.id), config:{...cfg, dashboardPaths, dashboardPathText:dashboardPaths.join('\n')}, levels:levelsDiagnostics()});
-  }catch(e){res.status(400).json({ok:false,error:e.message});}
+    res.json({ok:true, profileId:lp.profileId, levelId:lp.id, config:{...cfg, dashboardPaths, dashboardPathText:dashboardPaths.join('\n')}, levels:levelsDiagnostics(lp.profileId)});
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
+
+app.get('/api/levels/:id/lovelace/diagnostics', (req,res)=>{
+  try{
+    const lp = requestProfileLevelContext(req, req.params.id);
+    res.json(buildLovelaceDiagnosticsForLevel(lp.profileId, lp.id));
+  }catch(e){ safeErrorResponse(req,res,e); }
+});
+app.get('/api/ha/lovelace/diagnostics', (req,res)=>{
+  try{
+    const lp = requestProfileLevelContext(req);
+    const all = String(req.query?.all || '') === '1';
+    res.json(all ? { ok:true, generatedAt:new Date().toISOString(), profiles:buildLovelaceDiagnosticsAllLevels() } : buildLovelaceDiagnosticsForLevel(lp.profileId, lp.id));
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/levels/:id/lovelace/import', async (req,res)=>{
   try{
-    const current = loadSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id);
-    const dashboardPaths = normalizeDashboardPaths(req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? current.dashboardPaths ?? '');
-    saveSourceConfigForLevel(ACTIVE_PROFILE_ID, req.params.id, {...current, dashboardPaths});
-    const data = await importLovelaceRawForLevel(ACTIVE_PROFILE_ID, req.params.id, dashboardPaths);
-    res.json({ok:true, levelId:sanitizeLevelId(req.params.id), ...data, levels:levelsDiagnostics()});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
+    const lp = requestProfileLevelContext(req, req.params.id);
+    const levelId = lp.id;
+    const current = loadSourceConfigForLevel(lp.profileId, levelId);
+    const body = req.body || {};
+    const hasIncomingSources = Object.prototype.hasOwnProperty.call(body, 'dashboardPaths') || Object.prototype.hasOwnProperty.call(body, 'dashboardPathText');
+    const sourceInput = hasIncomingSources ? (body.dashboardPaths ?? body.dashboardPathText) : (current.dashboardPaths ?? current.dashboardPathText ?? '');
+    const dashboardPaths = normalizeDashboardPaths(sourceInput);
+    if(!dashboardPaths.length){
+      const err = new Error('Для уровня не указаны источники Lovelace. Откройте настройки уровня, укажите адреса/пути Lovelace и сохраните источники.');
+      err.statusCode = 400;
+      throw err;
+    }
+    writeDebugLog('lovelace-import', 'level import started', {requestId:req.requestId, profileId:lp.profileId, levelId, dashboardPaths, hasIncomingSources});
+    if(hasIncomingSources){
+      saveSourceConfigForLevel(lp.profileId, levelId, {...current, dashboardPaths, dashboardPathText:dashboardPaths.join('\n')});
+    }
+    const data = await importLovelaceRawForLevel(lp.profileId, levelId, dashboardPaths);
+    writeDebugLog('lovelace-import', 'level import finished', {requestId:req.requestId, profileId:lp.profileId, levelId, devices:data?.import?.devices, rooms:data?.import?.rooms, views:data?.import?.views});
+    res.json({ok:true, profileId:lp.profileId, levelId, ...data, lovelaceDiagnostics:buildLovelaceDiagnosticsForLevel(lp.profileId, levelId), levels:levelsDiagnostics(lp.profileId)});
+  }catch(e){ importErrorResponse(req,res,e); }
 });
 
-app.get('/api/images', (req,res)=>{
+app.get('/api/images', async (req,res)=>{
   try{
-    const roomIds = listKnownRoomIds();
-    const rooms = {};
-    for(const roomId of roomIds) rooms[roomId] = imageInfo('room', roomId);
-    res.json({ ok:true, meta: loadImagesMeta(), overview: imageInfo('overview'), rooms });
-  }catch(e){ res.status(500).json({ok:false, error:e.message}); }
+    await withRequestLevel(req, null, async()=>{
+      const roomIds = listKnownRoomIds();
+      const rooms = {};
+      for(const roomId of roomIds) rooms[roomId] = imageInfo('room', roomId);
+      res.json({ ok:true, meta: loadImagesMeta(), overview: imageInfo('overview'), rooms });
+    });
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.post('/api/images/overview', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), async (req,res)=>{
   try{
+    const __lp = requestProfileLevelContext(req);
+    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
     ensureDataStore();
     const info = validateUploadedImage(req, req.body, 'overview');
     const currentInfo = imageInfo('overview');
@@ -3101,11 +4273,13 @@ app.post('/api/images/overview', express.raw({type:['image/*','application/octet
     saveImagesMeta(meta);
     const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
     res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
-  }catch(e){ res.status(400).json({ok:false, error:e.message}); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 
 app.delete('/api/images/overview', (req,res)=>{
   try{
+    const __lp = requestProfileLevelContext(req);
+    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
     ensureDataStore();
     const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
     const preBackup = backupRequested ? createManualBackup('before-overview-image-replace') : null;
@@ -3117,18 +4291,20 @@ app.delete('/api/images/overview', (req,res)=>{
     meta.overview = null;
     saveImagesMeta(meta);
     res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:false});
-  }catch(e){ res.status(500).json({ok:false, error:e.message}); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.post('/api/images/rooms/:room_id', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), async (req,res)=>{
   try{
+    const __lp = requestProfileLevelContext(req);
+    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
     ensureDataStore();
     const roomId = assertKnownRoomId(req.params.room_id);
     const info = validateUploadedImage(req, req.body, 'room');
     const currentInfo = imageInfo('room', roomId);
     const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
     const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
-    const safe = String(roomId).replace(/[^a-zA-Z0-9_-]/g,'_');
+    const safe = safeRoomImageFileBase(roomId);
     const originalPath = path.join(DATA_IMAGES_ORIGINALS_ROOMS_DIR, `${safe}-original.${info.ext}`);
     fs.writeFileSync(originalPath, req.body);
     const processed = await processUploadedImage('room', req.body, info, customRoomImagePath(roomId));
@@ -3155,46 +4331,78 @@ app.post('/api/images/rooms/:room_id', express.raw({type:['image/*','application
     saveImagesMeta(meta);
     const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
     res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
-  }catch(e){ res.status(400).json({ok:false, error:e.message}); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 
 app.delete('/api/images/rooms/:room_id', (req,res)=>{
   try{
+    const __lp = requestProfileLevelContext(req);
+    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
     ensureDataStore();
     const roomId = assertKnownRoomId(req.params.room_id);
     const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
     const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
-    const safe = String(roomId).replace(/[^a-zA-Z0-9_-]/g,'_');
-    for(const ext of ['webp','png','jpg','jpeg']){
-      const f = path.join(DATA_IMAGES_ROOMS_DIR, `${safe}.${ext}`);
-      if(fs.existsSync(f)) fs.unlinkSync(f);
+    const bases = Array.from(new Set([safeRoomImageFileBase(roomId), legacyUnsafeRoomImageFileBase(roomId)]));
+    for(const base of bases){
+      for(const ext of ['webp','png','jpg','jpeg']){
+        const f = path.join(DATA_IMAGES_ROOMS_DIR, `${base}.${ext}`);
+        if(fs.existsSync(f)) fs.unlinkSync(f);
+      }
     }
     const meta = loadImagesMeta();
     meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
     delete meta.rooms[roomId];
     saveImagesMeta(meta);
     res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:false});
-  }catch(e){ res.status(500).json({ok:false, error:e.message}); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
-app.get('/api/health', (req,res)=> res.json({ ok:true, app:'ALLHA-2D', version: ADDON_VERSION, mobilePort: req.socket?.localPort === MOBILE_PORT, database: allhaDb.getInfo() }));
+app.get('/api/health', (req,res)=> res.json({ ok:true, app:'ALLHA-2D', version: ADDON_VERSION, mobilePort: req.socket?.localPort === MOBILE_PORT, database: allhaDb.getInfo(), ha:getHaStatus() }));
+app.get('/api/readyz', (req,res)=> {
+  const db=allhaDb.integrityCheck ? allhaDb.integrityCheck() : {ok:true};
+  const ha=getHaStatus();
+  const dataOk=fs.existsSync(DATA_DIR);
+  const ok=!!(db.ok && dataOk && (ha.connected || statesCache.size>0 || !HA_TOKEN));
+  res.status(ok?200:503).json({ ok, app:'ALLHA-2D', version:ADDON_VERSION, dataDir:{path:DATA_DIR, exists:dataOk}, database:db, ha });
+});
 app.get('/api/mobile/debug', (req, res) => {
   const cfg = loadAddonConfig();
+  const mobileCfg = loadMobileAccessConfig();
   const pending = mobileAuth.getPendingCode();
   res.json({
     ok: true,
     app: 'ALLHA-2D',
     version: ADDON_VERSION,
     mobilePort: req.socket?.localPort === MOBILE_PORT,
-    mobileAccessEnabled: !!cfg?.mobileAccess?.enabled,
-    pairingPasswordSet: !!String(cfg?.mobileAccess?.pairingPassword || '').trim(),
+    mobileAccessEnabled: !!mobileCfg.enabled,
+    externalEnabled: !!mobileCfg.externalEnabled,
+    externalUrl: String(mobileCfg.externalUrl || ''),
+    externalMode: String(mobileCfg.externalMode || 'keendns_http'),
+    pairingPasswordSet: mobilePairingPasswordIsSet(mobileCfg),
     pairingCodeActive: !!pending,
     pairedDevices: mobileAuth.listDevices().length,
     database: allhaDb.getInfo()
   });
 });
-app.get('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadLayout(lp.layout)); }catch(e){res.status(500).json({error:e.message});} });
-app.get('/api/rooms', (req,res)=>{ try{ res.json(roomsApiPayloadForRequest(req)); }catch(e){res.status(500).json({error:e.message});} });
+app.get('/api/layout', (req,res)=>{ try{
+  const lp=clientLevelPaths(req);
+  res.json(loadEffectiveLayoutForRequest(req, lp.layout));
+}catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/rooms', (req,res)=>{ try{ res.json(roomsApiPayloadForRequest(req)); }catch(e){ safeErrorResponse(req,res,e); } });
+app.patch('/api/rooms/:room_id/virtual', (req,res)=>{
+  try{
+    const lp=clientLevelPaths(req);
+    setRoomVirtualFlag(req.params.room_id, req.body?.virtual === true, lp.rooms);
+    res.json(roomsApiPayloadForRequest(req));
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
+app.patch('/api/rooms/:room_id/hidden-devices', (req,res)=>{
+  try{
+    const lp=clientLevelPaths(req);
+    setRoomHiddenDevices(req.params.room_id, req.body?.hiddenDevices || [], lp.rooms);
+    res.json(roomsApiPayloadForRequest(req));
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
 
 app.get('/api/rooms/:room_id/standard-sensors/db', (req,res)=>{
   try{
@@ -3202,41 +4410,99 @@ app.get('/api/rooms/:room_id/standard-sensors/db', (req,res)=>{
     const rid=assertKnownRoomId(req.params.room_id, lp.rooms);
     const rooms=loadRoomsSettings(lp.rooms);
     res.json({ok:true, roomId:rid, dbBinding:standardSensorBindingsForRoom(lp.rooms, rid), roomStandardSensors:normalizeStandardSensors(rooms.rooms?.[rid]?.standardSensors || {}, {strict:false}), roomsPath:lp.rooms});
-  }catch(e){res.status(400).json({ok:false,error:e.message});}
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 
-app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }) }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); const payload=roomsApiPayloadForRequest(req); const rid=assertKnownRoomId(req.params.room_id, lp.rooms); payload.verifiedRoomBinding=standardSensorBindingsForRoom(lp.rooms, rid); res.json(payload); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/save', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveSingleRoomStandardSensor(req.params.room_id, req.params.sensor_type, req.body?.entity_id || req.body?.entityId || req.body?.value || '', lp.rooms); const payload=roomsApiPayloadForRequest(req); const rid=assertKnownRoomId(req.params.room_id, lp.rooms); payload.verifiedRoomBinding=standardSensorBindingsForRoom(lp.rooms, rid); res.json(payload); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearAllRoomStandardSensors(req.params.room_id, lp.rooms); const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions || {}; const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null }); }catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/layout/clear-zones', (req,res)=>{ try{res.json(clearLayoutZones());}catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/factory-reset', (req,res)=>{ try{res.json(factoryResetProject(req.body?.confirm));}catch(e){res.status(400).json({ok:false,error:e.message});} });
-app.get('/api/source-config', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadSourceConfig(lp.sourceConfig)); }catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/source-config', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveSourceConfig(req.body, lp.sourceConfig); res.json({ok:true, config: loadSourceConfig(lp.sourceConfig)}); }catch(e){res.status(500).json({error:e.message});} });
-app.post('/api/layout', (req,res)=>{ try{ const lp=clientLevelPaths(req); const backup=saveLayout(req.body, lp.layout); res.json({ok:true, backup: backup ? path.basename(backup) : null, diagnostics: analyzeLayout(loadLayout(lp.layout))}); }catch(e){res.status(400).json({error:e.message});} });
-app.get('/api/config', (req,res)=> { try { res.json(publicConfig(loadAddonConfig())); } catch(e){ res.status(500).json({error:e.message}); } });
+app.get('/api/rooms/:room_id/standard-sensor-suggestions', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json({ ok:true, ...standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }) }); }catch(e){ validationErrorResponse(req,res,e); } });
+app.patch('/api/rooms/:room_id/standard-sensors/orientation', (req,res)=>{ try{ const lp=clientLevelPaths(req); setRoomStandardSensorOrientation(req.params.room_id, req.body?.orientation, lp.rooms, req.body?.scope); const payload=roomsApiPayloadForRequest(req); res.json(payload); }catch(e){ validationErrorResponse(req,res,e); } });
+app.patch('/api/rooms/:room_id/standard-sensors', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveRoomStandardSensors(req.params.room_id, req.body?.standardSensors || req.body || {}, lp.rooms); const payload=roomsApiPayloadForRequest(req); const rid=assertKnownRoomId(req.params.room_id, lp.rooms); payload.verifiedRoomBinding=standardSensorBindingsForRoom(lp.rooms, rid); res.json(payload); }catch(e){ validationErrorResponse(req,res,e); } });
+app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/save', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveSingleRoomStandardSensor(req.params.room_id, req.params.sensor_type, req.body?.entity_id || req.body?.entityId || req.body?.value || '', lp.rooms); const payload=roomsApiPayloadForRequest(req); const rid=assertKnownRoomId(req.params.room_id, lp.rooms); payload.verifiedRoomBinding=standardSensorBindingsForRoom(lp.rooms, rid); res.json(payload); }catch(e){ validationErrorResponse(req,res,e); } });
+app.post('/api/rooms/:room_id/standard-sensors/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearAllRoomStandardSensors(req.params.room_id, lp.rooms); const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, clearedTypes:STANDARD_SENSOR_KEYS, suggestions:standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions }); }catch(e){ validationErrorResponse(req,res,e); } });
+app.post('/api/rooms/:room_id/standard-sensors/:sensor_type/clear', (req,res)=>{ try{ const lp=clientLevelPaths(req); clearRoomStandardSensor(req.params.room_id, req.params.sensor_type, lp.rooms); const suggestionPack=standardSensorSuggestionsForRoom(req.params.room_id, { roomsPath: lp.rooms, devicesPath: lp.devicesJs }).suggestions || {}; const payload=roomsApiPayloadForRequest(req); res.json({ ...payload, cleared:true, sensorType:req.params.sensor_type, suggestion:suggestionPack[req.params.sensor_type]?.[0] || null }); }catch(e){ validationErrorResponse(req,res,e); } });
+app.get('/api/layout/diagnostics', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(analyzeLayout(loadLayout(lp.layout))); }catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/layout/normalize', (req,res)=>{ try{res.json(normalizeStoredLayout());}catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/layout/clear-markers', (req,res)=>{ try{res.json(clearLayoutMarkers());}catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/layout/clear-zones', (req,res)=>{ try{res.json(clearLayoutZones());}catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/factory-reset', (req,res)=>{ try{res.json(factoryResetProject(req.body?.confirm));}catch(e){ validationErrorResponse(req,res,e); } });
+app.get('/api/source-config', (req,res)=>{ try{ const lp=clientLevelPaths(req); res.json(loadSourceConfig(lp.sourceConfig)); }catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/source-config', (req,res)=>{ try{ const lp=clientLevelPaths(req); saveSourceConfig(req.body, lp.sourceConfig); res.json({ok:true, config: loadSourceConfig(lp.sourceConfig)}); }catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/layout', (req,res)=>{ try{
+  const lp=clientLevelPaths(req);
+  const saved=saveLayoutForRequest(req, req.body, lp.layout);
+  const savedLayout=loadLayout(saved.layoutPath);
+  res.json({
+    ok:true,
+    backup: saved.backup ? path.basename(saved.backup) : null,
+    diagnostics: analyzeLayout(savedLayout),
+    clientSettings:{ isClientOverride:!!saved.isClientOverride, client:saved.client, layoutPath:saved.layoutPath, baselinePath:saved.baselinePath }
+  });
+}catch(e){ validationErrorResponse(req,res,e); } });
+
+app.post('/api/client-layout/current/reset-to-baseline', (req,res)=>{
+  try{
+    const lp=clientLevelPaths(req);
+    const overridePath=clientScopedPath(req, 'layout', lp.layout, 'json');
+    if(!overridePath) return res.status(400).json({ok:false,error:'Текущий клиент использует baseline и не имеет отдельного override'});
+    if(runtimeDocumentExists(overridePath)) atomicWriteJson(overridePath, loadLayout(lp.layout));
+    res.json({ok:true, layout:loadEffectiveLayoutForRequest(req, lp.layout), clientSettings:{resetToBaseline:true, overridePath, baselinePath:lp.layout, client:currentClientIdentity(req)}});
+  }catch(e){ safeErrorResponse(req,res,e); }
+});
+
+app.get('/api/config', (req,res)=> { try { res.json(publicConfig(loadAddonConfig())); } catch(e){ safeErrorResponse(req,res,e); } });
 app.post('/api/config', (req,res)=> {
   try {
     const body = req.body || {};
     // v3.5.8.2: Lovelace/dashboard paths are configured per level, not in global settings.
     const {dashboardPaths, dashboardPathText, ...globalBody} = body;
     const cfg = saveAddonConfig(globalBody || {});
+    setSseBatchMs(cfg.sseBatchMs);
     res.json({ ok:true, config: publicConfig(cfg) });
-  } catch(e){ res.status(500).json({error:e.message}); }
+  } catch(e){ safeErrorResponse(req,res,e); }
 });
-app.post('/api/config/clear', (req,res)=> { try { saveAddonConfig({ pollIntervalMs:30000, dashboardPaths:[] }); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:'home-assistant-addon', hasSupervisorToken:!!HA_TOKEN }); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/ui-state', (req,res)=> { try { const lp=clientLevelPaths(req); res.json(loadUiState(lp.uiState)); } catch(e){ res.status(500).json({error:e.message}); } });
+
+function normalizeMobileAccessPayload(input, current){
+  const src = input || {};
+  return normalizeMobileAccessConfig(src, current || defaultMobileAccessConfig());
+}
+
+app.get('/api/mobile/settings', (req, res) => {
+  try {
+    const cfg = loadAddonConfig();
+    res.json({ ok: true, mobileAccess: publicConfig(cfg).mobileAccess });
+  } catch(e){ safeErrorResponse(req,res,e); }
+});
+
+app.post('/api/mobile/settings', (req, res) => {
+  try {
+    const input = req.body?.mobileAccess || req.body || {};
+    const { next, reloaded } = saveMobileAccessConfig(input);
+    const persisted = !!reloaded?.enabled === !!next.enabled
+      && String(reloaded?.localUrl || '') === String(next.localUrl || '')
+      && String(reloaded?.remoteUrl || '') === String(next.remoteUrl || '');
+    if(!persisted){
+      return res.status(500).json({
+        ok:false,
+        error:'Настройки мобильного доступа не были подтверждены после сохранения',
+        expected:{ enabled:!!next.enabled, localUrl:next.localUrl, remoteUrl:next.remoteUrl },
+        actual:{ enabled:!!reloaded?.enabled, localUrl:String(reloaded?.localUrl||''), remoteUrl:String(reloaded?.remoteUrl||'') }
+      });
+    }
+    res.json({ ok:true, mobileAccess: publicConfig(loadAddonConfig()).mobileAccess });
+  } catch(e){ safeErrorResponse(req,res,e); }
+});
+
+app.post('/api/config/clear', (req,res)=> { try { const cfg=saveAddonConfig({ pollIntervalMs:30000, sseBatchMs:1000, dashboardPaths:[] }); setSseBatchMs(cfg.sseBatchMs); res.json({ok:true, config: publicConfig(loadAddonConfig())}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/ha/test', async (req,res)=> { try { const data = await haFetch('/'); res.json({ ok:true, data }); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/system', (req,res)=> { try { res.json({ ok:true, version:ADDON_VERSION, mode:process.env.ALLHA_MODE === 'local-dev' ? 'local-dev' : 'home-assistant-addon', ingress:isIngressRequest(req), ingressPath:normalizeIngressProxyPath(req.headers['x-ingress-path'] || req.headers['x-forwarded-prefix'] || req.headers['referer'] || ''), hasHaToken:!!HA_TOKEN, hasSupervisorToken:!!HA_TOKEN }); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/ui-state', (req,res)=> { try {
+  const lp=clientLevelPaths(req);
+  res.json(loadEffectiveUiStateForRequest(req, lp.uiState));
+} catch(e){ safeErrorResponse(req,res,e); } });
 
 
 app.get('/api/security/rules', (req,res)=>{
   try{ res.json({ok:true, rules:loadSecurityRules(), security:publicSecurityConfig(loadAddonConfig().security)}); }
-  catch(e){ res.status(500).json({error:e.message}); }
+  catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/security/pin/change', (req,res)=>{
   try{
@@ -3244,7 +4510,7 @@ app.post('/api/security/pin/change', (req,res)=>{
     if(String(pin)!==String(pin2)) return res.status(400).json({error:'PIN-коды не совпадают'});
     const security=setSecurityPin(pin);
     res.json({ok:true, security});
-  }catch(e){ res.status(400).json({error:e.message}); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 app.post('/api/security/pin/reset', (req,res)=>{
   try{
@@ -3253,11 +4519,11 @@ app.post('/api/security/pin/reset', (req,res)=>{
     if(!verifySecurityPin(pin)) return res.status(403).json({error:'Неверный PIN'});
     const security=clearSecurityPin();
     res.json({ok:true, security});
-  }catch(e){ res.status(400).json({error:e.message}); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 app.post('/api/security/pin/verify', (req,res)=>{
   try{ res.json({ok:verifySecurityPin(req.body?.pin)}); }
-  catch(e){ res.status(500).json({error:e.message}); }
+  catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/security/dangerous', (req,res)=>{
   try{
@@ -3272,62 +4538,96 @@ app.post('/api/security/dangerous', (req,res)=>{
     rules.forceSafe=rules.forceSafe.filter(x=>x!==entity_id);
     if(dangerous) rules.forceDangerous.push(entity_id); else rules.forceSafe.push(entity_id);
     res.json({ok:true, rules:saveSecurityRules(rules)});
-  }catch(e){ res.status(500).json({error:e.message}); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.get('/api/attention', async (req,res)=> {
   try {
     const rules = loadAttentionRules();
-    let states = [];
-    try { states = await haFetch('/states'); } catch(e) { states = []; }
-    res.json(evaluateAttentionRules(rules, states));
-  } catch(e){ res.status(500).json({error:e.message}); }
+    const pack = await haStatesForDiagnostics();
+    res.json({ ...evaluateAttentionRules(rules, pack.states), statesSource: pack.source });
+  } catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/attention', async (req,res)=> {
   try {
     const entity_id = String(req.body?.entity_id || '').trim();
     if(!entity_id) return res.status(400).json({error:'entity_id is required'});
-    let st = null;
-    try { st = await haFetch('/states/' + encodeURIComponent(entity_id)); } catch(e) { st = null; }
+    let st = statesCache?.get?.(entity_id) || null;
+    if(!st && statesCache.size === 0){ try { st = await haFetch('/states/' + encodeURIComponent(entity_id)); } catch(e) { st = null; } }
     const current = st ? String(st.state) : String(req.body?.normal_state || 'unknown');
     const name = String(req.body?.name || st?.attributes?.friendly_name || entity_id);
     const data = loadAttentionRules();
     const rest = data.rules.filter(r=>r.entity_id !== entity_id);
     rest.push({ entity_id, name, normal_state: current, enabled:true, created_at:new Date().toISOString() });
     const saved = saveAttentionRules({version:1, rules: rest});
-    let states = [];
-    try { states = await haFetch('/states'); } catch(e) { states = []; }
-    res.json(evaluateAttentionRules(saved, states));
-  } catch(e){ res.status(500).json({error:e.message}); }
+    const pack = await haStatesForDiagnostics();
+    res.json({ ...evaluateAttentionRules(saved, pack.states), statesSource: pack.source });
+  } catch(e){ safeErrorResponse(req,res,e); }
 });
+
+app.post('/api/attention/:entity_id/normal', async (req,res)=> {
+  try {
+    const entity_id = decodeURIComponent(String(req.params.entity_id || '')).trim();
+    if(!entity_id) return res.status(400).json({error:'entity_id is required'});
+    const data = loadAttentionRules();
+    const idx = data.rules.findIndex(r=>r.entity_id === entity_id);
+    if(idx < 0) return res.status(404).json({error:'attention rule not found'});
+    let st = statesCache?.get?.(entity_id) || null;
+    if(!st && statesCache.size === 0){ try { st = await haFetch('/states/' + encodeURIComponent(entity_id)); } catch(e) { st = null; } }
+    const current = st ? String(st.state) : String(req.body?.normal_state || data.rules[idx].current_state || data.rules[idx].normal_state || 'unknown');
+    const nextRules = data.rules.slice();
+    nextRules[idx] = { ...nextRules[idx], normal_state: current, enabled: true, updated_at: new Date().toISOString() };
+    const saved = saveAttentionRules({version:1, rules: nextRules});
+    const pack = await haStatesForDiagnostics();
+    res.json({ ...evaluateAttentionRules(saved, pack.states), statesSource: pack.source });
+  } catch(e){ safeErrorResponse(req,res,e); }
+});
+
 app.delete('/api/attention/:entity_id', async (req,res)=> {
   try {
     const entity_id = decodeURIComponent(String(req.params.entity_id || ''));
     const data = loadAttentionRules();
     const saved = saveAttentionRules({version:1, rules: data.rules.filter(r=>r.entity_id !== entity_id)});
-    let states = [];
-    try { states = await haFetch('/states'); } catch(e) { states = []; }
-    res.json(evaluateAttentionRules(saved, states));
-  } catch(e){ res.status(500).json({error:e.message}); }
+    const pack = await haStatesForDiagnostics();
+    res.json({ ...evaluateAttentionRules(saved, pack.states), statesSource: pack.source });
+  } catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/attention/clear', async (req,res)=> {
   try { res.json(evaluateAttentionRules(saveAttentionRules(attentionDefault()), [])); }
-  catch(e){ res.status(500).json({error:e.message}); }
+  catch(e){ safeErrorResponse(req,res,e); }
 });
 
-app.post('/api/ui-state', (req,res)=> { try { const lp=clientLevelPaths(req); res.json({ok:true, state: saveUiState(req.body || {}, lp.uiState)}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/diagnostics', async (req,res)=> { try { res.json(await buildDiagnostics(req)); } catch(e){ res.status(500).json({error:e.message}); } });
-app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/backups/create', (req,res)=> { try { const item=createManualBackup(req.body?.reason||'manual'); res.json({ok:true, backup:item, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutBackup(req.body?.name); res.json({ok:true, layout}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/backups/delete', (req,res)=> { try { deleteBackupItem(req.body?.name); res.json({ok:true, backups:backupSummary()}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/backups/delete-old', (req,res)=> { try { res.json({ok:true, backups:deleteOldBackups(req.body?.keep||10)}); } catch(e){ res.status(500).json({error:e.message}); } });
-app.post('/api/backups/delete-all', (req,res)=> { try { res.json({ok:true, backups:deleteAllBackups(req.body?.confirm)}); } catch(e){ res.status(400).json({error:e.message}); } });
-app.post('/api/backups/restore-full', (req,res)=> { try { res.json(restoreManualBackup(req.body?.name, req.body?.confirm)); } catch(e){ res.status(400).json({error:e.message}); } });
+app.post('/api/ui-state', (req,res)=> { try {
+  const lp=clientLevelPaths(req);
+  const saved=saveUiStateForRequest(req, req.body || {}, lp.uiState);
+  writeDebugLog('ui-state','save',{client:saved.client, path:saved.path, keys:Object.keys(req.body||{}), uiKeys:Object.keys(req.body?.ui||{})});
+  res.json({ok:true, state:saved.state, clientSettings:{ isClientOverride:!!saved.isClientOverride, client:saved.client, path:saved.path, baselinePath:saved.baselinePath }});
+} catch(e){
+  writeDebugLog('ui-state','save failed',{error:e.message, stack:e.stack, body:req.body, client:currentClientIdentity(req)});
+  safeErrorResponse(req,res,e);
+} });
+app.get('/api/diagnostics', async (req,res)=> { try { res.json({ ...(await buildDiagnostics(req)), ha:getHaStatus(), logs:{files:logFilesSummary()}, rateLimit:{trustProxy:trustedProxyEnabled(), storeSize:_rlStore.size, maxKeys:RATE_LIMIT_MAX_KEYS}, runtime:{inFlightRequests:_inFlightRequests,lastInFlightChangeAt:_lastInFlightChangeAt,shuttingDown:_shuttingDown}, performance:serverPerformanceStats(), dbPerformance: allhaDb.getPerformanceStats ? allhaDb.getPerformanceStats() : null }); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/maintenance/status', (req,res)=> { try { res.json({ ok:true, report: allhaDb.maintenanceReport ? allhaDb.maintenanceReport() : {database:allhaDb.getInfo()}, logs:{files:logFilesSummary()}, ha:getHaStatus(), rateLimit:{trustProxy:trustedProxyEnabled(), storeSize:_rlStore.size, maxKeys:RATE_LIMIT_MAX_KEYS}, runtime:{inFlightRequests:_inFlightRequests,lastInFlightChangeAt:_lastInFlightChangeAt,shuttingDown:_shuttingDown}, performance:serverPerformanceStats(), dbPerformance: allhaDb.getPerformanceStats ? allhaDb.getPerformanceStats() : null }); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/maintenance/context', (req,res)=> { try { res.json({ ok:true, context: resolveRequestContext(req) }); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/maintenance/mirror-diagnostics', (req,res)=> { try { res.json(mirrorDiagnostics()); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/maintenance/mirror-repair', express.json(), (req,res)=> { try { res.json(mirrorRepair(req.body || {})); } catch(e){ validationErrorResponse(req,res,e); } });
+app.post('/api/maintenance/logs/clear', (req,res)=> { try { flushDebugLog(); res.json({ok:true, ...clearDebugLogs(), logs:{files:logFilesSummary()}}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/maintenance/web-clients/cleanup-temporary', (req,res)=> { try { res.json({ok:true, result: allhaDb.cleanupTemporaryWebClients ? allhaDb.cleanupTemporaryWebClients() : {removed:0}, report: allhaDb.maintenanceReport ? allhaDb.maintenanceReport() : null}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/maintenance/orphans/cleanup', (req,res)=> { try { res.json({ok:true, result: allhaDb.cleanupOrphanClientSettings ? allhaDb.cleanupOrphanClientSettings() : {}, report: allhaDb.maintenanceReport ? allhaDb.maintenanceReport() : null}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/maintenance/clients/cleanup', (req,res)=> { try { const temp = allhaDb.cleanupTemporaryWebClients ? allhaDb.cleanupTemporaryWebClients() : {removed:0}; const orphans = allhaDb.cleanupOrphanClientSettings ? allhaDb.cleanupOrphanClientSettings() : {}; const staleClientSettings = cleanupStaleClientSettingsDocuments(); res.json({ok:true, result:{temporaryWebClients:temp, orphans, staleClientSettings}, report: allhaDb.maintenanceReport ? allhaDb.maintenanceReport() : null, mirrorDiagnostics: mirrorDiagnostics()}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/maintenance/stale-client-settings/cleanup', (req,res)=> { try { res.json({ok:true, result: cleanupStaleClientSettingsDocuments(), mirrorDiagnostics: mirrorDiagnostics()}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:backupSummary()}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.get('/api/backups/download/:name', (req,res)=> { try { const rel=String(req.params.name||'').replace(/\\/g,'/'); if(!rel || rel.includes('..') || path.isAbsolute(rel)) throw new Error('Некорректное имя backup'); const target=path.join(LAYOUT_BACKUP_DIR, rel); if(!pathInside(LAYOUT_BACKUP_DIR,target) || !fs.existsSync(target)) throw new Error('Backup не найден'); if(fs.statSync(target).isDirectory()){ const tgz=createTarGzBuffer(target, path.basename(rel)); res.setHeader('Content-Type','application/gzip'); res.setHeader('Content-Disposition', `attachment; filename="${path.basename(rel)}.tar.gz"`); return res.send(tgz); } res.download(target); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/backups/create', (req,res)=> { try { const item=createManualBackup(req.body?.reason||'manual'); res.json({ok:true, backup:item, backups:backupSummary()}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutBackup(req.body?.name); res.json({ok:true, layout}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/backups/delete', (req,res)=> { try { deleteBackupItem(req.body?.name); res.json({ok:true, backups:backupSummary()}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/backups/delete-old', (req,res)=> { try { res.json({ok:true, backups:deleteOldBackups(req.body?.keep||10)}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/backups/delete-all', (req,res)=> { try { res.json({ok:true, backups:deleteAllBackups(req.body?.confirm)}); } catch(e){ validationErrorResponse(req,res,e); } });
+app.post('/api/backups/restore-full', (req,res)=> { try { res.json(restoreManualBackup(req.body?.name, req.body?.confirm)); } catch(e){ validationErrorResponse(req,res,e); } });
 
 app.post('/api/ha/dashboard-paths/normalize', (req,res)=>{
   try { res.json({ ok:true, dashboardPaths: normalizeDashboardPaths(req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? '') }); }
-  catch(e){ res.status(500).json({error:e.message}); }
+  catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.post('/api/ha/lovelace/raw', async (req,res)=>{
@@ -3335,34 +4635,80 @@ app.post('/api/ha/lovelace/raw', async (req,res)=>{
     const cfg = loadSourceConfig();
     const paths = req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? cfg.dashboardPaths ?? cfg.dashboardPathText ?? '';
     const data = await readLovelaceRawFromHa(paths);
-    res.json({ ok:true, ...data });
-  } catch(e){ res.status(500).json({error:e.message}); }
+    res.json({ ok:true, ...data, lovelaceDiagnostics:buildLovelaceDiagnosticsForLevel(ACTIVE_PROFILE_ID, ACTIVE_LEVEL_ID) });
+  } catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/ha/lovelace/import', async (req,res)=>{
   try {
     const cfg = loadSourceConfig();
     const paths = req.body?.dashboardPaths ?? req.body?.dashboardPathText ?? cfg.dashboardPaths ?? cfg.dashboardPathText ?? '';
     const data = await importLovelaceRaw(paths);
-    res.json({ ok:true, ...data });
-  } catch(e){ res.status(500).json({error:e.message}); }
+    res.json({ ok:true, ...data, lovelaceDiagnostics:buildLovelaceDiagnosticsForLevel(ACTIVE_PROFILE_ID, ACTIVE_LEVEL_ID) });
+  } catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/ha/lovelace/import-stored', async (req,res)=>{
-  try { res.json(await importStoredLovelaceRaw()); }
-  catch(e){ res.status(500).json({error:e.message}); }
+  try { const data=await importStoredLovelaceRaw(); res.json({ ...data, lovelaceDiagnostics:buildLovelaceDiagnosticsForLevel(ACTIVE_PROFILE_ID, ACTIVE_LEVEL_ID) }); }
+  catch(e){ safeErrorResponse(req,res,e); }
 });
-/* SSE: браузер подписывается → получает initial_states + живые state_changed */
+const MAX_SSE_CLIENTS = Number(process.env.ALLHA_MAX_SSE_CLIENTS || 50);
+const MAX_SSE_CLIENTS_PER_IP = Number(process.env.ALLHA_MAX_SSE_CLIENTS_PER_IP || 8);
+const MAX_SSE_CLIENTS_PER_CLIENT = Number(process.env.ALLHA_MAX_SSE_CLIENTS_PER_CLIENT || 3);
+const sseClientMeta = new Map();
+function sseCounts(){
+  const byIp = new Map();
+  const byClient = new Map();
+  for(const meta of sseClientMeta.values()){
+    byIp.set(meta.ip, (byIp.get(meta.ip)||0)+1);
+    byClient.set(meta.clientKey, (byClient.get(meta.clientKey)||0)+1);
+  }
+  return { byIp, byClient };
+}
+function sseClientKeyForRequest(req){
+  try{
+    const ident = currentClientIdentity(req);
+    return `${ident.type}:${ident.id || 'unknown'}`;
+  }catch(_){
+    return `ip:${String(req.ip || req.socket?.remoteAddress || 'unknown')}`;
+  }
+}
+/* SSE: browser subscribes to initial_states and live state_changed. */
 app.get('/api/ha/events', (req, res) => {
+  const ip = String(req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+  const clientKey = sseClientKeyForRequest(req);
+  const counts = sseCounts();
+  if (sseClients.size >= MAX_SSE_CLIENTS) {
+    noteSseClientRejected();
+    return res.status(429).json({ error: 'Слишком много SSE-подключений', maxClients: MAX_SSE_CLIENTS });
+  }
+  if (MAX_SSE_CLIENTS_PER_IP > 0 && (counts.byIp.get(ip)||0) >= MAX_SSE_CLIENTS_PER_IP) {
+    noteSseClientRejected();
+    return res.status(429).json({ error: 'Слишком много SSE-подключений с одного IP', maxPerIp: MAX_SSE_CLIENTS_PER_IP });
+  }
+  if (MAX_SSE_CLIENTS_PER_CLIENT > 0 && (counts.byClient.get(clientKey)||0) >= MAX_SSE_CLIENTS_PER_CLIENT) {
+    noteSseClientRejected();
+    return res.status(429).json({ error: 'Слишком много SSE-подключений для этого клиента', maxPerClient: MAX_SSE_CLIENTS_PER_CLIENT });
+  }
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
   sseClients.add(res);
-  // Отправляем текущий кэш сразу при подключении
+  sseClientMeta.set(res, { ip, clientKey, connectedAt:new Date().toISOString(), lastHeartbeatAt:null });
+  noteSseClientConnected();
   const states = [...statesCache.values()];
   if (states.length) res.write(`event: initial_states\ndata: ${JSON.stringify(states)}\n\n`);
-  // keepalive каждые 25 с
-  const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) { sseClients.delete(res); clearInterval(hb); } }, 25_000);
-  req.on('close', () => { sseClients.delete(res); clearInterval(hb); });
+  const hb = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+      const meta = sseClientMeta.get(res); if(meta) meta.lastHeartbeatAt = new Date().toISOString();
+      noteSseHeartbeat();
+    } catch (e) {
+      sseClients.delete(res); sseClientMeta.delete(res); clearInterval(hb); noteSseClientDisconnected();
+    }
+  }, 25_000);
+  if(hb.unref) hb.unref();
+  req.on('close', () => { sseClients.delete(res); sseClientMeta.delete(res); clearInterval(hb); noteSseClientDisconnected(); });
 });
 
 app.get('/api/ha/states', async (req, res) => {
@@ -3372,7 +4718,7 @@ app.get('/api/ha/states', async (req, res) => {
     const states = await haFetch('/states');
     states.forEach(s => statesCache.set(s.entity_id, s));
     res.json({ ok: true, states });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { safeErrorResponse(req,res,e); }
 });
 app.post('/api/ha/service', makeRateLimit(30, 60_000), async (req,res)=> {
   const {domain, service, data, confirmDangerous, pin} = req.body || {};
@@ -3401,10 +4747,10 @@ app.post('/api/ha/service', makeRateLimit(30, 60_000), async (req,res)=> {
         return res.status(409).json({requiresConfirmation:true, message:`Подтвердить опасную команду ${domain}.${service}${entity_id ? ' для '+entity_id : ''}?`});
       }
     }
-    const result = await haFetch(`/services/${domain}/${service}`, { method:'POST', body: JSON.stringify(data || {}) });
+    const result = await haCallService(domain, service, data || {}, { timeoutMs: Number(process.env.ALLHA_HA_SERVICE_TIMEOUT_MS || 10_000) });
     appendCommandLog({domain,service,entity_id,result:'ok',category});
     res.json({ ok:true, result, category });
-  } catch(e){ appendCommandLog({domain,service,entity_id,result:'error:'+e.message}); res.status(500).json({error:e.message}); }
+  } catch(e){ appendCommandLog({domain,service,entity_id,result:'error:'+e.message}); safeErrorResponse(req,res,e); }
 });
 
 /* ── Camera proxies ───────────────────────────────────────────── */
@@ -3431,7 +4777,7 @@ app.get('/api/camera/stream/:entity_id', makeRateLimit(20, 60_000), async (req, 
 app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req, res) => {
   const entity_id = req.params.entity_id;
   if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).json({error:'Некорректный entity_id'});
-  if(!HA_TOKEN) return res.status(503).json({error:'SUPERVISOR_TOKEN недоступен'});
+  if(!HA_TOKEN) return res.status(503).json({error: process.env.ALLHA_MODE === 'local-dev' ? 'HA_TOKEN недоступен. Проверь config/local-config.json' : 'SUPERVISOR_TOKEN недоступен'});
   try {
     const camRes = await fetch(`${HA_API_BASE}/camera_proxy/${entity_id}`, {
       headers: { 'Authorization': `Bearer ${HA_TOKEN}` }
@@ -3440,7 +4786,7 @@ app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req
     res.setHeader('Content-Type', camRes.headers.get('content-type') || 'image/jpeg');
     res.setHeader('Cache-Control', 'no-store');
     res.end(Buffer.from(await camRes.arrayBuffer()));
-  } catch(e) { res.status(500).json({error: e.message}); }
+  } catch(e) { safeErrorResponse(req,res,e); }
 });
 
 /* ── Layout export / import ───────────────────────────────────── */
@@ -3450,7 +4796,7 @@ app.get('/api/export/layout', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', 'attachment; filename="allha2d-layout.json"');
     res.json(layout);
-  } catch(e) { res.status(500).json({error: e.message}); }
+  } catch(e) { safeErrorResponse(req,res,e); }
 });
 
 app.post('/api/import/layout', express.json({limit:'5mb'}), (req, res) => {
@@ -3458,7 +4804,7 @@ app.post('/api/import/layout', express.json({limit:'5mb'}), (req, res) => {
     const { layout } = normalizeLayoutPayload(req.body, {strict:true});
     const backup = saveLayout(layout);
     res.json({ok:true, backup: backup ? path.basename(backup) : null});
-  } catch(e) { res.status(400).json({error: e.message}); }
+  } catch(e) { validationErrorResponse(req,res,e); }
 });
 
 /* ── Database diagnostics ───────────────────────────────────────────── */
@@ -3538,7 +4884,7 @@ function standardSensorsDiagnosticsSnapshot(roomIdRaw, req){
 
 app.get('/api/database/info', (req, res) => {
   try { res.json({ ok:true, database: runtimeStorageDiagnostics(), logLevel: currentLogLevel(), recentErrors: logBuffer.filter(x=>x.level==='error').slice(-20) }); }
-  catch(e){ res.status(500).json({ error:e.message }); }
+  catch(e){ safeErrorResponse(req,res,e); }
 });
 
 
@@ -3547,7 +4893,7 @@ app.get('/api/diagnostics/logs', (req,res)=>{
     const level = currentLogLevel();
     const limit = Math.max(1, Math.min(500, Number(req.query.limit||200)));
     res.json({ ok:true, level, logs: logBuffer.slice(-limit) });
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.post('/api/diagnostics/log-level', (req,res)=>{
@@ -3560,7 +4906,7 @@ app.post('/api/diagnostics/log-level', (req,res)=>{
     setCachedLogLevel(level);
     logInfo('diagnostics', 'log level changed', {level});
     res.json({ok:true, level});
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 
@@ -3569,14 +4915,29 @@ app.post('/api/diagnostics/client-trace', (req,res)=>{
   try{
     logDebug('client-trace', req.body?.message || 'client trace', req.body?.details || req.body || {});
     res.json({ok:true});
-  }catch(e){res.status(500).json({ok:false,error:e.message});}
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.get('/api/diagnostics/standard-sensors/full', (req,res)=>{
   try{
     const roomId = String(req.query.room_id || req.query.roomId || '');
     res.json({ok:true, snapshot: standardSensorsDiagnosticsSnapshot(roomId, req)});
-  }catch(e){res.status(400).json({ok:false,error:e.message});}
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
+
+
+app.get('/api/debug/virtual-room-state', (req,res)=>{
+  try{
+    const lp=clientLevelPaths(req);
+    const roomId=String(req.query.room || req.query.room_id || req.query.roomId || '').trim();
+    const rawRooms=readJsonSafe(lp.rooms, {rooms:{}});
+    const normalizedRooms=normalizeRoomsSettings(rawRooms, {filterUnknownRooms:false});
+    const hydratedRooms=loadRoomsSettings(lp.rooms);
+    const apiPayload=roomsApiPayloadForRequest(req);
+    const pick=(obj)=> roomId && obj?.rooms ? (obj.rooms[roomId] || null) : null;
+    const known=(apiPayload.knownRooms||[]).find(r=>String(r.id||'')===roomId || String(r.settings?.label||'')===roomId || String(r.label||'')===roomId) || null;
+    res.json({ ok:true, roomId, roomsPath:lp.rooms, raw:pick(rawRooms), normalized:pick(normalizedRooms), hydrated:pick(hydratedRooms), apiRooms:pick(apiPayload), apiKnown:known, apiRoomsKeys:Object.keys(apiPayload.rooms||{}), knownRoomIds:(apiPayload.knownRooms||[]).map(r=>r.id) });
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.get('/api/rooms/debug', (req,res)=>{
@@ -3589,46 +4950,223 @@ app.get('/api/rooms/debug', (req,res)=>{
     const {profileId, levelId} = profileLevelFromRoomsPath(lp.rooms);
     const bindings = standardSensorBindingsForRoomsPath(lp.rooms);
     res.json({ ok:true, profileId, levelId, roomsPath:lp.rooms, devicesPath:lp.devicesJs, devicesSource:runtimeFileSource(lp.devicesJs), lovelaceRawSource:runtimeDocumentSource(lp.lovelaceRaw), rawRoomsCount:Object.keys(rawRooms?.rooms||{}).length, normalizedRoomsCount:Object.keys(normalizedRooms.rooms||{}).length, hydratedRoomsCount:Object.keys(hydratedRooms.rooms||{}).length, knownRoomIds, standardSensorBindings:bindings, hydratedStandardSensors:Object.fromEntries(Object.entries(hydratedRooms.rooms||{}).map(([rid,room])=>[rid, normalizeStandardSensors(room?.standardSensors||{})]).filter(([,s])=>Object.keys(s).length)), audit:{...runtimeAudit} });
-  }catch(e){ res.status(500).json({ok:false,error:e.message}); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
+
+
+function ensureMobileAccessEnabledForCode(){
+  const cfg = loadAddonConfig();
+  const mobile = {
+    ...(cfg.mobileAccess || {}),
+    enabled: true,
+    localUrl: String(cfg.mobileAccess?.localUrl ?? '').trim(),
+    remoteUrl: String(cfg.mobileAccess?.remoteUrl ?? '').trim(),
+    pairingPassword: String(cfg.mobileAccess?.pairingPassword ?? '').trim(),
+    qrPassword: String(cfg.mobileAccess?.qrPassword ?? '').trim()
+  };
+  saveAddonConfig({ ...cfg, mobileAccess: mobile });
+  return true;
+}
+
+
+function mobileRequestInfo(req){
+  return {
+    ip: getForwardedIp(req) || req.socket?.remoteAddress || '',
+    userAgent: String(req.headers['user-agent'] || '').slice(0,240),
+    forwardedFor: String(req.headers['x-forwarded-for'] || '').slice(0,240),
+    forwardedProto: String(req.headers['x-forwarded-proto'] || '').slice(0,64),
+    host: String(req.headers.host || '').slice(0,160),
+    mobilePort: req.socket?.localPort === MOBILE_PORT
+  };
+}
+function mobileAudit(eventType, req, payload = {}){
+  try{
+    const body = req?.body || {};
+    const deviceId = String(payload.deviceId || payload.device_id || body.device_id || body.deviceId || body.clientId || req?.headers?.['x-device-id'] || '').slice(0,96);
+    const safePayload = { ...payload, request: mobileRequestInfo(req) };
+    if(safePayload.password) safePayload.password = '***';
+    if(safePayload.token) safePayload.token = '***';
+    if(allhaDb.addAccessEvent) allhaDb.addAccessEvent({ deviceId, eventType, payload: safePayload });
+    debugLog('mobile', eventType, safePayload);
+  }catch(e){}
+}
+const _mobilePairFailures = new Map();
+function mobilePairingFailureKey(req, code, deviceId){
+  const ip = getForwardedIp(req) || req.socket?.remoteAddress || 'unknown';
+  return [ip, String(code||'').slice(0,6), String(deviceId||'').slice(0,96)].join('|');
+}
+function noteMobilePairFailure(req, code, deviceId){
+  const key = mobilePairingFailureKey(req, code, deviceId);
+  const now = Date.now();
+  let e = _mobilePairFailures.get(key);
+  if(!e || now > e.resetAt) e = { count:0, resetAt: now + 10*60_000, blockedUntil:0 };
+  e.count += 1;
+  if(e.count >= 10) e.blockedUntil = now + 10*60_000;
+  _mobilePairFailures.set(key, e);
+  return e;
+}
+function checkMobilePairBlocked(req, code, deviceId){
+  const e = _mobilePairFailures.get(mobilePairingFailureKey(req, code, deviceId));
+  if(e && e.blockedUntil && Date.now() < e.blockedUntil) return Math.ceil((e.blockedUntil - Date.now())/1000);
+  return 0;
+}
+function clearMobilePairFailures(req, code, deviceId){ _mobilePairFailures.delete(mobilePairingFailureKey(req, code, deviceId)); }
+setInterval(()=>{ const now=Date.now(); _mobilePairFailures.forEach((e,k)=>{ if(now>e.resetAt && (!e.blockedUntil || now>e.blockedUntil)) _mobilePairFailures.delete(k); }); }, 300_000).unref();
 
 /* ── Mobile access API ──────────────────────────────────────────────── */
 
 // Генерация кода — только с локального IP (только admin)
 app.get('/api/mobile/code', (req, res) => {
   if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  if (!mobileAccessEnabled()) return res.status(403).json({ error: 'Мобильный доступ выключен. Включите его в настройках ALLHA-2D.' });
   try {
     const existing = mobileAuth.getPendingCode();
-    res.json(existing || mobileAuth.generatePairingCode());
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const out = existing || mobileAuth.generatePairingCode();
+    if(!existing) mobileAudit('mobile_pair_code_created', req, { expiresIn:out.expires_in });
+    res.json(out);
+  } catch (e) { safeErrorResponse(req,res,e); }
 });
 
 app.post('/api/mobile/code/new', (req, res) => {
   if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
-  try { res.json(mobileAuth.generatePairingCode()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  if (!mobileAccessEnabled()) return res.status(403).json({ error: 'Мобильный доступ выключен. Включите его в настройках ALLHA-2D.' });
+  try { const out=mobileAuth.generatePairingCode(); mobileAudit('mobile_pair_code_created', req, { expiresIn:out.expires_in, forced:true }); res.json(out); }
+  catch (e) { safeErrorResponse(req,res,e); }
+});
+
+
+app.get('/api/mobile/debug/config', (req, res) => {
+  if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
+  const cfg = loadAddonConfig();
+  res.json({
+    ok: true,
+    mode: process.env.ALLHA_MODE || '',
+    mobileAccess: (() => {
+      const m = loadMobileAccessConfig();
+      return {
+        enabled: !!m.enabled,
+        persistedEnabled: !!m.enabled,
+        localUrl: String(m.localUrl || ''),
+        remoteUrl: String(m.remoteUrl || ''),
+        externalEnabled: !!m.externalEnabled,
+        externalUrl: String(m.externalUrl || ''),
+        externalMode: String(m.externalMode || 'keendns_http'),
+        hasPairingPassword: mobilePairingPasswordIsSet(m),
+        source: runtimeDocumentSource(MOBILE_ACCESS_PATH),
+        addonConfigSource: runtimeDocumentSource(ADDON_CONFIG_PATH)
+      };
+    })(),
+    pendingCode: !!mobileAuth.getPendingCode()
+  });
 });
 
 app.delete('/api/mobile/code', (req, res) => {
   if (!isLocalIp(req)) return res.status(403).json({ error: 'Только из локальной сети' });
   mobileAuth.cancelPendingCode();
+  mobileAudit('mobile_pair_code_cancelled', req, {});
   res.json({ ok: true });
 });
 
 // Паринг — открытый эндпоинт (с rate-limit)
+
+
+function buildMobileConfigQrPayload(req){
+  const m = loadMobileAccessConfig();
+  const localUrl = String(m.localUrl || '').trim();
+  const remoteUrl = String(m.remoteUrl || m.externalUrl || '').trim();
+  const plainPassword = String(m.qrPassword || m.pairingPassword || '').trim();
+  const mode = localUrl && remoteUrl ? 'both' : (remoteUrl ? 'web' : 'local');
+  return {
+    l: localUrl,
+    r: remoteUrl,
+    p: plainPassword,
+    m: mode
+  };
+}
+function maskMobileConfigQrPayload(payload){
+  return { ...(payload || {}), p: payload?.p ? '***' : '' };
+}
+
+
+app.get('/api/mobile/config-qr', async (req, res) => {
+  if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
+  try {
+    const payload = buildMobileConfigQrPayload(req);
+    const jsonText = JSON.stringify(payload);
+    let qrDataUrl = '';
+    try {
+      const QRCode = require('qrcode');
+      qrDataUrl = await QRCode.toDataURL(jsonText, { errorCorrectionLevel: 'M', margin: 2, width: 256 });
+    } catch (e) {
+      qrDataUrl = '';
+    }
+    res.json({ ok:true, payload, maskedPayload: maskMobileConfigQrPayload(payload), json: jsonText, qrDataUrl, passwordIncluded: !!payload.p });
+  } catch(e){ safeErrorResponse(req,res,e); }
+});
+
+function normalizeMobilePairingCode(value){
+  return String(value || '').replace(/[^A-Z0-9]/gi, '').toUpperCase().trim();
+}
+function normalizeMobileDeviceAliasInput(body, deviceId){
+  const source = body && typeof body === 'object' ? body : {};
+  let alias = String(
+    source.mobileDeviceAlias ?? source.alias ?? source.deviceName ?? source.clientAlias ?? source.deviceAlias ?? source.name ?? ''
+  ).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if(alias.length > 64) alias = alias.slice(0, 64);
+  if(alias) return alias;
+  const id = String(deviceId || source.deviceId || source.device_id || '').trim();
+  if(id){
+    const tail = id.replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase();
+    if(tail) return `Мобильное устройство ${tail}`;
+  }
+  return 'Мобильное устройство';
+}
+
+function generateMobileDeviceIdFromPairRequest(req){
+  const body = req.body || {};
+  const explicit = String(
+    body.device_id || body.deviceId || body.deviceID || body.id ||
+    body.clientId || body.client_id || body.installId || body.install_id ||
+    body.uuid || body.deviceUuid || ''
+  ).trim();
+  if(explicit) return explicit.slice(0, 96);
+  const seed = [
+    body.deviceName || body.name || '',
+    body.model || body.deviceModel || '',
+    body.manufacturer || '',
+    body.platform || '',
+    body.osVersion || body.os_version || '',
+    body.screen || '',
+    req.headers['user-agent'] || '',
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2)
+  ].join('|');
+  return 'phone_' + crypto.createHash('sha256').update(seed).digest('hex').slice(0, 16);
+}
+
 app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res) => {
   try {
-    const { code, password } = req.body || {};
-    const device_id = String(req.body?.device_id || req.body?.deviceId || '').trim();
+    const { password } = req.body || {};
+    const code = normalizeMobilePairingCode(req.body?.code || req.body?.pairingCode || req.body?.pairing_code || req.body?.pin || req.body?.mobileCode);
+    const device_id = generateMobileDeviceIdFromPairRequest(req);
     const cfg = loadAddonConfig();
-    if (!cfg?.mobileAccess?.enabled) return res.status(403).json({ error: 'Мобильный доступ выключен в настройках ALLHA-2D' });
-    const requiredPwd = String(cfg?.mobileAccess?.pairingPassword || '').trim();
-    if (requiredPwd) {
-      const givenPwd = String(password || '').trim();
-      if (givenPwd !== requiredPwd) return res.status(403).json({ error: 'Неверный пароль сервера' });
+    const mobileCfg = loadMobileAccessConfig();
+    if (!mobileAccessEnabled()) { mobileAudit('mobile_pair_disabled', req, { deviceId:device_id, codeProvided:!!code }); return res.status(403).json({ error: 'Мобильный доступ выключен в настройках ALLHA-2D. Включите мобильный доступ и создайте новый код.' }); }
+    const blockedSeconds = checkMobilePairBlocked(req, code, device_id);
+    if(blockedSeconds > 0){ mobileAudit('mobile_pair_blocked', req, { deviceId:device_id, blockedSeconds }); return res.status(429).json({ error: `Слишком много ошибок подключения. Повторите через ${blockedSeconds} с.` }); }
+    if (mobilePairingPasswordIsSet(mobileCfg)) {
+      if (!verifyMobilePairingPassword(mobileCfg, password)) {
+        const e = noteMobilePairFailure(req, code, device_id);
+        mobileAudit('mobile_pair_failed_password', req, { deviceId:device_id, codeProvided:!!code, failures:e.count });
+        return res.status(403).json({ error: 'Неверный пароль сервера' });
+      }
     }
+    const requestedAlias = normalizeMobileDeviceAliasInput(req.body || {}, device_id);
     const meta = {
-      deviceName: req.body?.deviceName || req.body?.name,
+      mobileDeviceAlias: requestedAlias,
+      alias: requestedAlias,
+      clientAlias: requestedAlias,
+      deviceName: requestedAlias,
       platform: req.body?.platform,
       model: req.body?.model || req.body?.deviceModel,
       manufacturer: req.body?.manufacturer,
@@ -3638,8 +5176,17 @@ app.post('/api/mobile/pair', makeRateLimit(5, 60_000), express.json(), (req, res
       screen: req.body?.screen
     };
     const token = mobileAuth.consumeCode(code, device_id, meta);
-    res.json({ ok: true, token, deviceId: device_id, devices: mobileAuth.listDevices() });
-  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+    // Ensure aliases from new APKs win over model/user-agent fallback names.
+    try { if (requestedAlias) mobileAuth.renameDevice(device_id, requestedAlias); } catch (_) {}
+    clearMobilePairFailures(req, code, device_id);
+    const pairedDevice = mobileAuth.getDevice(device_id) || null;
+    const pairedAlias = String(pairedDevice?.alias || pairedDevice?.name || requestedAlias || meta.mobileDeviceAlias || meta.alias || meta.deviceName || meta.clientAlias || '').trim();
+    mobileAudit('mobile_pair_success', req, { deviceId:device_id, alias:pairedAlias, model:meta.model, platform:meta.platform, externalEnabled:!!mobileCfg.externalEnabled });
+    res.json({ ok: true, token, deviceId: device_id, device_id, mobileDeviceAlias: pairedAlias, alias: pairedAlias, deviceName: pairedAlias, clientAlias: pairedAlias, devices: mobileAuth.listDevices() });
+  } catch (e) {
+    try{ const code = normalizeMobilePairingCode(req.body?.code || req.body?.pairingCode || req.body?.pairing_code || req.body?.pin || req.body?.mobileCode); const device_id = generateMobileDeviceIdFromPairRequest(req); const f = noteMobilePairFailure(req, code, device_id); mobileAudit('mobile_pair_failed_code', req, { deviceId:device_id, codeProvided:!!code, error:e.message, failures:f.count }); }catch{}
+    validationErrorResponse(req,res,e);
+  }
 });
 
 // Проверка мобильной сессии — используется APK перед переходом в основной UI.
@@ -3647,7 +5194,20 @@ app.get('/api/mobile/session', (req, res) => {
   const auth = mobileAuthFromHeaders(req);
   if (!auth.ok) return res.status(401).json({ ok:false, error:'Токен устройства отозван или недействителен' });
   const device = auth.device || mobileAuth.getDevice(auth.deviceId) || null;
-  res.json({ ok:true, device, accessMode: device?.accessMode || 'viewer', profileAccess: device?.profileAccess || { mode:'all', profileIds:[] }, settings: device?.settings || {} });
+  res.json({ ok:true, device, accessMode: device?.accessMode || 'control', profileAccess: device?.profileAccess || { mode:'all', profileIds:[] }, settings: device?.settings || {} });
+});
+
+
+app.get('/api/mobile/audit', (req,res)=>{
+  if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
+  try{ res.json({ ok:true, events: allhaDb.listAccessEvents ? allhaDb.listAccessEvents('mobile_', Number(req.query.limit || 100)) : [] }); }
+  catch(e){ safeErrorResponse(req,res,e); }
+});
+app.get('/api/mobile/external-status', (req,res)=>{
+  if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
+  const m = loadMobileAccessConfig();
+  const events = allhaDb.listAccessEvents ? allhaDb.listAccessEvents('mobile_', 50) : [];
+  res.json({ ok:true, mobileAccess:{ enabled:!!m.enabled, localUrl:String(m.localUrl||''), remoteUrl:String(m.remoteUrl||''), externalEnabled:!!m.externalEnabled, externalUrl:String(m.externalUrl||''), externalMode:String(m.externalMode||'keendns_http'), hasPairingPassword:mobilePairingPasswordIsSet(m), pairedDevices:mobileAuth.listDevices().length }, pendingCode:!!mobileAuth.getPendingCode(), recentEvents:events.slice(0,20), request:mobileRequestInfo(req), rateLimit:{ activePairingFailureBuckets:_mobilePairFailures.size } });
 });
 
 // Список устройств — только локально
@@ -3661,13 +5221,18 @@ app.patch('/api/mobile/devices/:id', express.json(), (req, res) => {
   if (!allowMobileManagement(req)) return res.status(403).json({ error: 'Только из локальной сети / панели Home Assistant' });
   try {
     const body = req.body || {};
-    if (body.accessMode !== undefined || body.profileAccess !== undefined || body.settings !== undefined) {
-      mobileAuth.updateDevice(req.params.id, body);
-    } else {
-      mobileAuth.renameDevice(req.params.id, body.name);
+    const patch = {};
+    if (body.accessMode !== undefined) {
+      const mode = String(body.accessMode || 'control');
+      if (!['viewer','control','admin'].includes(mode)) throw new Error('Некорректный режим доступа');
+      patch.accessMode = mode;
     }
+    // Server UI intentionally manages only server-side access mode. APK behaviour
+    // settings (server choice, autostart, keep-screen-on, background, app scale)
+    // are owned by the mobile app and are not persisted from this endpoint.
+    if (Object.keys(patch).length) mobileAuth.updateDevice(req.params.id, patch);
     res.json({ ok: true, devices: mobileAuth.listDevices() });
-  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  } catch (e) { validationErrorResponse(req,res,e); }
 });
 
 // Отзыв токена
@@ -3676,7 +5241,7 @@ app.delete('/api/mobile/devices/:id', (req, res) => {
   try {
     mobileAuth.revokeDevice(req.params.id);
     res.json({ ok: true, devices: mobileAuth.listDevices() });
-  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  } catch (e) { validationErrorResponse(req,res,e); }
 });
 
 // Отзыв всех токенов
@@ -3711,9 +5276,21 @@ function publicWebClient(client, req){
 }
 app.get('/api/web-clients', (req,res)=>{
   try{
-    const clients = (allhaDb.listWebClients ? allhaDb.listWebClients() : []).map(c=>publicWebClient(c, req));
+    const mobileIds = new Set((mobileAuth.listDevices() || []).map(d => String(d.device_id || '')));
+    const seen = new Set();
+    const clients = (allhaDb.listWebClients ? allhaDb.listWebClients() : [])
+      .filter(c => c && c.client_id && !mobileIds.has(String(c.client_id)))
+      .filter(c => {
+        // Не показываем явные дубли одной и той же постоянной ссылки. Старые временные
+        // web_ записи без slug пока оставляем, чтобы админ мог удалить их вручную.
+        const key = c.slug ? ('slug:'+c.slug) : ('id:'+c.client_id);
+        if(seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map(c=>publicWebClient(c, req));
     res.json({ ok:true, baseUrl:webClientBaseUrl(req), clients });
-  }catch(e){ res.status(500).json({ ok:false, error:e.message }); }
+  }catch(e){ safeErrorResponse(req,res,e); }
 });
 app.post('/api/web-clients', express.json(), (req,res)=>{
   try{
@@ -3728,42 +5305,77 @@ app.post('/api/web-clients', express.json(), (req,res)=>{
       settings: body.settings || {}
     });
     res.json({ ok:true, client: publicWebClient(client, req) });
-  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 app.post('/api/web-clients/touch', express.json(), (req,res)=>{
   try{
     const body=req.body||{};
     const headerId = sanitizeClientId(req.headers['x-client-id'] || '');
+    const requestedSlug = String(body.slug || '').trim();
     let client = null;
-    if(body.slug && allhaDb.getWebClientBySlug) client = allhaDb.getWebClientBySlug(body.slug);
+    if(requestedSlug && allhaDb.getWebClientBySlug) client = allhaDb.getWebClientBySlug(requestedSlug);
     if(client){
       allhaDb.touchWebClient(client.client_id, { userAgent:req.headers['user-agent'] || '', screen:body.screen || '' });
       client = allhaDb.getWebClient(client.client_id);
     } else if(headerId) {
+      if(mobileAuth.getDevice && mobileAuth.getDevice(headerId)){
+        return res.json({ ok:true, skipped:true, reason:'mobile-device-id', client:null });
+      }
+      const existing = allhaDb.getWebClient ? allhaDb.getWebClient(headerId) : null;
+      // v4.2.0.22: touch must not create random persistent web_* rows.
+      // New web clients are created only via /api/web-clients or by opening a known /client/<slug>.
+      // This prevents mobile WebView/Chrome on :32457 from spawning parallel web clients.
+      if(!existing && !requestedSlug){
+        return res.json({ ok:true, skipped:true, reason:'no-client-slug', client:null });
+      }
+      if(!existing && requestedSlug){
+        return res.status(404).json({ ok:false, error:'Web-клиент не найден. Создайте новую ссылку на стартовой странице.' });
+      }
       client = allhaDb.touchWebClient(headerId, { alias:body.alias || headerId, userAgent:req.headers['user-agent'] || '', screen:body.screen || '', settings:body.settings || {} });
     } else {
-      client = allhaDb.createWebClient({ alias:body.alias || 'web-client', userAgent:req.headers['user-agent'] || '', screen:body.screen || '', settings:body.settings || {} });
+      return res.json({ ok:true, skipped:true, reason:'no-client-id', client:null });
     }
     res.json({ ok:true, client: publicWebClient(client, req) });
-  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
+app.delete('/api/web-clients', express.json(), (req,res)=>{
+  try{
+    const keepCurrent = req.body?.keepCurrent !== false; // safe default: keep the current /client session
+    const keepIds = [];
+    if(keepCurrent){
+      const c = currentClientIdentity(req);
+      if(c?.id && c.type === 'web_client') keepIds.push(c.id);
+    }
+    const result = allhaDb.deleteAllWebClients ? allhaDb.deleteAllWebClients({keepClientIds:keepIds}) : {deleted:0, clientIds:[]};
+    res.json({ ok:true, keptCurrent: keepCurrent, keepClientIds: keepIds, ...result });
+  }catch(e){ validationErrorResponse(req,res,e); }
+});
+
 app.patch('/api/web-clients/:id', express.json(), (req,res)=>{
   try{
     const client = allhaDb.updateWebClient(req.params.id, req.body || {});
     if(!client) return res.status(404).json({ ok:false, error:'Web client not found' });
     res.json({ ok:true, client: publicWebClient(client, req) });
-  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 app.post('/api/web-clients/:id/regenerate-link', (req,res)=>{
   try{
     const client = allhaDb.updateWebClient(req.params.id, { regenerateSlug:true });
     if(!client) return res.status(404).json({ ok:false, error:'Web client not found' });
     res.json({ ok:true, client: publicWebClient(client, req) });
-  }catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+  }catch(e){ validationErrorResponse(req,res,e); }
 });
 app.delete('/api/web-clients/:id', (req,res)=>{
   try{ allhaDb.deleteWebClient(req.params.id); res.json({ ok:true }); }
-  catch(e){ res.status(400).json({ ok:false, error:e.message }); }
+  catch(e){ validationErrorResponse(req,res,e); }
+});
+app.post('/api/web-clients/:id/clear-settings', (req,res)=>{
+  try{
+    if(!allhaDb.clearWebClientSettings) return res.status(501).json({ok:false,error:'clear settings not supported'});
+    allhaDb.clearWebClientSettings(req.params.id);
+    const client=allhaDb.getWebClient(req.params.id);
+    res.json({ok:true, client: client ? publicWebClient(client, req) : null});
+  } catch(e){ validationErrorResponse(req,res,e); }
 });
 
 /* ── Per-client preferences (profile, panelMode, UI scales per device) ─ */
@@ -3780,6 +5392,8 @@ function getClientPrefs(clientId) {
   if(allhaDb.hasDb && allhaDb.hasDb()){
     const dbPrefs = allhaDb.getWebClientSettings(safe);
     if(dbPrefs) return dbPrefs;
+    // v4.2.0.27: do not let old client-prefs JSON resurrect deleted/missing DB web-clients.
+    try{ if(!allhaDb.getWebClient || !allhaDb.getWebClient(safe)) return {}; }catch(_){ return {}; }
     // DB-primary final polish: old client-prefs JSON is migration-only.
     // If a legacy file appears after the initial DB migration marker was already set,
     // import it once into web_client_settings and then keep runtime on SQLite.
@@ -3802,58 +5416,831 @@ function saveClientPrefs(clientId, prefs, req) {
   const safe = sanitizeClientId(clientId);
   if(!safe) return false;
   const meta = { userAgent: req?.headers?.['user-agent'] || '', name: prefs?.name || prefs?.alias || safe, alias: prefs?.alias || prefs?.name || safe, slug: prefs?.slug || '' };
-  if(allhaDb.hasDb && allhaDb.hasDb()) return !!allhaDb.setWebClientSettings(safe, prefs || {}, meta);
+  if(allhaDb.hasDb && allhaDb.hasDb()){
+    // v4.2.0.27: saving prefs must not create/re-enable a web client.
+    // A deleted/missing /client/<slug> must stay deleted/missing until explicitly created.
+    try{ if(!allhaDb.getWebClient || !allhaDb.getWebClient(safe)) return false; }catch(_){ return false; }
+    return !!allhaDb.setWebClientSettings(safe, prefs || {}, meta);
+  }
   runtimeAudit.legacyClientPrefsFallbackWrites += 1;
   fs.mkdirSync(CLIENT_PREFS_DIR, { recursive: true });
   atomicWriteJson(path.join(CLIENT_PREFS_DIR, `${safe}.json`), prefs || {});
   return true;
 }
+
+/* ── Current client identity / per-client settings foundation ───────── */
+function safeClientKey(value){
+  const raw = String(value || '').trim();
+  const cleaned = raw.replace(/[^a-zA-Z0-9_.-]+/g, '_').slice(0, 80);
+  if(cleaned) return cleaned;
+  return crypto.createHash('sha1').update(raw || 'unknown').digest('hex').slice(0, 16);
+}
+function currentClientIdentity(req){
+  const auth = mobileAuthFromHeaders(req);
+  if(auth.ok && auth.deviceId){
+    return { type:'mobile_device', id:auth.deviceId, mobile:true, device:auth.device || null };
+  }
+  // v4.2.1: requests on the mobile port that are authenticated through the
+  // mobile web-session cookie are mobile clients too. They must never fall back
+  // to stale web-client ids/slugs from localStorage/cookies and create/touch web_* rows.
+  try{
+    if(isMobilePortRequest(req)){
+      const cookies = parseCookies(req || {});
+      const sid = String(cookies[MOBILE_WEB_COOKIE] || '').trim();
+      const did = sid && mobileAuth.getWebSessionDeviceId ? sanitizeClientId(mobileAuth.getWebSessionDeviceId(sid)) : '';
+      if(did){ return { type:'mobile_device', id:did, mobile:true, device:mobileAuth.getDevice(did) || null }; }
+      return { type:'server_ui', id:'server-ui', mobile:false, device:null };
+    }
+  }catch(_){}
+  // v4.2.0.26: never let a random X-Client-ID create/touch a web client.
+  // It is valid only when it belongs to an existing web client, or when a valid
+  // /client/<slug> is present in header/cookie. This prevents mobile failed-pairing
+  // and restore/copy flows from spawning phantom web_* rows.
+  const cid = sanitizeClientId(req?.headers?.['x-client-id'] || '');
+  const headerSlug = String(req?.headers?.['x-client-slug'] || '').trim();
+  try{
+    const cookies = parseCookies(req || {});
+    const cookieSlug = String(cookies.allha_web_client_slug || '').trim();
+    const urlText = String(req?.originalUrl || req?.url || '');
+    const refText = String(req?.headers?.referer || '');
+    const pathSlug = ((urlText.match(/\/client\/([a-zA-Z0-9_-]+)/)||[])[1] || '').trim();
+    const refSlug = ((refText.match(/\/client\/([a-zA-Z0-9_-]+)/)||[])[1] || '').trim();
+    // v4.2.0.28: cookie slug is not authoritative by itself. It may be stale
+    // inside Android WebView/mobile flows. Use cookie only for resource requests
+    // that clearly belong to a /client/<slug> page (referer), or explicit header/path.
+    const explicitSlug = headerSlug || pathSlug || refSlug;
+    const slug = explicitSlug || ((refSlug || pathSlug) ? cookieSlug : '');
+    if(slug && allhaDb.getWebClientBySlug){
+      const client = allhaDb.getWebClientBySlug(slug);
+      const id = sanitizeClientId(client?.clientId || client?.client_id || client?.id || '');
+      if(id && (!cid || cid === id)) return { type:'web_client', id, mobile:false, device:null };
+      if(id && cid && cid !== id) return { type:'web_client', id, mobile:false, device:null };
+    }
+    if(cid && allhaDb.getWebClient){
+      const existing = allhaDb.getWebClient(cid);
+      if(existing && existing.client_id) return { type:'web_client', id:cid, mobile:false, device:null };
+    }
+  }catch(_){
+    if(cid && allhaDb.getWebClient){
+      try{ const existing = allhaDb.getWebClient(cid); if(existing && existing.client_id) return { type:'web_client', id:cid, mobile:false, device:null }; }catch(__){}
+    }
+  }
+  return { type:'server_ui', id:'server-ui', mobile:false, device:null };
+}
+
+function clientSettingsContextKey(profileId, levelId){
+  const pid = sanitizeProfileId(profileId || '') || ACTIVE_PROFILE_ID || 'profile-1';
+  const lid = sanitizeLevelId(levelId || '') || ACTIVE_LEVEL_ID || 'level-1';
+  return `${pid}/${lid}`;
+}
+function clientSettingsContextFromSettings(settings){
+  const src = settings && typeof settings === 'object' ? settings : {};
+  const nav = src.navigation && typeof src.navigation === 'object' ? src.navigation : {};
+  return {
+    profileId: sanitizeProfileId(src.activeProfileId || nav.profileId || ACTIVE_PROFILE_ID || 'profile-1'),
+    levelId: sanitizeLevelId(src.activeLevelId || nav.levelId || ACTIVE_LEVEL_ID || 'level-1')
+  };
+}
+function defaultClientDisplayUi(){
+  const ui = defaultUiState().ui || {};
+  return {
+    haloScale: ui.haloScale ?? 0.50,
+    hardwareScale: ui.hardwareScale ?? 1.00,
+    markerScale: ui.markerScale ?? 1.00,
+    sensorScale: ui.sensorScale ?? 1.00,
+    roomLabelScale: ui.roomLabelScale ?? 1.00,
+    markerOpacity: ui.markerOpacity ?? 0.00,
+    sensorOpacity: ui.sensorOpacity ?? 0.00,
+    showAllDevicesInRoom: ui.showAllDevicesInRoom ?? false,
+    showZones: ui.showZones ?? true,
+    invisibleZones: ui.invisibleZones ?? false,
+    showMarkers: ui.showMarkers ?? true,
+    showSensors: ui.showSensors ?? true,
+    hideSidebar: ui.hideSidebar ?? true,
+    hideDevicePanel: ui.hideDevicePanel ?? true,
+    hideToolbar: ui.hideToolbar ?? false,
+    mobileMode: ui.mobileMode ?? true,
+    autoHide: ui.autoHide ?? false,
+    compact: ui.compact ?? false,
+    kioskMode: ui.kioskMode ?? false,
+    kioskTileMode: ui.kioskTileMode ?? false,
+    kioskNavigationMode: ui.kioskNavigationMode ?? 'switchable',
+    kioskWidget: ui.kioskWidget ?? false,
+    kioskAutoLock: ui.kioskAutoLock ?? false,
+    kioskAutoLockSeconds: ui.kioskAutoLockSeconds ?? 15,
+    darkTheme: ui.darkTheme ?? true,
+    theme: ui.theme ?? 'dark',
+    debugMode: ui.debugMode ?? false
+  };
+}
+
+function pickObjectKeys(obj, keys){
+  const out = {};
+  const src = obj && typeof obj === 'object' ? obj : {};
+  for(const k of keys || []) if(Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k];
+  return out;
+}
+
+function cloneClientSettings(settings){
+  return settings && typeof settings === 'object' ? JSON.parse(JSON.stringify(settings)) : {};
+}
+function applyScopedUiForSettings(rawSettings){
+  const out = cloneClientSettings(rawSettings);
+  const ctx = clientSettingsContextFromSettings(out);
+  const key = clientSettingsContextKey(ctx.profileId, ctx.levelId);
+  const byCtx = out.uiByContext && typeof out.uiByContext === 'object' ? out.uiByContext : {};
+  if(byCtx[key] && typeof byCtx[key] === 'object'){
+    out.ui = { ...(out.ui || {}), ...byCtx[key] };
+  }
+  out.uiPrefsContext = { profileId: ctx.profileId, levelId: ctx.levelId, key };
+  return out;
+}
+function normalizeSettingsWithScopedUi(existingRaw, incomingRaw){
+  const existing = cloneClientSettings(existingRaw);
+  const incoming = incomingRaw && typeof incomingRaw === 'object' ? cloneClientSettings(incomingRaw) : {};
+  const beforeCtx = clientSettingsContextFromSettings(existing);
+  const beforeKey = clientSettingsContextKey(beforeCtx.profileId, beforeCtx.levelId);
+  const uiByContext = { ...(existing.uiByContext && typeof existing.uiByContext === 'object' ? existing.uiByContext : {}) };
+  if(existing.ui && typeof existing.ui === 'object' && beforeKey && !uiByContext[beforeKey]){
+    // v4.2.0.11: migrate legacy per-client ui into the context where it was actually used.
+    // Do not let these slider/opacity values leak into newly created empty profiles.
+    uiByContext[beforeKey] = { ...existing.ui };
+  }
+  const next = deepMerge(existing, incoming);
+  next.uiByContext = { ...uiByContext, ...(next.uiByContext && typeof next.uiByContext === 'object' ? next.uiByContext : {}) };
+  const afterCtx = clientSettingsContextFromSettings(next);
+  const afterKey = clientSettingsContextKey(afterCtx.profileId, afterCtx.levelId);
+  if(incoming.ui && typeof incoming.ui === 'object'){
+    next.uiByContext[afterKey] = { ...(next.uiByContext[afterKey] || {}), ...incoming.ui };
+    next.ui = { ...next.uiByContext[afterKey] };
+  } else if(next.uiByContext[afterKey]){
+    next.ui = { ...next.uiByContext[afterKey] };
+  } else if(afterKey !== beforeKey){
+    // Switching to a profile/level with no saved display prefs must not reuse the previous context.
+    next.uiByContext[afterKey] = defaultClientDisplayUi();
+    next.ui = { ...next.uiByContext[afterKey] };
+  }
+  return next;
+}
+function persistSettingsForIdentity(req, ident, settings){
+  const clean = settings && typeof settings === 'object' ? settings : {};
+  if(ident.type === 'mobile_device'){
+    const device = ident.device || mobileAuth.getDevice(ident.id);
+    if(!device) throw Object.assign(new Error('Мобильное устройство не найдено'), { status:401 });
+    mobileAuth.updateDevice(ident.id, { settings: clean });
+    return { client: ident, settings: applyScopedUiForSettings(clean) };
+  }
+  if(ident.type === 'web_client'){
+    saveClientPrefs(ident.id, clean, req);
+    return { client: ident, settings: applyScopedUiForSettings(clean) };
+  }
+  const serverUiPath = path.join(DATA_DIR, 'client_settings', 'server_ui.json');
+  atomicWriteJson(serverUiPath, clean);
+  return { client: ident, settings: applyScopedUiForSettings(clean) };
+}
+function getCurrentClientSettings(req){
+  const ident = currentClientIdentity(req);
+  let raw = {};
+  if(ident.type === 'mobile_device'){
+    const device = ident.device || mobileAuth.getDevice(ident.id) || {};
+    raw = { ...(device.settings || {}) };
+  } else if(ident.type === 'web_client'){
+    raw = getClientPrefs(ident.id) || {};
+  } else {
+    const serverUiPath = path.join(DATA_DIR, 'client_settings', 'server_ui.json');
+    raw = readJsonSafe(serverUiPath, {});
+  }
+  return applyScopedUiForSettings(raw);
+}
+function saveCurrentClientSettings(req, patch){
+  const ident = currentClientIdentity(req);
+  const incoming = patch && typeof patch === 'object' ? patch : {};
+  let existing = {};
+  if(ident.type === 'mobile_device'){
+    const device = ident.device || mobileAuth.getDevice(ident.id);
+    if(!device) throw Object.assign(new Error('Мобильное устройство не найдено'), { status:401 });
+    existing = device.settings || {};
+  } else if(ident.type === 'web_client'){
+    existing = getClientPrefs(ident.id) || {};
+  } else {
+    existing = readJsonSafe(path.join(DATA_DIR, 'client_settings', 'server_ui.json'), {});
+  }
+  const next = normalizeSettingsWithScopedUi(existing, incoming);
+  return persistSettingsForIdentity(req, ident, next);
+}
+
+function replaceCurrentClientSettings(req, settings){
+  const ident = currentClientIdentity(req);
+  const clean = settings && typeof settings === 'object' ? settings : {};
+  if(ident.type === 'mobile_device'){
+    const device = ident.device || mobileAuth.getDevice(ident.id);
+    if(!device) throw Object.assign(new Error('Мобильное устройство не найдено'), { status:401 });
+    mobileAuth.updateDevice(ident.id, { settings: clean });
+    return { client: ident, settings: clean };
+  }
+  if(ident.type === 'web_client'){
+    const existing = getClientPrefs(ident.id) || {};
+    const preserved = {};
+    for(const k of ['name','alias','slug','description']) if(existing[k] !== undefined) preserved[k] = existing[k];
+    const next = { ...preserved, ...clean };
+    saveClientPrefs(ident.id, next, req);
+    return { client: ident, settings: next };
+  }
+  const serverUiPath = path.join(DATA_DIR, 'client_settings', 'server_ui.json');
+  atomicWriteJson(serverUiPath, clean);
+  return { client: ident, settings: clean };
+}
+function resetCurrentClientContextForNewProfile(req, profileId, levelId){
+  const pid = sanitizeProfileId(profileId);
+  const lid = sanitizeLevelId(levelId || 'level-1');
+  const next = {
+    activeProfileId: pid,
+    activeLevelId: lid,
+    activeRoomId:'overview',
+    navigation:{ profileId:pid, levelId:lid, roomId:'overview', selectedRoom:'overview' },
+    // v4.2.0.11: defaults are written only for the new profile/level context.
+    // Existing profile slider/opacity settings stay in uiByContext[oldProfile/oldLevel].
+    ui: defaultClientDisplayUi()
+  };
+  try{ return saveCurrentClientSettings(req, next); }
+  catch(e){ writeDebugLog('profiles', 'new profile client settings reset failed', { requestId:req?.requestId, profileId:pid, levelId:lid, error:e.message }); return null; }
+}
+
+function copyDisplayUiForCurrentClientBetweenProfileContexts(req, sourceProfileId, sourceLevelId, targetProfileId, targetLevelId, fallbackUi){
+  if(!req) return null;
+  const sourceKey = clientSettingsContextKey(sourceProfileId, sourceLevelId || 'level-1');
+  const targetKey = clientSettingsContextKey(targetProfileId, targetLevelId || 'level-1');
+  const current = getCurrentClientSettings(req) || {};
+  const raw = cloneClientSettings(current);
+  const uiByContext = { ...(raw.uiByContext && typeof raw.uiByContext === 'object' ? raw.uiByContext : {}) };
+  const sourceUi = (uiByContext[sourceKey] && typeof uiByContext[sourceKey] === 'object')
+    ? uiByContext[sourceKey]
+    : ((raw.uiPrefsContext?.key === sourceKey && raw.ui) ? raw.ui : fallbackUi);
+  if(!sourceUi || typeof sourceUi !== 'object') return null;
+  uiByContext[targetKey] = { ...(uiByContext[targetKey] || {}), ...pickObjectKeys(sourceUi, [
+    'hardwareScale','markerScale','sensorScale','roomLabelScale',
+    'markerOpacity','sensorOpacity','haloScale','cardFontSize','fontScale',
+    'compact','theme','darkTheme','showAllDevicesInRoom',
+    'showZones','invisibleZones','showMarkers','showSensors','showStandardSensors',
+    'hideSidebar','hideDevicePanel','hideToolbar',
+    'kioskMode','kioskTileMode','kioskNavigationMode','kioskWidget','kioskAutoLock','kioskAutoLockSeconds',
+    'mobileMode','autoHide','debugMode'
+  ]) };
+  raw.uiByContext = uiByContext;
+  const ctx = clientSettingsContextFromSettings(raw);
+  const activeKey = clientSettingsContextKey(ctx.profileId, ctx.levelId);
+  raw.ui = { ...(uiByContext[activeKey] || raw.ui || {}) };
+  return persistSettingsForIdentity(req, currentClientIdentity(req), raw);
+}
+
+function defaultClientSettingsPath(){
+  return path.join(DATA_DIR, 'client_settings', 'default_client_settings.json');
+}
+function getDefaultClientSettings(){
+  return readJsonSafe(defaultClientSettingsPath(), {});
+}
+function saveDefaultClientSettings(settings){
+  const clean = settings && typeof settings === 'object' ? settings : {};
+  atomicWriteJson(defaultClientSettingsPath(), clean);
+  return clean;
+}
+function resetCurrentClientSettingsToDefault(req){
+  const defaults = getDefaultClientSettings();
+  const ident = currentClientIdentity(req);
+  if(ident.type === 'mobile_device'){
+    const device = ident.device || mobileAuth.getDevice(ident.id);
+    if(!device) throw Object.assign(new Error('Мобильное устройство не найдено'), { status:401 });
+    mobileAuth.updateDevice(ident.id, { settings: defaults });
+    return { client: ident, settings: defaults };
+  }
+  if(ident.type === 'web_client'){
+    saveClientPrefs(ident.id, defaults, req);
+    return { client: ident, settings: defaults };
+  }
+  const serverUiPath = path.join(DATA_DIR, 'client_settings', 'server_ui.json');
+  atomicWriteJson(serverUiPath, defaults);
+  return { client: ident, settings: defaults };
+}
+function copyCurrentSettingsToDefault(req){
+  const current = getCurrentClientSettings(req) || {};
+  const saved = saveDefaultClientSettings(current);
+  return { client: currentClientIdentity(req), defaultSettings: saved };
+}
+
+
+function layoutScopeHash(layoutPath){
+  return crypto.createHash('sha1').update(String(layoutPath || '')).digest('hex').slice(0, 16);
+}
+function clientScopedPath(req, kind, baselinePath, ext){
+  const ident = currentClientIdentity(req);
+  if(ident.type === 'server_ui') return null;
+  const client = safeClientKey(ident.id);
+  const scope = layoutScopeHash(baselinePath);
+  return path.join(DATA_DIR, 'client_settings', ident.type, client, `${scope}.${kind}.${ext || 'json'}`);
+}
+function loadEffectiveLayoutForRequest(req, baselineLayoutPath){
+  const overridePath = clientScopedPath(req, 'layout', baselineLayoutPath, 'json');
+  if(overridePath && runtimeDocumentExists(overridePath)){
+    const layout = loadLayout(overridePath);
+    layout.__clientSettings = {
+      effective: 'client_override',
+      client: currentClientIdentity(req),
+      overridePath,
+      baselinePath: baselineLayoutPath
+    };
+    return layout;
+  }
+  const layout = loadLayout(baselineLayoutPath);
+  if(overridePath){
+    layout.__clientSettings = {
+      effective: 'baseline',
+      client: currentClientIdentity(req),
+      overridePath,
+      baselinePath: baselineLayoutPath
+    };
+  }
+  return layout;
+}
+function saveLayoutForRequest(req, body, baselineLayoutPath){
+  const overridePath = clientScopedPath(req, 'layout', baselineLayoutPath, 'json');
+  if(overridePath){
+    const backup = saveLayout(body, overridePath);
+    return { layoutPath: overridePath, baselinePath: baselineLayoutPath, isClientOverride:true, client:currentClientIdentity(req), backup };
+  }
+  const backup = saveLayout(body, baselineLayoutPath);
+  return { layoutPath: baselineLayoutPath, baselinePath: baselineLayoutPath, isClientOverride:false, client:currentClientIdentity(req), backup };
+}
+function loadEffectiveUiStateForRequest(req, baselineUiStatePath){
+  const overridePath = clientScopedPath(req, 'ui-state', baselineUiStatePath, 'json');
+  if(overridePath && runtimeDocumentExists(overridePath)){
+    const ui = loadUiState(overridePath);
+    ui.__clientSettings = { effective:'client_override', client:currentClientIdentity(req), overridePath, baselinePath:baselineUiStatePath };
+    return ui;
+  }
+  const ui = loadUiState(baselineUiStatePath);
+  if(overridePath) ui.__clientSettings = { effective:'baseline', client:currentClientIdentity(req), overridePath, baselinePath:baselineUiStatePath };
+  return ui;
+}
+function saveUiStateForRequest(req, body, baselineUiStatePath){
+  const overridePath = clientScopedPath(req, 'ui-state', baselineUiStatePath, 'json');
+  if(overridePath){
+    if(!runtimeDocumentExists(overridePath)){
+      const baseline = loadUiState(baselineUiStatePath);
+      atomicWriteJson(overridePath, baseline);
+    }
+    const state = saveUiState(body || {}, overridePath);
+    return { state, path: overridePath, baselinePath: baselineUiStatePath, isClientOverride:true, client:currentClientIdentity(req) };
+  }
+  const state = saveUiState(body || {}, baselineUiStatePath);
+  return { state, path: baselineUiStatePath, baselinePath: baselineUiStatePath, isClientOverride:false, client:currentClientIdentity(req) };
+}
+
+
 function clientLevelPaths(req) {
-  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
-  const prefs = cid ? getClientPrefs(cid) : {};
-  const requestedPid = sanitizeProfileId(prefs.activeProfileId || '');
+  const prefs = getCurrentClientSettings(req) || {};
+  const requestedPid = sanitizeProfileId(prefs.activeProfileId || prefs.navigation?.profileId || '');
   const meta = loadProfilesMeta();
   const profileId = (requestedPid && meta.profiles.some(p=>p.id===requestedPid)) ? requestedPid : ACTIVE_PROFILE_ID;
   const levels = loadLevelsMeta(profileId);
-  return ensureLevelDirs(profileId, levels.activeLevelId || 'level-1');
+  const requestedLevelId = sanitizeLevelId(prefs.activeLevelId || prefs.navigation?.levelId || '');
+  const levelId = (requestedLevelId && (levels.levels || []).some(l => l.id === requestedLevelId)) ? requestedLevelId : (levels.activeLevelId || 'level-1');
+  return ensureLevelDirs(profileId, levelId);
 }
 
+function requestProfileLevelContext(req, levelIdOverride = null){
+  const base = clientLevelPaths(req);
+  const profileId = base.profileId || ACTIVE_PROFILE_ID;
+  const levels = loadLevelsMeta(profileId);
+  const requestedLevelId = sanitizeLevelId(levelIdOverride || base.id || ACTIVE_LEVEL_ID);
+  const levelId = (requestedLevelId && (levels.levels || []).some(l => l.id === requestedLevelId)) ? requestedLevelId : (levels.activeLevelId || 'level-1');
+  return ensureLevelDirs(profileId, levelId);
+}
+function activateProfileForCurrentServer(profileId){
+  const meta = loadProfilesMeta();
+  const id = sanitizeProfileId(profileId);
+  if(!meta.profiles.some(p=>p.id===id)) throw new Error('Профиль не найден');
+  meta.activeProfileId = id;
+  for(const p of meta.profiles) if(p.id===id) p.updatedAt = new Date().toISOString();
+  saveProfilesMeta(meta);
+  updateActiveProfilePaths();
+  ensureDataStore();
+  return id;
+}
+
+function syncProfileLevelForRequest(req, profileId, levelId){
+  const pid = sanitizeProfileId(profileId);
+  const lid = sanitizeLevelId(levelId || 'level-1');
+  const patch = { activeProfileId: pid, activeLevelId: lid, navigation: { profileId: pid, levelId: lid } };
+  try{
+    if(req){
+      // v4.2.0.10: sync the current client immediately in the same request that creates/activates
+      // a profile or level. Waiting for a second frontend call left old valid client prefs in place,
+      // so per-client endpoints kept reading the previous profile/level.
+      saveCurrentClientSettings(req, patch);
+    }
+  }catch(e){ writeDebugLog('profiles', 'client profile/level sync failed', { requestId:req?.requestId, profileId:pid, levelId:lid, error:e.message }); }
+  return activateProfileLevelForCurrentServer(pid, lid);
+}
+function activateProfileLevelForCurrentServer(profileId, levelId){
+  const id = activateProfileForCurrentServer(profileId);
+  const lid = sanitizeLevelId(levelId || 'level-1');
+  const lm = loadLevelsMeta(id);
+  if((lm.levels || []).some(l => l.id === lid)){
+    lm.activeLevelId = lid;
+    saveLevelsMeta(id, lm);
+    updateActiveProfilePaths();
+    ensureDataStore();
+  }
+  return { profileId:id, levelId:ACTIVE_LEVEL_ID };
+}
+async function withRequestLevel(req, levelIdOverride, fn){
+  const lp = requestProfileLevelContext(req, levelIdOverride);
+  return await withTemporaryLevel(lp.profileId, lp.id, () => fn(lp));
+}
+
+function resolveRequestContext(req, levelIdOverride = null){
+  const identity = currentClientIdentity(req);
+  const level = requestProfileLevelContext(req, levelIdOverride);
+  const settings = getCurrentClientSettings(req) || {};
+  return {
+    identity,
+    profileId: level.profileId,
+    levelId: level.id,
+    paths: {
+      layout: level.layout,
+      rooms: level.rooms,
+      sourceConfig: level.sourceConfig,
+      uiState: level.uiState,
+      images: level.images,
+      devicesJson: level.devicesJson,
+      devicesJs: level.devicesJs
+    },
+    clientSettings: {
+      activeProfileId: settings.activeProfileId || settings.navigation?.profileId || '',
+      activeLevelId: settings.activeLevelId || settings.navigation?.levelId || '',
+      navigation: settings.navigation || {}
+    },
+    serverActive: { profileId: ACTIVE_PROFILE_ID, levelId: ACTIVE_LEVEL_ID }
+  };
+}
+
+
+
+
+function identityLabel(ident){
+  if(!ident) return 'Неизвестный клиент';
+  if(ident.type === 'default') return 'Настройки по умолчанию';
+  if(ident.type === 'server_ui') return 'Серверный UI по умолчанию';
+  if(ident.type === 'web_client') return `Web-клиент ${ident.name || ident.alias || ident.id}`;
+  if(ident.type === 'mobile_device') return `Mobile ${ident.name || ident.alias || ident.id}`;
+  return `${ident.type}:${ident.id}`;
+}
+function clientScopedPathForIdentity(ident, kind, baselinePath, ext){
+  if(!ident || ident.type === 'server_ui' || ident.type === 'default') return null;
+  const client = safeClientKey(ident.id);
+  const scope = layoutScopeHash(baselinePath);
+  return path.join(DATA_DIR, 'client_settings', ident.type, client, `${scope}.${kind}.${ext || 'json'}`);
+}
+function getSettingsForIdentity(ident){
+  if(!ident || ident.type === 'default') return getDefaultClientSettings();
+  if(ident.type === 'mobile_device'){
+    const d = mobileAuth.getDevice(ident.id);
+    return { ...(d?.settings || {}) };
+  }
+  if(ident.type === 'web_client') return getClientPrefs(ident.id) || {};
+  if(ident.type === 'server_ui'){
+    return readJsonSafe(path.join(DATA_DIR, 'client_settings', 'server_ui.json'), {});
+  }
+  return {};
+}
+function getSettingsForIdentityInContext(req, ident){
+  const base = getSettingsForIdentity(ident);
+  if(!ident || ident.type === 'default') return base;
+  if(ident.type === 'server_ui'){
+    // v4.1.21.18.27:
+    // Prefer explicit server_ui client settings. Do not use default level ui_state
+    // to overwrite another client's display values with defaults.
+    const explicit = base && typeof base === 'object' ? base : {};
+    if(explicit.ui && Object.keys(explicit.ui || {}).length) return applyScopedUiForSettings(explicit);
+    try{
+      const lp = clientLevelPaths(req);
+      const uiState = loadUiState(lp.uiState) || {};
+      const hasRealUi = uiState && uiState.ui && Object.keys(uiState.ui || {}).length;
+      // Only use ui_state when it has explicit ui payload; otherwise keep source mostly empty.
+      return hasRealUi ? { ui: uiState.ui, navigation: { roomId: uiState.selectedRoom || '' }, viewport: uiState.viewport || {} } : applyScopedUiForSettings(explicit);
+    }catch(e){
+      return applyScopedUiForSettings(explicit);
+    }
+  }
+  return applyScopedUiForSettings(base || {});
+}
+function getAvailableClientSettingSources(req){
+  const current = currentClientIdentity(req);
+  const items = [{ type:'default', id:'default', label:'Настройки по умолчанию' }];
+  items.push({
+    type:'server_ui',
+    id:'server-ui',
+    label:'Серверный UI по умолчанию',
+    hint:'Базовые серверные настройки, не индивидуальный браузер'
+  });
+
+  const mobileIds = new Set((mobileAuth.listDevices() || []).map(d => String(d.device_id || '')));
+  if(allhaDb.listWebClients){
+    for(const wc of (allhaDb.listWebClients() || [])){
+      if(!wc?.client_id) continue;
+      // Старые сборки могли ошибочно создать web_client с ID мобильного устройства.
+      // Такой дубль не показываем как источник, чтобы не копировать не тот клиент.
+      if(mobileIds.has(String(wc.client_id))) continue;
+      const labelName = wc.alias || wc.name || wc.client_id;
+      const lastSeen = wc.lastSeen ? `, был ${wc.lastSeen}` : '';
+      items.push({
+        type:'web_client',
+        id:wc.client_id,
+        label:`Браузер / панель: ${labelName}${wc.slug ? ' · /client/'+wc.slug : ''}${lastSeen}`,
+        lastSeen:wc.lastSeen || '',
+        current: current.type === 'web_client' && current.id === wc.client_id
+      });
+    }
+  }
+
+  for(const d of (mobileAuth.listDevices() || [])){
+    items.push({
+      type:'mobile_device',
+      id:d.device_id,
+      label:`Mobile: ${d.name || d.alias || d.device_id}`,
+      accessMode:d.accessMode || 'control',
+      lastSeen:d.last_seen || '',
+      current: current.type === 'mobile_device' && current.id === d.device_id
+    });
+  }
+  return { current, items };
+}
+function pickSettingsSections(source, sections){
+  const src = source && typeof source === 'object' ? source : {};
+  const list = Array.isArray(sections) ? sections : [];
+  if(list.includes('all')){
+    const { __clientSettings, uiByContext, uiPrefsContext, navigation, activeProfileId, activeLevelId, activeRoomId, ...clean } = src || {};
+    // v4.2.0.12: copy effective settings, not the source client's entire profile/level context map.
+    if(src.ui && typeof src.ui === 'object') clean.ui = { ...src.ui };
+    return clean;
+  }
+  const out = {};
+  const copyKey = (k) => { if(src[k] !== undefined) out[k] = src[k]; };
+  if(list.includes('display')){
+    if(src.ui){
+      out.ui = {
+        ...(out.ui || {}),
+        ...Object.fromEntries(Object.entries(src.ui).filter(([k]) => [
+          'hardwareScale','markerScale','sensorScale','roomLabelScale',
+          'markerOpacity','sensorOpacity','haloScale','cardFontSize','fontScale',
+          'compact','theme'
+        ].includes(k)))
+      };
+    }
+  }
+  if(list.includes('visibility')){
+    copyKey('visibility');
+    if(src.ui){
+      out.ui = {
+        ...(out.ui || {}),
+        ...Object.fromEntries(Object.entries(src.ui).filter(([k]) => [
+          'showZones','invisibleZones','showMarkers','showSensors','showStandardSensors',
+          'hideSidebar','hideDevicePanel','hideToolbar','showAllDevicesInRoom'
+        ].includes(k)))
+      };
+    }
+    copyKey('standardSensorsVisibility');
+  }
+  if(list.includes('modes')){
+    copyKey('kiosk');
+    copyKey('mobile');
+    copyKey('tiles');
+    if(src.ui){
+      out.ui = {
+        ...(out.ui || {}),
+        ...Object.fromEntries(Object.entries(src.ui).filter(([k]) => [
+          'kioskMode','kioskTileMode','kioskNavigationMode','kioskAutoLock',
+          'kioskAutoLockSeconds','mobileMode','autoHide'
+        ].includes(k)))
+      };
+    }
+  }
+  // Profiles and levels are global project entities. A client only stores its currently selected
+  // activeProfileId/activeLevelId as runtime context, so navigation/profile/level are intentionally
+  // not copied by the mass settings-copy flow.
+  return out;
+}
+
+function adaptCopiedSettingsForTarget(settingsPatch, sourceSettings, targetIdent, sections){
+  const patch = settingsPatch && typeof settingsPatch === 'object' ? { ...settingsPatch } : {};
+  const srcUi = sourceSettings && typeof sourceSettings.ui === 'object' ? sourceSettings.ui : {};
+  const list = Array.isArray(sections) ? sections : [];
+  if(targetIdent && targetIdent.type === 'mobile_device'){
+    // mobileMode is a device-class property for APK/mobile clients, not a portable preference.
+    // Copying desktop web settings to mobile with mobileMode:false makes the map use desktop
+    // layout math on a narrow screen and breaks pan/zoom geometry.
+    patch.ui = { ...(patch.ui || {}), mobileMode:true, hideSidebar:true, hideDevicePanel:true };
+    const copiedViewport = Object.prototype.hasOwnProperty.call(patch, 'viewport') || list.includes('all');
+    if(copiedViewport && srcUi.mobileMode !== true){
+      // Stored pan/zoom values are calibrated to a specific viewport and become invalid when
+      // switching from desktop rendering to mobile rendering. Reset only on desktop -> mobile copy.
+      patch.viewport = { overview:{ zoom:1, panX:0, panY:0 }, rooms:{} };
+    }
+  }
+  return patch;
+}
+function sourceIdentityFromPayload(body){
+  const type = String(body?.sourceType || body?.type || '').trim();
+  const id = String(body?.sourceId || body?.id || '').trim();
+  if(type === 'default') return { type:'default', id:'default' };
+  if(type === 'server_ui') return { type:'server_ui', id:'server-ui' };
+  if(type === 'mobile_device' && id) return { type:'mobile_device', id };
+  if(type === 'web_client' && id) return { type:'web_client', id };
+  return null;
+}
+function layoutHasClientPositions(layout){
+  if(!layout || typeof layout !== 'object') return false;
+  return !!(
+    Object.keys(layout.overviewMarkers || {}).length ||
+    Object.keys(layout.roomMarkers || {}).some(roomId => Object.keys(layout.roomMarkers?.[roomId] || {}).length) ||
+    Object.keys(layout.overviewMetrics || {}).length ||
+    Object.keys(layout.roomMetrics || {}).length
+  );
+}
+function latestWebClientLayoutPathForRequest(req, baselineLayoutPath){
+  if(!allhaDb.listWebClients) return null;
+  const current = currentClientIdentity(req);
+  const mobileIds = new Set((mobileAuth.listDevices() || []).map(d => String(d.device_id || '')));
+  for(const wc of (allhaDb.listWebClients() || [])){
+    if(!wc?.client_id) continue;
+    if(current.type === 'web_client' && current.id === wc.client_id) continue;
+    if(mobileIds.has(String(wc.client_id))) continue;
+    const candidate = clientScopedPathForIdentity({ type:'web_client', id:wc.client_id }, 'layout', baselineLayoutPath, 'json');
+    if(candidate && runtimeDocumentExists(candidate)){
+      const layout = loadLayout(candidate);
+      if(layoutHasClientPositions(layout)) return candidate;
+    }
+  }
+  return null;
+}
+function copyPositionForCurrentClient(req, sourceIdent){
+  const lp = clientLevelPaths(req);
+  const currentIdent = currentClientIdentity(req);
+  const currentPath = clientScopedPathForIdentity(currentIdent, 'layout', lp.layout, 'json') || lp.layout;
+  let sourcePath = lp.layout;
+  let sourceMode = 'project-default';
+
+  if(sourceIdent && sourceIdent.type !== 'default' && sourceIdent.type !== 'server_ui'){
+    const maybe = clientScopedPathForIdentity(sourceIdent, 'layout', lp.layout, 'json');
+    if(maybe && runtimeDocumentExists(maybe)){
+      sourcePath = maybe;
+      sourceMode = sourceIdent.type;
+    }
+  } else if(sourceIdent && sourceIdent.type === 'server_ui') {
+    // В текущей архитектуре обычный браузер работает как web_client с собственным
+    // расположением датчиков и маркеров. Раньше пункт “Серверный UI / браузер”
+    // ошибочно копировал пустой файл уровня. Если явного server_ui расположения нет,
+    // берём последний web-клиент с реальными позициями.
+    const latestWeb = latestWebClientLayoutPathForRequest(req, lp.layout);
+    if(latestWeb){
+      sourcePath = latestWeb;
+      sourceMode = 'latest-web-client-fallback';
+    }
+  }
+
+  const sourceLayout = loadLayout(sourcePath);
+  const backup = saveLayout(sourceLayout, currentPath);
+  return {
+    currentPath,
+    sourcePath,
+    sourceMode,
+    copiedPositions: layoutHasClientPositions(sourceLayout),
+    backup: backup ? path.basename(backup) : null
+  };
+}
+
+
+app.get('/api/client-settings/default', (req,res)=>{
+  try{ res.json({ok:true, defaultSettings:getDefaultClientSettings()}); }
+  catch(e){ safeErrorResponse(req,res,e); }
+});
+app.post('/api/client-settings/current/reset-to-default', express.json(), (req,res)=>{
+  try{
+    const saved = resetCurrentClientSettingsToDefault(req);
+    writeDebugLog('client-settings','reset-to-default',{client:saved.client, defaultKeys:Object.keys(getDefaultClientSettings()||{})});
+    res.json({ok:true, ...saved, defaultSettings:getDefaultClientSettings()});
+  }catch(e){safeErrorResponse(req,res,e,e.status||500);}
+});
+app.post('/api/client-settings/current/save-as-default', express.json(), (req,res)=>{
+  try{
+    // Ensure latest values from current UI are stored before copying if payload provided.
+    if(req.body && Object.keys(req.body || {}).length) saveCurrentClientSettings(req, req.body);
+    const saved = copyCurrentSettingsToDefault(req);
+    res.json({ok:true, ...saved});
+  }catch(e){safeErrorResponse(req,res,e,e.status||500);}
+});
+
+
+app.get('/api/client-settings/sources', (req,res)=>{
+  try{ res.json({ok:true, ...getAvailableClientSettingSources(req)}); }
+  catch(e){ safeErrorResponse(req,res,e); }
+});
+app.post('/api/client-settings/current/copy-from', express.json(), (req,res)=>{
+  try{
+    const sourceIdent = sourceIdentityFromPayload(req.body || {});
+    if(!sourceIdent) return res.status(400).json({ok:false,error:'Не выбран источник настроек'});
+    const sections = Array.isArray(req.body?.sections) ? req.body.sections : ['all'];
+    const sourceSettings = getSettingsForIdentityInContext(req, sourceIdent);
+    const targetIdent = currentClientIdentity(req);
+    let settingsPatch = pickSettingsSections(sourceSettings, sections);
+    settingsPatch = adaptCopiedSettingsForTarget(settingsPatch, sourceSettings, targetIdent, sections);
+    let saved = null;
+    const wantsPosition = sections.includes('all') || sections.includes('position');
+    if(Object.keys(settingsPatch || {}).length){
+      saved = saveCurrentClientSettings(req, settingsPatch);
+    } else {
+      saved = { client: currentClientIdentity(req), settings: getCurrentClientSettings(req) };
+      if(!wantsPosition){
+        return res.status(400).json({ok:false,error:'В выбранном источнике нет настроек выбранного типа. Сначала сохраните настройки на устройстве-источнике.'});
+      }
+    }
+    let position = null;
+    if(wantsPosition){
+      position = copyPositionForCurrentClient(req, sourceIdent);
+    }
+    writeDebugLog('client-settings','copy-from',{source:sourceIdent, sections, patchKeys:Object.keys(settingsPatch||{}), savedClient:saved?.client, position});
+    res.json({ok:true, source:sourceIdent, sections, saved, position, effectiveUiKeys:Object.keys(settingsPatch?.ui||{})});
+  }catch(e){ safeErrorResponse(req,res,e,e.status||500); }
+});
+
+app.get('/api/client-settings/current', (req,res)=>{
+  try{
+    res.json({ok:true, client:currentClientIdentity(req), settings:getCurrentClientSettings(req)});
+  }catch(e){safeErrorResponse(req,res,e,e.status||500);}
+});
+app.post('/api/client-settings/current', express.json(), (req,res)=>{
+  try{
+    const saved=saveCurrentClientSettings(req, req.body || {});
+    res.json({ok:true, ...saved});
+  }catch(e){safeErrorResponse(req,res,e,e.status||500);}
+});
+app.post('/api/client-settings/current/reset-to-baseline', express.json(), (req,res)=>{
+  try{
+    const ident=currentClientIdentity(req);
+    if(ident.type==='mobile_device'){
+      mobileAuth.updateDevice(ident.id, { settings:{} });
+      return res.json({ok:true, client:ident, settings:{}});
+    }
+    if(ident.type==='web_client'){
+      saveClientPrefs(ident.id, {}, req);
+      return res.json({ok:true, client:ident, settings:{}});
+    }
+    const serverUiPath = path.join(DATA_DIR, 'client_settings', 'server_ui.json');
+    atomicWriteJson(serverUiPath, {});
+    res.json({ok:true, client:ident, settings:{}});
+  }catch(e){safeErrorResponse(req,res,e,e.status||500);}
+});
+
 app.get('/api/prefs', (req, res) => {
-  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
+  const ident = currentClientIdentity(req);
   const auth = mobileAuthFromHeaders(req);
-  if (!cid) return res.json(auth.ok ? { panelMode: auth.device?.accessMode || 'viewer', mobileDevice: auth.device } : {});
   try {
-    const data = getClientPrefs(cid) || {};
+    const data = getCurrentClientSettings(req) || {};
     if(auth.ok){
-      data.panelMode = auth.device?.accessMode || 'viewer';
+      data.panelMode = auth.device?.accessMode || 'control';
       data.mobileDevice = auth.device;
       data.mobileAccessLocked = true;
     }
+    data.__clientSettings = { client: ident };
     res.json(data);
   } catch {
-    res.json(auth.ok ? { panelMode: auth.device?.accessMode || 'viewer', mobileDevice: auth.device, mobileAccessLocked:true } : {});
+    res.json(auth.ok ? { panelMode: auth.device?.accessMode || 'control', mobileDevice: auth.device, mobileAccessLocked:true, __clientSettings:{client:ident} } : {__clientSettings:{client:ident}});
   }
 });
 
 app.put('/api/prefs', express.json(), (req, res) => {
-  const cid = sanitizeClientId(req.headers['x-client-id'] || '');
-  if (!cid) return res.status(400).json({ error: 'X-Client-ID required' });
   try {
     const body = req.body || {};
     const auth = mobileAuthFromHeaders(req);
-    const existing = getClientPrefs(cid);
-    const prefs = { ...existing };
-    if (body.ui && typeof body.ui === 'object') prefs.ui = body.ui;
-    // For APK/mobile access, panelMode is server-controlled per device. Do not let the app promote itself.
-    if (!auth.ok && body.panelMode !== undefined) prefs.panelMode = String(body.panelMode);
-    if (body.activeProfileId !== undefined) prefs.activeProfileId = body.activeProfileId;
-    saveClientPrefs(cid, prefs, req);
-    res.json({ ok: true, mobileAccessLocked: !!auth.ok, database: allhaDb.getInfo() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const patch = {};
+    if (body.ui && typeof body.ui === 'object') patch.ui = body.ui;
+    if (body.navigation && typeof body.navigation === 'object') patch.navigation = body.navigation;
+    if (body.visibility && typeof body.visibility === 'object') patch.visibility = body.visibility;
+    if (body.tiles && typeof body.tiles === 'object') patch.tiles = body.tiles;
+    if (body.kiosk && typeof body.kiosk === 'object') patch.kiosk = body.kiosk;
+    if (body.mobile && typeof body.mobile === 'object') patch.mobile = body.mobile;
+    if (!auth.ok && body.panelMode !== undefined) patch.panelMode = String(body.panelMode);
+    if (body.activeProfileId !== undefined) patch.activeProfileId = body.activeProfileId;
+    if (body.activeLevelId !== undefined) patch.activeLevelId = body.activeLevelId;
+    if (body.activeRoomId !== undefined) patch.activeRoomId = body.activeRoomId;
+    const saved = saveCurrentClientSettings(req, patch);
+    res.json({ ok: true, mobileAccessLocked: !!auth.ok, clientSettings: saved, database: allhaDb.getInfo() });
+  } catch (e) { safeErrorResponse(req,res,e,e.status||500); }
 });
 
 const server = app.listen(PORT, () => {
   console.log(`[ALLHA-2D] Browser/LAN access on http://0.0.0.0:${PORT}`);
+  try{ setSseBatchMs(loadAddonConfig().sseBatchMs); }catch(e){}
   startHaWsSubscription();
 });
 server.on('error', err => {
@@ -3871,3 +6258,33 @@ mobileServer.on('error', err => {
   if(err && err.code === 'EADDRINUSE') console.error(`Mobile port ${MOBILE_PORT} already in use`);
   else throw err;
 });
+
+let _shuttingDown=false;
+function shutdown(signal){
+  if(_shuttingDown) return;
+  _shuttingDown=true;
+  console.log(`[ALLHA-2D] ${signal} received, shutting down gracefully...`);
+  try{ stopHaWsSubscription(); }catch(e){}
+  try{ for(const res of sseClients){ try{ res.end(); }catch(e){} } sseClients.clear(); }catch(e){}
+  try{ flushDebugLog(); }catch(e){}
+  try{ flushCommandLog(); }catch(e){}
+  let pending=2;
+  const finish=()=>{
+    try{ allhaDb.closeDb?.(); }catch(e){ console.error('[ALLHA-2D] closeDb failed:', e.message); }
+    process.exit(0);
+  };
+  const waitForInFlight=()=>{
+    const started=Date.now();
+    const check=()=>{
+      if(_inFlightRequests<=0 || Date.now()-started>4000) return finish();
+      setTimeout(check, 100);
+    };
+    check();
+  };
+  const done=()=>{ if(--pending<=0) waitForInFlight(); };
+  const timer=setTimeout(finish, 6000); timer.unref?.();
+  try{ server.close(done); }catch(e){ done(); }
+  try{ mobileServer.close(done); }catch(e){ done(); }
+}
+process.on('SIGTERM', ()=>shutdown('SIGTERM'));
+process.on('SIGINT', ()=>shutdown('SIGINT'));

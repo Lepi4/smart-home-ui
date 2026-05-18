@@ -1,0 +1,51 @@
+
+
+/* v4.1.21.18.25 — cleaner individual settings copy UI */
+.client-settings-copy-card {
+  border: 1px solid var(--border, rgba(148, 163, 184, .22));
+  border-radius: 14px;
+  padding: 16px;
+  margin-top: 12px;
+  background: rgba(15, 23, 42, .28);
+}
+.client-settings-copy-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 14px;
+  align-items: start;
+}
+.client-settings-source-label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+.client-settings-source-label select {
+  width: 100%;
+  min-height: 36px;
+}
+.client-settings-copy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.client-settings-copy-grid button {
+  width: 100%;
+  min-height: 42px;
+  text-align: left;
+  justify-content: flex-start;
+  white-space: normal;
+  line-height: 1.25;
+}
+.client-settings-copy-grid button:first-child {
+  grid-column: 1 / -1;
+}
+@media (max-width: 760px) {
+  .client-settings-copy-head,
+  .client-settings-copy-grid {
+    grid-template-columns: 1fr;
+  }
+  .client-settings-source-label {
+    margin-top: 2px;
+  }
+}

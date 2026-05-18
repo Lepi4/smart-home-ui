@@ -2,5 +2,12 @@ node_modules
 npm-debug.log
 .git
 .gitignore
-data/layout.json
-data/backups
+data
+config/local-config.json
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm

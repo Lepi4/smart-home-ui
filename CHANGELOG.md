@@ -1,688 +1,267 @@
-## v4.1.21.18
-- Hotfix: robust delegated/direct handlers for standardSensors controls; save/suggest/accept/clear buttons work after settings re-render/focus guard/mobile WebView refresh.
-- Standard sensor inputs remain clickable and show admin-mode toast instead of silently disabled controls.
-
-## v4.1.21.18 — hotfix standard sensor suggestions click/render
-
-- Fixed standard sensor suggestion buttons not updating the UI after v4.1.21.1.
-- `renderRoomsZonesManager()` now supports forced render for suggestion updates, bypassing the input-focus render guard only for this explicit action.
-- Added a backup delegated click handler for dynamically re-rendered standard sensor controls inside the rooms/zones manager.
-- APK/mobile sources unchanged.
-
-## v4.1.21.1 — DB-primary polish / final leftover cleanup
-
-- Imported legacy `/data/client-prefs/<client>.json` into `web_client_settings` on first access when SQLite is available but the DB row is missing.
-- Added `legacyClientPrefsImported` audit counter in `/api/database/info`.
-- `device_parse_report.md` is now written through the runtime text storage wrapper, so it is mirrored into `project_files` while still remaining a diagnostic file.
-- Kept `standard_sensors_bindings.json` as migration-only input; runtime standard sensors remain DB-primary via `standard_sensor_bindings`.
-
-## v4.1.21 — DB-primary final hardening / runtime mirror isolation
-
-- Усилен DB-primary слой: добавлены runtime source helpers и diagnostics counters для JSON/file fallback, mirror-missing-but-DB-present и источников devices/lovelace raw.
-- `standard_sensor_bindings` оставлен главным источником standardSensors; legacy `standard_sensors_bindings.json` используется только как одноразовая миграция при пустой таблице.
-- Generic sync standardSensors больше не очищает DB bindings, если поле `standardSensors` отсутствует в комнате; явная очистка идёт только через clear endpoints.
-- `readJsonSafe` / `readTextRuntimeFile` теперь фиксируют fallback-события и не считают отсутствие mirror-файла отсутствием runtime-документа.
-- `copyPathRecursive` импортирует скопированные runtime JSON/JS/TXT/MD обратно в SQLite, чтобы копирование/restore профилей не оставляло DB старой.
-- `copyIfExists` / `replacePathIfExists` сильнее привязаны к DB-aware copy для runtime-документов и файлов.
-- `mergeParsedRoomsIntoSettings` учитывает DB standardSensor bindings при переносе комнат после Lovelace rescan/import.
-- Web client prefs JSON переведены в migration/emergency fallback: при доступной SQLite runtime читает/пишет только `web_client_settings`.
-- Mobile legacy `mobile-devices.json` не используется при pairing, если SQLite доступна; существующее устройство ищется в DB, fallback только при недоступной DB.
-- Настройки мобильных устройств в серверном UI защищены от async re-render во время редактирования: увеличен draft guard, добавлена проверка после async-загрузки профилей.
-- Scroll guard списка устройств усилен: активный scroll держит защиту дольше, чтобы state polling не возвращал список наверх.
-- Добавлен endpoint `/api/rooms/debug` для проверки rooms normalization, knownRoomIds, DB bindings и источников `devices.js` / `lovelace_raw`.
-
-## v4.1.20 — DB-primary hardening + rooms normalization repair
-
-- Исправлена destructive-нормализация rooms: обычная загрузка больше не фильтрует комнаты по knownRoomIds и не удаляет standardSensors.
-- `listKnownRoomIds()` переведён на контекст текущего rooms/devices path и больше не зависит от глобального `ROOMS_SETTINGS_PATH`.
-- Если knownRoomIds пустой, rooms не очищаются: пустой список known больше не считается доказательством отсутствия комнат.
-- `mergeParsedRoomsIntoSettings()` теперь переносит настройки/standardSensors по room id, alias, label/name и нормализованным названиям.
-- `standard_sensor_bindings` остаётся DB-primary источником привязок standardSensors; rooms document гидратируется из DB при `/api/rooms`.
-- Добавлены DB-primary helpers `runtimeDocumentExists()`, `runtimeFileExists()`, `copyRuntimeDocument()`, `copyRuntimeFile()`.
-- `ensureDataStore()` и создание уровней больше не создают defaults поверх существующих SQLite-документов только из-за отсутствия mirror-файла.
-- `devices.js` больше не уходит в `public/devices.js` fallback только потому, что нет mirror-файла: чтение идёт через `project_files` DB-first.
-- `importStoredLovelaceRaw()` больше не требует физический `lovelace_raw.json`, если RAW уже есть в SQLite.
-- Копирование профилей/уровней и copy settings теперь используют DB-aware копирование JSON/JS runtime-документов.
-- Backup layout теперь создаётся из DB-first `loadLayout()`, а не только через физический файл.
-
-## v4.1.19.5 — hotfix: DB-primary standardSensors repair
-
-- Added canonical SQLite table `standard_sensor_bindings`.
-- Standard room sensors are now stored and restored through DB, not through a runtime mirror file.
-- `/api/rooms` overlays room settings with DB bindings after restart.
-- Lovelace rescan/import preserves standardSensors through DB merge.
-- Save/Clear one/Clear all update the DB table immediately.
-- Legacy mirror/recovery files are used only once to seed the DB table if it is empty, then runtime reads from SQLite.
-- `/api/database/info` now includes `standard_sensor_bindings` count.
-
-## v4.1.19.4 — hotfix: persistent standardSensors recovery
-
-- Added dedicated per-level `standard_sensors_bindings.json` recovery mirror.
-- `/api/rooms` now merges standardSensors from SQLite, JSON mirror, dedicated backup, and migration backups.
-- Saving rooms now updates the dedicated standardSensors backup, so accepted sensors survive add-on restart and Lovelace rescan even if a rooms document is rewritten empty.
-- This hotfix targets the case where sensors visually disappear after restart/rescan but reappear after saving the first sensor.
-
-## v4.1.19.3 — hotfix DB hydration, mobile settings, scroll
-
-- Исправлена гидрация `standardSensors` после перезапуска add-on и после rescan/import: bindings safety-merge из DB-primary и JSON mirror, затем DB repair.
-- `standardSensors` больше не должны визуально пропадать до первого повторного сохранения.
-- Усилена защита standardSensors при Lovelace rescan: сохранённые bindings переносятся в новый rooms cache.
-- Исправлена стабильность dropdown/select в настройках мобильного устройства на сервере: live poll не перерисовывает форму во время ввода/выбора.
-- Добавлен scroll guard для списка устройств: во время активной прокрутки state update обновляет только видимые состояния, не пересоздавая список.
-- APK/mobile sources не менялись; если scroll остаётся, значит нужна правка в мобильном исходнике v4.1.10 отдельным релизом.
-
-# Changelog
-
-## v4.1.19.2 — hotfix: stable standard sensor clear/save/suggestions
-
-- Исправлена очистка одного стандартного датчика: теперь очищается только выбранный sensor type в выбранной комнате.
-- Исправлена очистка всех стандартных датчиков комнаты: не сбрасывает summary других комнат.
-- После очистки input-поля реально очищаются, а предложения снова отображаются рядом с полем.
-- Добавлена frontend-защита от пустого/неполного ответа API: сохранённые датчики других комнат не затираются случайно.
-- Поля standardSensors больше не обёрнуты в `<label>` с вложенными кнопками, чтобы click по “Предложить / Принять / Очистить” не терялся.
-- Для кнопок standardSensors добавлены `preventDefault/stopPropagation` и явные `return` после обработки.
-- APK и mobile sources не менялись.
-
-
-## v4.1.19.2 — hotfix: standard sensor accept button
-
-- Исправлена кнопка **«Принять»** в UI предложений standardSensors.
-- Теперь нажатие заполняет соответствующее поле `entity_id`, обновляет строку «Текущий», сохраняет draft-state и показывает подсказку «Нажмите Сохранить датчики».
-- Добавлены `preventDefault/stopPropagation` для клика по кнопке внутри label, чтобы браузер не перехватывал событие и не фокусировал поле вместо обработки кнопки.
-- APK и mobile sources не менялись.
-
-# CHANGELOG
-
-## v4.1.19 — Lovelace sections parser + viewer/dropdown/scroll/standardSensors stabilization
-
-- Исправлен парсер Lovelace `sections` dashboards: `sections[].cards[].title` и heading/section title теперь считаются явной комнатой. Карточка `Прочее` больше не переопределяется в `media` из-за сущностей с “Алиса” в названии.
-- Импорт `dashboard-dddd/physical` теперь должен находить 14 комнат и 195 entity в предоставленном YAML: `Прочее`, `Гостиная`, `Кабинет`, `Спальня левая/правая`, санузлы и другие карточки.
-- После импорта обновляется `rooms.json`/SQLite mirror с найденными комнатами, сохраняются старые `standardSensors` для совпавших комнат, а устаревший `selectedRoom` сбрасывается на `overview`.
-- Диагностика импорта и `device_parse_report.md/json` теперь показывают rooms/views/cards/entities, rooms from card titles и список найденных комнат.
-- Добавлены API очистки стандартных датчиков: очистить один тип датчика и очистить все standardSensors комнаты. После очистки предложения снова доступны.
-- UI standardSensors показывает текущий entity, предложенный entity и причину предложения; предложения не применяются автоматически.
-- Добавлена базовая защита от закрытия dropdown/select при live-refresh: при активном поле в настройках render не пересоздаёт форму.
-- Список устройств сохраняет scroll при обновлении HA states, чтобы мобильный список не прыгал наверх.
-- Viewer mode оставлен как режим навигации/просмотра: устройства открываются в read-only modal, управление и admin-редактирование остаются заблокированными.
-- APK и mobile sources не менялись; историческая база mobile остаётся v4.1.10.
-
-## v4.1.18 — DB-primary read priority + local web clients
-
-- SQLite теперь используется как основной источник чтения runtime JSON-документов проекта; JSON/JS-файлы остаются mirror/export/debug-слоем для диагностики и отката.
-- `/api/database/info` расширен: показывает `mode: sqlite-primary-json-mirror`, наличие документов в DB, наличие mirror-файлов, используемый источник и размер mirror.
-- Runtime JS-файлы `devices.js` и `lovelace-source.js` отдаются через DB-first слой `project_files`; при отсутствии записи выполняется fallback на файл.
-- Добавлены локальные web-клиенты для LAN-доступа через host-port `8099`: `web_clients`, `web_client_settings`, `clientId`, alias, описание, lastSeen и индивидуальные настройки.
-- Добавлены постоянные локальные ссылки web-клиентов вида `http://IP_HOME_ASSISTANT:8099/client/<slug>`. Такая ссылка восстанавливает настройки клиента даже после очистки cookies/localStorage.
-- Добавлены API: `GET/POST /api/web-clients`, `POST /api/web-clients/touch`, `PATCH /api/web-clients/:id`, `POST /api/web-clients/:id/regenerate-link`, `DELETE /api/web-clients/:id`.
-- Frontend автоматически регистрирует локальный web-клиент, хранит `allha_web_client_id` и `allha_web_client_slug` в localStorage и использует их для `/api/prefs`.
-- APK и mobile sources не менялись. Порт мобильного приложения остаётся `32457`.
-
-
-## v4.1.17 — full SQLite document store + standard sensor suggestions
-
-- Extended SQLite storage from mobile/web clients to project JSON documents via `project_documents` and runtime JS/text via `project_files`.
-- JSON runtime files are now mirrored into `/data/allha2d.db`: profiles, levels, layout, rooms, source config, UI state, image metadata, security/config, attention rules and diagnostics documents.
-- Existing JSON files are imported into SQLite on first read; file mirrors are still written for compatibility and safe rollback.
-- Added `/api/rooms/:room_id/standard-sensor-suggestions` to suggest standard room sensors from Lovelace/HA entities.
-- Standard sensor UI now shows “Предложено” candidates and buttons to accept suggested entities without overwriting manually configured sensors automatically.
-- Suggestions match room context and keywords/device_class: temperature, humidity, motion/presence/occupancy, illuminance/lux, sound_level/noise, co2/carbon_dioxide.
-- APK and mobile sources were not changed in this release.
-
-
-## v4.1.17 — SQLite foundation / database storage
-
-- Added `/data/allha2d.db` SQLite database foundation.
-- Mobile devices, mobile device settings, web clients, web client settings, sessions, command log, attention events and backup index now have database tables.
-- Legacy `/data/mobile-devices.json` and `/data/client-prefs/*.json` are migrated into SQLite on startup when possible.
-- Legacy files are copied into `/data/migration-backups/` before migration.
-- Mobile device tokens are stored as SHA-256 hashes in SQLite instead of plain text.
-- Mobile web sessions are stored in SQLite.
-- Added `/api/database/info` and database status in `/api/health` / mobile debug.
-- Added server-side foundation for Device Alias / Recovery ID, per-device settings backup and future copy-settings workflows.
-- Docker image now installs the SQLite CLI package.
-
-Note: v4.1.17 is an architecture/storage release. Viewer mode, mobile dropdown stability, standard sensor recovery and APK device-list scroll remain in the next implementation block.
-
-
-## v4.1.15
-
-- Исправлена критическая ошибка инициализации UI: добавлена отсутствующая `updateMobileLockedSettingsUI()`, из-за которой `applyUiPrefs()` мог падать и интерфейс переставал реагировать.
-- Исправлена семантика viewer mode: просмотр, навигация, комнаты, устройства, карточки, датчики и настройки доступа должны открываться; управление остаётся запрещённым.
-- В viewer состояние устройства в списке стало read-only `span`, а не disabled button, чтобы клики по карточке не игнорировались.
-- Отрисовка маркеров и стандартных датчиков теперь опирается на `state.ui.showMarkers/showSensors`, а не на состояние DOM checkbox, которое могло не успеть синхронизироваться после ошибки.
-- Улучшена миграция `devices.js/devices.json`: пустой level runtime больше не блокирует перенос непустых устройств из старого `/data`/profile storage.
-
-## v4.1.14
-
-- Добавлены индивидуальные настройки для привязанных мобильных устройств: режим доступа `viewer/control/admin`, доступ ко всем или выбранным профилям, server mode, scale, keep screen on, stay in background, autostart.
-- В разделе “Мобильный доступ” список устройств теперь показывает расширенные параметры и позволяет сохранять их для каждого устройства отдельно.
-- Пункт “Интервал опроса” переименован в резервный fallback polling; основной режим обновлений остаётся live через HA WebSocket/SSE, default fallback увеличен до 30 секунд.
-- В мобильную оболочку добавлен экран настроек приложения: локальный/удалённый сервер, режим серверов, масштаб, keep screen on, stay in background, autostart.
-- В APK-режиме скрываются кнопки возврата в Home Assistant, так как приложение работает как самостоятельный клиент.
-
-## v4.1.9
-
-- Mobile pairing UI: added “Copy code”.
-- Mobile access settings now refresh the paired device list automatically after pairing.
-- Mobile token revocation is detected before opening the protected UI; revoked devices return to pairing.
-- Mobile fallback local→web no longer shows a transient fatal error when local is unavailable but remote works.
-- Pairing sends available device info: platform, model, manufacturer, OS version, screen and user-agent.
-
-# CHANGELOG
-
-
-## v4.1.9
-
-- Mobile app connection logic aligned with the working Sonnet build supplied by the user.
-- Server/add-on remains compatible with v4.1.5+ mobile endpoints: `/api/health`, `/api/mobile/debug`, `/api/mobile/pair`.
-- Release split is preserved: add-on/server archive, mobile source archive, signed APK, roadmap file.
-- README/FAQ clarify that v4.1.9 APK is based on the working mobile connection implementation.
-
-## v4.1.6
-
-- Mobile app connection fix: endpoint diagnostics no longer treats a reachable server as unavailable when normal CORS fetch is blocked.
-- Added Capacitor native HTTP fallback for `/api/health`, `/api/mobile/debug` and `/api/mobile/pair`, so Android WebView can complete pairing even when browser CORS/PNA blocks `fetch`.
-- Added clearer mobile connection statuses: reachable but unreadable, readable OK, HTTP error, network error.
-- APK and mobile sources updated together with the add-on/server release.
-
-
-## v4.1.6
-
-- Исправлена проверка доступности сервера из Android/Capacitor WebView.
-- CORS теперь разрешает `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost`, `null` и отвечает на Private Network Access preflight.
-- `OPTIONS` отвечает до мобильной авторизации.
-- Добавлен открытый endpoint `/api/mobile/debug` для проверки готовности мобильного доступа и паринга.
-- В мобильном приложении добавлена кнопка «Проверить сервер».
-- Ошибка «Сервер недоступен» заменена на подробную диагностику URL, HTTP status, CORS/no-cors/network.
-- Сохранена защита порта 32457: без токена браузер видит только заглушку, не полный интерфейс.
-
-## v4.1.4
-
-- Исправлена диагностика “сервер недоступен” в Android-приложении: сервер теперь отдаёт CORS-заголовки для `https://localhost`, `http://localhost`, `capacitor://localhost`, `ionic://localhost` и `null` origin.
-- `/api/health` на мобильном порту возвращает версию и признак mobile-port, чтобы приложение могло проверить доступность сервера.
-- Полный web UI на порту 32457 без токена по-прежнему закрыт заглушкой Mobile Access.
-- Android APK синхронизирован и собран с dev-подписью.
-
-## v4.1.4
-
-- Исправлено подключение мобильного приложения: адреса теперь нормализуются автоматически, можно вводить IP:порт без `http://`, полный `/api/health` или базовый адрес.
-- Исправлена Android-сборка мобильного приложения: JS-файлы из `mobile-app/www/js` синхронизированы в `android/app/src/main/assets/public/js`.
-- Для Android включён cleartext-доступ к локальным HTTP-адресам, чтобы `http://IP_HOME_ASSISTANT:32457` работал в LAN.
-- Порт `32457` больше не отдаёт полный интерфейс обычному браузеру без токена: показывается экран Mobile Access.
-- После успешной привязки приложение передаёт токен через защищённый одноразовый вход, получает web-session cookie и открывает основной UI.
-- `/api/mobile/pair` теперь возвращает понятные ошибки и проверяет, что мобильный доступ включён.
-
-## v4.0.0 — Mobile app support: pairing, Bearer token auth, auto-switch local/remote
-
-### New
-- **Мобильный доступ** — новый раздел в настройках аддона
-- **Паринг по коду**: аддон генерирует 6-значный код (5 мин, одноразовый), пользователь вводит его в мобильном приложении → соединение установлено, токены настраиваются автоматически
-- **Bearer token middleware**: внешние запросы к аддону проверяются по токену + device_id; локальная сеть всегда открыта
-- **`src/mobile-auth.js`**: хранит привязки device_id→token в `/data/mobile-devices.json`, rate-limit на паринг
-- **Мобильное приложение (Capacitor)**: исходники в папке `mobile-app/`, два сервера (локальный + удалённый), авто-переключение, экран паринга «Введите код»
-- **API**: `/api/mobile/code`, `/api/mobile/pair`, `/api/mobile/devices` (CRUD)
-- **config.yaml version**: исправлено (было 3.6.0.5, теперь синхронизировано с package.json)
-- **ZIP**: пересобран с Unix-путями (forward slash) для корректной распаковки на Linux/HAOS
-
-### Fixed
-- config.yaml version не совпадал с package.json — HA считал что обновления нет
-- ZIP-архив содержал Windows backslash пути
-
-## v3.6.0.7 — Live indicator + src/lovelace.js module split
-
-### New
-- **Индикатор режима соединения** в строке подключения:
-  - 🟢 **Live ●** — SSE-подписка активна, состояния приходят в реальном времени
-  - 🟡 **Поллинг ↺** — SSE недоступен, работает HTTP-поллинг (fallback)
-  - 🔴 **Нет связи ✗** — ошибка соединения
-- Зелёный dot анимируется пульсом в Live-режиме для визуального отличия
-- **`src/lovelace.js`** — вынесены все функции разбора Lovelace-конфига из `server.js` (parseLovelaceRawBundle и 25+ вспомогательных функций)
-- server.js стал значительно короче — `require('./src/lovelace')` заменяет ~255 строк
-
-### Architecture
-- `src/ha.js` — WebSocket к HA, SSE-клиенты, statesCache (добавлен в 3.6.0.6)
-- `src/lovelace.js` — парсинг конфига Lovelace, шаблоны, decluttering (добавлен в 3.6.0.7)
-- `server.js` — HTTP-роуты, бизнес-логика (стал читаемым)
-
-## v3.6.0.6 — SSE real-time + WebSocket subscription + server split
-
-### New
-- **Server-Sent Events** `/api/ha/events`: браузер получает `initial_states`, `state_changed`, `state_removed` без поллинга
-- **Persistent WebSocket к HA** на сервере: подписка на `state_changed`, кэш состояний в `statesCache`
-- **Exponential backoff** при реконнекте WS: 5s → 10s → 20s → 40s → 60s max
-- **Selective re-render** (`patchMarkerForEntity`): обновляет только DOM изменившегося маркера, не перерисовывает весь план — критично для слабых планшетов
-- **MJPEG-стриминг** `/api/camera/stream/:entity_id` через `camera_proxy_stream`
-- **`src/ha.js`** — вынесены haFetch, haWsCommand, statesCache, SSE-broadcast, startHaWsSubscription
-- **Export/Import layout** — `/api/export/layout`, `/api/import/layout`
-- Поллинг переключается на 60 с когда SSE OPEN (страховочный режим)
-- Camera-маркер открывает живую трансляцию MJPEG вместо снимка
-
-## v3.6.0.5 — Dual Access Mode: local direct access + HA ingress preserved
-
-- Добавлен проброс add-on порта `8080/tcp` на локальный host-port `8099`.
-- Теперь ALLHA-2D можно открыть в локальной сети без интерфейса Home Assistant: `http://IP_HOME_ASSISTANT:8099/`.
-- Штатный Home Assistant ingress сохранён: боковое меню add-on продолжает работать.
-- В диагностике добавлены строки для локального direct-доступа: URL, порт, кандидаты адресов и подсказка по LAN-only использованию.
-- Уточнён рекомендуемый сценарий: локальный киоск использует `IP:8099`, а стартовая панель Home Assistant локально/удалённо использует ingress-aware Lovelace card / Addon Iframe Card.
-- README/FAQ обновлены под v3.6.0.5.
-
-
-## v3.6.0.4 — Profile copy tools + copyable diagnostics + dashboard URL diagnostics
-
-- Добавлены инструменты копирования между уже созданными профилями: зоны, стандартные датчики/комнаты, расположение маркеров и сенсоров, общий план и все настройки активного уровня профиля.
-- При копировании зон/маркеров приложение сравнивает overview-карты источника и назначения. Если размер или aspect ratio отличаются, показывается предупреждение с выбором продолжить или отменить.
-- Перед копированием профиля назначения создаётся backup.
-- В настройках, FAQ и окне информации снова можно выделять и копировать текст.
-- В диагностике добавлены кнопки **Копировать** для версии, путей `/data`, адреса dashboard/proxy и других важных значений.
-- Строка **Адрес для дашборда** теперь показывает не только обнаруженный `/api/hassio_ingress/.../`, но и кандидаты URL и предупреждение: если Home Assistant возвращает `503`, ingress-token нельзя считать стабильным Webpage URL в этой установке; для прямого dashboard нужен внешний proxy-route на `/allha-2d-direct/` или штатный ingress add-on.
-- README/FAQ обновлены под v3.6.0.4.
-
-
-
-## v3.6.0.3
-
-- Добавлен Dashboard proxy helper для сценария Home Assistant Webpage dashboard.
-- В диагностике появилась строка **Адрес для дашборда** с обнаруженным `/api/hassio_ingress/.../` URL.
-- README/FAQ уточняют, что `/allha-2d-direct/` подходит для внешнего reverse proxy, а для HA Webpage dashboard нужен proxy/ingress URL из диагностики.
-
-
-## v3.6.0.2 — kiosk tile clock/home + Webpage dashboard clarification
-
-### Fixed
-- Kiosk room tile mode now respects the kiosk clock setting; disabled clock stays hidden.
-- Moved the **Общий план** button in room tile mode away from the clock to avoid overlap.
-- Added CSS safeguards so `.hidden` is not overridden by kiosk tile clock styles.
-
-### Documentation
-- Clarified that Home Assistant dashboard URL path is a slug, not the direct add-on route.
-- Clarified that `/allha-2d-direct/` may return 404 inside HA Webpage dashboards if HA does not expose that add-on route at the HA root.
-
-
-## v3.6.0.1 — buildx/QEMU Docker build hotfix
-
-- Исправлена ошибка GitHub Actions buildx: `node -e "require('express'); require('ws')"` мог падать с `exit code 132` при cross-arch сборке через QEMU.
-- Dockerfile больше не запускает отдельную node-проверку зависимостей во время сборки; наличие зависимостей проверяется фактом успешного `npm install` и runtime-запуском приложения.
-- Добавлены `npm_config_audit=false` и `npm_config_fund=false`, чтобы сборка была тише и стабильнее.
-- Workflow release packaging закреплён в рабочем формате: корневая папка архива = номер версии, add-on внутри `smart-home-ui-local/`.
-- Workflow принимает теги вида `v3.6.0.1`.
-- Добавлен `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` для подготовки к переходу GitHub Actions на Node.js 24. Предупреждение GitHub может ещё появляться, если сами actions объявлены как Node20, но это не причина падения сборки.
-
-
-- Добавлен direct route `/allha-2d-direct/` для Webpage dashboard/reverse proxy сценариев без привязки к cloud/local домену.
-- Доработан Backup Manager: полный ручной backup проекта и восстановление directory-backup с подтверждением `RESTORE BACKUP`.
-- Перед восстановлением backup автоматически создаётся предоперационный backup текущего состояния.
-- В kiosk mode в режиме плиток внутри комнаты добавлена видимая кнопка `Общий план`.
-- README и FAQ обновлены под v3.6.0.1.
-
-## 3.5.9.3 — 2026-05-08
-
-### v3.5.9.12 — стандартные датчики комнат: фиксация ввода
-
-- Исправлено исчезновение введённого `entity_id` в полях стандартных датчиков комнаты через несколько секунд.
-- При фокусе в поле стандартного датчика автоперерисовка настроек больше не пересоздаёт блок комнат/зон/датчиков.
-- Несохранённые значения временно удерживаются во frontend draft state до нажатия “Сохранить датчики”.
-- Кнопка “Очистить” теперь очищает поле без немедленной потери состояния из-за live refresh.
-- После успешного сохранения draft очищается, а значения берутся уже из `/data/rooms.json`.
-
-## v3.5.9.12
-
-- Исправлена группировка kiosk-карточек: комната определяется по зоне overview-маркера, а не только по полю device.room.
-- Исправлен случай, когда все карточки попадали под заголовок одной комнаты.
-- В режиме карточек возвращено отображение часов/kiosk-widget.
-- Нижние переключатели уровней принудительно скрываются в режиме карточек, чтобы не перекрывать плитки.
-
-
-## v3.5.9.7 — Kiosk tile density and room device lists
-
-- Kiosk карточки переведены на плотную адаптивную сетку с постраничностью вместо вертикального scroll.
-- Экран карточек рассчитывает количество колонок, высоту плиток и переносит лишние комнаты/устройства на следующую страницу.
-- Нижний дублирующий переключатель уровней скрыт в режиме карточек.
-- Кнопка “Комнаты” в режиме карточек теперь открывает список устройств выбранной комнаты.
-- На kiosk-карте возвращена кнопка “Общий план” при просмотре комнаты.
-
-
-## 3.5.9.5 — 2026-05-08
-
-- Kiosk-карточки теперь строятся только из устройств, размещённых на общем плане.
-- Устройства из комнатных карт не дублируются в плиточном kiosk-экране.
-- Карточки сортируются и группируются по комнатам.
-- Визуальный стиль карточек приведён ближе к значкам: цвет, состояние, подсветка и анимации используют те же классы.
-- Улучшена читаемость карточек: отдельные зоны для иконки, названия, комнаты и состояния.
-- Сохранена рабочая структура архива 3.5.9.5/smart-home-ui-local/ с README/FAQ/CHANGELOG в корне и внутри add-on.
-
-## 3.5.9.5 — 2026-05-08
-
-- Исправлено отображение зон в Layout Editor при размещении устройства внутри комнаты.
-- При targetType=marker слой existing zones теперь очищается и не мешает поставить устройство.
-- Зоны остаются видимыми только в отдельном редакторе зон, где их можно выбрать, редактировать и удалить.
-- Сохранена рабочая структура архива 3.5.9.5/smart-home-ui-local/ с README/FAQ/CHANGELOG в корне и внутри add-on.
-
-
-### Fixed
-- Исправлен kiosk-переключатель **Карта / Карточки**: компонент карточек теперь вызывается из основного `render()`, поэтому кнопки появляются сразу при входе в kiosk mode.
-- При resize/orientationchange переключатель и tile overlay дополнительно синхронизируются с текущим состоянием kiosk.
-- Упаковка сохранена в рабочем формате: `3.5.9.3/smart-home-ui-local/`, README/FAQ/CHANGELOG продублированы в корне версии и внутри add-on.
-
-## v3.5.8.15 — release archive structure fix
-## v3.5.9.2 — Zone editor selection + room label stability
-
-- Исправлен редактор зон свободной обводкой: старый прямоугольник больше не появляется по центру карты при создании новой зоны.
-- В редакторе зон теперь можно выбрать уже созданную зону кликом/тапом по её polygon-области и удалить выбранную.
-- Обводка новой зоны запускается только по пустому месту карты; клик по существующей зоне выбирает её, а не начинает рисовать поверх.
-- Исправлена деградация названий комнат после редактирования зон: технические id вроде `bedroom1`, `guestbath`, `mainbath`, `kitchen`, `living` снова нормализуются в человекочитаемые названия, если они пришли как fallback/id.
-- Упаковка сохранена в рабочем формате: `3.5.9.2/smart-home-ui-local/`, README/FAQ/CHANGELOG продублированы в корне версии и внутри add-on.
-
-## 3.5.9.1 — 2026-05-08
-
-- Исправлено: kiosk-переключатель «Карта / Карточки» теперь реально рендерится при входе в режим киоска.
-- Kiosk Tile Mode теперь вызывает renderKioskTiles() при каждом render(), поэтому кнопка «Карточки» видна сразу.
-- Переключатель режима kiosk перенесён в заметную верхнюю центральную область и не конфликтует с zoom/exit/level-кнопками.
-- Если размещённых маркеров нет, экран карточек показывает понятное пустое состояние вместо молчаливого отсутствия UI.
-
-
-## 3.5.9 — 2026-05-08
-
-- Добавлен Kiosk Tile Mode: отдельный kiosk-экран карточками.
-- Карточки строятся только из устройств, уже размещённых как маркеры на карте.
-- Карточки группируются по комнатам и общему плану, поддерживается постраничность.
-- В kiosk добавлен переключатель “Карта / Карточки”; текущий уровень по-прежнему не показывается кнопкой.
-- Управление карточками использует существующую логику короткого нажатия и long press, включая блокировку kiosk и dangerous-confirm workflow.
-
-
-## 3.5.8.16 — 2026-05-08
-
-- Зафиксирована рабочая структура zip-пакета: корневая папка версии, repository.yaml, docs/.github и add-on в smart-home-ui-local/.
-- README.md, FAQ.md и CHANGELOG.md дублируются в корне архива и внутри smart-home-ui-local/.
-- Добавлена крупная кнопка “Мастер настройки” на пустой главный экран после полного сброса.
-- Добавлена точка входа “Мастер настройки” в меню настроек рядом с профилями и уровнями.
-- Добавлен финальный блок мастера уровня с переходом обратно на карту.
-
-
-- Восстановлена упаковка релиза в корневую папку с номером версии: `smart-home-ui-local-v3.5.8.15/`.
-- Проверено, что внутри архива присутствуют обновлённые `README.md`, `FAQ.md` и накопительный `CHANGELOG.md`.
-- Roadmap / next steps оставлен отдельным `.md`-файлом и не включён внутрь zip.
-- Runtime-логика v3.5.8.14 не менялась; релиз исправляет структуру архива и документацию.
-
-## v3.5.8.14 — Setup Wizard return path
-
-- Исправлен сценарий мастера настройки уровня: при переходе из мастера в настройки больше нельзя “потерять” мастер.
-- Добавлена фиксированная кнопка **“Вернуться в мастер настройки”** для шагов карты, источников, комнат, зон и датчиков.
-- Возврат обновляет статус уровня и заново открывает мастер для того же уровня.
-- README и FAQ обновлены.
-
-## v3.5.8.13 — Setup Wizard
-
-- Добавлен общий **Мастер настройки** проекта.
-- Мастер начинается с названия профиля, затем запрашивает количество уровней/областей и названия каждого уровня.
-- После создания структуры мастер открывает пошаговую настройку первого уровня: карта → источники Lovelace → перечитать уровень → проверить комнаты → зоны/датчики.
-- Уровни, созданные мастером, пустые: без копирования карт, зон, комнат, источников, маркеров и устройств.
-- Названия уровней вводятся вручную и не берутся из HA/Lovelace или имён картинок.
-- Кнопка уровня **“Инициализировать”** переименована в **“Мастер настройки”** и оставлена для настройки конкретного уровня.
-- README/FAQ обновлены под v3.5.8.13.
-
-## v3.5.8.12 — freehand zone editor
-
-- Добавлен новый редактор зон свободной обводкой: зону можно обвести пальцем или мышкой поверх общего плана.
-- В редакторе зон видны уже созданные зоны; выбранная зона подсвечивается.
-- Для зоны доступны действия **Сохранить**, **Отмена**, **Очистить обводку** и **Удалить выбранную**.
-- Зоны сохраняются как polygon points в процентах 0–100; для совместимости дополнительно сохраняется bounding box `x/y/w/h`.
-- Старый прямоугольный редактор зон заменён новым fullscreen SVG-редактором свободной формы.
-- README/FAQ обновлены под v3.5.8.12.
-
-## v3.5.8.10 — bottom sheets, room labels, zone editor planning
-
-- Исправлено открытие панелей `Комнаты` и `Устройства`: в bottom-navigation workflow они снова открываются снизу как широкие панели, а не маленькими боковыми legacy-окнами.
-- Исправлены отображаемые названия комнат для стандартных canonical room id: `bedroom1`, `bedroom2`, `kitchen`, `living` и т.п. теперь показываются человекочитаемыми названиями, а не как имена файлов/технические id.
-- Уточнено поведение после полного reset: источником комнат остаются Lovelace/HA/devices/room settings, а не имена картинок.
-- В roadmap добавлен новый редактор зон свободным обводом пальцем/мышкой с видимостью уже созданных зон и кнопками Сохранить / Отмена / Удалить выбранную.
-
-## v3.5.8.9 — restore mobile version toggle
-
-- Вернул активный переключатель `Мобильная версия` в настройках.
-- После reset мобильная версия остаётся включённой по умолчанию, но пользователь может выключить её вручную.
-- Убрано принудительное включение `mobileMode:true` при загрузке и auto-mobile sync.
-- При переключении мобильного режима панели `Комнаты` и `Устройства` закрываются, чтобы legacy/sidebar не открывался сам.
-- README/FAQ обновлены под v3.5.8.9.
-
-## v3.5.8.8 — remove legacy UI/default hardcode after reset
-
-- Исправлено появление старого sidebar/floating интерфейса при открытии настроек и после reset: текущий workflow теперь всегда bottom navigation, кнопки `← HA`, `Комнаты`, `Устройства`, `Настройки` остаются снизу.
-- Удалён проектный hardcode комнат/зон/датчиков из `public/config.js`: после полного сброса не должны появляться старые комнаты, координаты зон и системные датчики из прежнего проекта.
-- Стандартные датчики комнат на карте теперь отображаются только если они явно заданы в настройках комнаты; автоматический подбор temperature/humidity по entity_id отключён.
-- Зоны на общем плане не рисуются без сохранённой пользовательской геометрии в `/data/layout.json`.
-- `/devices.js` и `/lovelace-source.js` больше не возвращают bundled demo/fallback данные при отсутствии runtime-файлов в `/data`; возвращается пустой набор до нового импорта Lovelace.
-- README/FAQ обновлены под v3.5.8.8.
-
-## v3.5.8.8 — factory reset bottom navigation hotfix
-
-- Исправлен дефолтный UI после полного сброса: reset больше не должен оставлять правую панель устройств открытой и не должен показывать плавающую кнопку “☰ Комнаты” вместо нижней панели.
-- Дефолт после “Сбросить всё к дефолту” переведён в актуальный bottom navigation workflow: нижние кнопки “← HA”, “Комнаты”, “Устройства”, “Настройки”.
-- Factory reset теперь возвращает `mobileMode: true`, `hideSidebar: true`, `hideDevicePanel: true`, чтобы панели открывались только через нижние кнопки.
-- README/FAQ обновлены под v3.5.8.8.
-
-## v3.5.8.8 — factory reset UI defaults hotfix
-
-- Исправлен случай, когда после полного сброса данных появлялось старое левое меню `ALLHA-2D LOCAL`.
-- `defaultUiState()` обновлён до `version: 2`; актуальный дефолт скрывает legacy sidebar.
-- `loadUiState()` теперь очищает старые/лишние UI-ключи и не переносит неподдерживаемые legacy-поля.
-- Frontend после factory reset очищает `ui_prefs`, `last_view`, `viewport_prefs`, `kiosk_locked`, `card_font_size` и `sessionStorage`.
-- Factory reset API возвращает актуальный `uiState`, чтобы клиент применял новый UI сразу до перезагрузки страницы.
-- README/FAQ обновлены под v3.5.8.8.
-
-# Changelog
-
-## v3.5.8.5 — factory reset runtime cleanup
-
-- Исправлен полный сброс к дефолту: теперь удаляются не только карты, но и profiles/levels, layout, zones, markers, rooms cache, devices, Lovelace sources, import data, UI state, Attention, dangerous rules, command log и пользовательский PIN.
-- После сброса создаётся один чистый профиль `Основной` и один чистый уровень `Основной уровень`.
-- `/devices.js` и `/lovelace-source.js` после reset записываются пустыми runtime-файлами и отдаются с no-cache/no-store.
-- Клиент сразу очищает `window.ALL_DEVICES`, комнаты, layout, источники и local UI state, затем перезагружает страницу с cache-busting.
-- Перед сбросом создаётся backup текущего runtime-состояния в `/data/backups/factory-reset-*`.
-- README/FAQ обновлены под v3.5.8.5.
-
-## v3.5.8.4 — empty level image fix + profile limit 5
-
-- Исправлено переключение на новый пустой уровень: overview image теперь принудительно перечитывается после смены active level, поэтому не должна оставаться карта предыдущего уровня.
-- Пустой уровень без `duplicateImages` должен показывать fallback/заглушку до загрузки своей карты.
-- При переключении уровня обновляются runtime scripts, layout, source config, images, rooms и затем src overview image.
-- Лимит профилей увеличен с 3 до 5.
-
-## v3.5.8.3 — per-level Lovelace sources save fix
-
-- Исправлено сохранение источников Lovelace уровня: введённые строки больше не должны исчезать после нажатия `Сохранить источники`.
-- Исправлена ошибка нормализации `dashboardPathText` / `dashboardPaths`, из-за которой сервер мог сохранять пустой список и затем возвращать дефолтное/пустое состояние.
-- Для каждого уровня теперь сохраняется `dashboardPaths` и человекочитаемый `dashboardPathText`, чтобы UI после перерисовки показывал именно введённые адреса.
-
-## v3.5.8.2 — smooth level switcher + per-level Lovelace sources
-
-- Исправлено рваное переключение уровней: вместо `location.reload()` используется smooth runtime switch без полной перезагрузки страницы.
-- Убрано промежуточное появление оболочки/меню `ALLHA-2D Local` при переключении уровня.
-- На главной карте и в kiosk mode больше не показывается кнопка текущего уровня; текущий уровень отображается как метка, кнопками показаны только другие уровни.
-- Глобальное поле ввода адресов Lovelace убрано из общих настроек.
-- Добавлены отдельные источники Lovelace для каждого уровня в `Настройки → Уровни / области`.
-- Добавлены действия `Сохранить источники` и `Перечитать этот уровень` для каждого уровня.
-- Новый уровень/профиль с нуля не должен автоматически использовать старые источники/карты без явного копирования.
-
-## v3.5.8.1
-- Исправлена изоляция уровней: новый уровень/профиль с нуля больше не копирует старые комнаты/устройства/источники без явного выбора.
-- Источники Lovelace/dashboard теперь сохраняются отдельно для активного уровня.
-- Добавлен переключатель уровней на главной карте и в kiosk mode.
-- Исправлено самозакрытие блока “Стандартные датчики” в меню комнат/зон/датчиков.
-- Workflow зон очищен: создание/очистка зон перенесены в расширенные admin-действия, основной путь — найденная комната → редактировать/пересоздать зону.
-- Добавлен Backup manager: просмотр количества/размера backup-ов, ручной backup, удаление отдельного/старых/всех backup-ов.
-- При замене картинок старые image-файлы больше не backup-ятся автоматически; при изменении aspect ratio показывается выбор “Бэкап и продолжить” / “Продолжить” / “Отмена”.
-
-## v3.5.8.1 — levels / areas foundation
-
-- Добавлен фундамент уровней/областей внутри активного профиля.
-- Добавлен раздел `Настройки → Уровни / области`.
-- Можно создать, дублировать, переименовать, удалить и переключить уровень.
-- Название уровня вводится вручную и не парсится из Home Assistant/Lovelace.
-- Каждый уровень хранит собственные layout, rooms, source_config, ui_state, images, devices и Lovelace raw/source.
-- Существующие данные профиля автоматически мигрируют в `levels/level-1`.
-- При создании уровня можно дублировать зоны, значки/маркеры, картинки, Lovelace-источники и устройства.
-- Security/PIN, dangerous rules, Attention Monitor и command log остаются глобальными.
-- README/FAQ обновлены под уровни и области.
-
-## v3.5.7 — profile UI: create / duplicate / delete / switch
-
-- Добавлен UI управления профилями в настройках: `Настройки → Профили`.
-- Можно создать до 10 профилей, переименовать профиль, переключить активный профиль и удалить профиль с backup.
-- Добавлено дублирование текущего профиля целиком.
-- При создании нового профиля добавлены опции `Дублировать зоны` и `Дублировать значки/маркеры`, чтобы перенести координаты из текущего профиля.
-- Удаление профиля требует подтверждение `DELETE`; последний профиль удалить нельзя.
-- Security/PIN, dangerous rules и Attention Monitor остаются глобальными для всех профилей.
-- README/FAQ обновлены под управление профилями и будущую концепцию этажей/областей.
-
-## v3.5.6 — profiles foundation and migration
-
-- Добавлен фундамент профилей проекта: `/data/profiles.json` и `/data/profiles/profile-1/`.
-- При первом запуске существующие runtime-данные мигрируют в `profile-1`: layout, rooms, images, source_config, ui_state, devices и Lovelace source.
-- Активный профиль теперь имеет собственные layout/images/rooms/source_config/ui_state/devices.
-- Security/PIN, Attention Monitor и command log остаются глобальными.
-- Добавлены API профилей: `GET /api/profiles`, `POST /api/profiles`, duplicate, activate и rename.
-- В диагностике отображается активный профиль и путь к его данным.
-- Подготовлена база для следующего шага: UI управления профилями, создание/дублирование/удаление/переключение.
-
-## v3.5.5.6 — FAQ scroll hotfix
-
-- Исправлен FAQ modal: содержимое FAQ теперь загружается в собственный scrollable-блок вместо iframe.
-- Исправлена прокрутка FAQ в Home Assistant Ingress/iOS, где iframe мог не скроллиться.
-- Версия обновлена до 3.5.5.6.
-
-## v3.5.5.5 — rebrand ALLHA-3D → ALLHA-2D
-
-- Проект переименован в `ALLHA-2D`, потому что интерфейс работает с плоскими планами, зонами и маркерами, а не с настоящей 3D-сценой.
-- Обновлены названия в UI, add-on config, panel title, README, FAQ, About/diagnostics и brand assets.
-- Обновлены `brand-logo.svg`, `brand-label.svg`, `icon.png`, `logo.png` и favicon.
-- Репозиторий и slug сохранены прежними: `Lepi4/smart-home-ui` и `smart_home_ui_local`, чтобы не ломать установку и обновления.
-- `CHANGELOG.md` оставлен накопительным.
-
-## v3.5.5.4 — settings structure + safer factory reset placement
-
-- Полный сброс перенесён из нижней панели настроек в `Layout / Обслуживание` → опасные действия.
-- Вместо опасного сброса рядом с сохранением добавлена кнопка `Отменить настройки`.
-- Крупные разделы настроек вынесены в отдельные подменю: картинки/карты, layout, комнаты/зоны/датчики, источники.
-- Исправлена прокрутка FAQ modal и структура FAQ.html.
-
-## v3.5.5.3 — factory reset + compact standard sensors
-
-- Добавлена кнопка полного сброса проекта: `Сбросить всё к дефолту`.
-- Перед полным сбросом показывается предупреждение и требуется ввод `RESET`.
-- Полный сброс создаёт backup runtime-данных в `/data/backups/factory-reset-*`.
-- Полный сброс удаляет пользовательские настройки, layout, zones, markers, rooms cache, devices, источники Lovelace/панелей, данные импорта, картинки, Attention, dangerous rules, command log и пользовательский PIN.
-- После сброса пользовательский PIN выключен; встроенный резервный механизм восстановления владельца остаётся.
-- Строка стандартных датчиков на карте переведена в компактный формат `иконка + значение` вместо длинных текстовых названий.
-- README/FAQ обновлены под factory reset и компактные стандартные датчики.
-
-## v3.5.5.2 — rooms / zones / standard sensors manager
-
-- Добавлен раздел `Настройки → Комнаты / зоны / стандартные датчики`.
-- Комнаты не создаются вручную: список берётся из найденных комнат Lovelace / HA Areas / entity names.
-- Для каждой найденной комнаты можно создать, редактировать или удалить overview-зону.
-- Для каждой комнаты можно редактировать entity стандартных датчиков: температура, влажность, движение, шум, CO2, освещённость.
-- Пустые entity не отображаются на карте; если очищены все entity комнаты, строка стандартных датчиков этой комнаты не показывается.
-- Настройки стандартных датчиков сохраняются в `/data/rooms.json`.
-
-## v3.5.5.1 — layout creation tools after cleanup
-
-- После `Очистить зоны` добавлена возможность сразу создать/восстановить зону через `Настройки → Layout / Обслуживание → Создать / восстановить зону`.
-- Добавлен выбор найденной комнаты и открытие существующего SVG Zone Editor для новой зоны.
-- После `Очистить маркеры` добавлена кнопка `Открыть размещение устройств`, которая включает edit mode и открывает лёгкий список устройств для SVG Layout Editor.
-- Создание зон/размещение маркеров доступно только в admin mode.
-- README/FAQ обновлены под v3.5.5.1.
-
-## v3.5.5 — clear markers / clear zones
-
-- Добавлен раздел `Настройки → Layout / Обслуживание`.
-- Добавлена операция `Очистить маркеры` для удаления размещения устройств/датчиков без удаления devices, rooms, zones, images, security/PIN, dangerous и Attention.
-- Добавлена операция `Очистить зоны` для удаления только прямоугольных зон комнат на overview.
-- Добавлены API `POST /api/layout/clear-markers` и `POST /api/layout/clear-zones`.
-- Перед очисткой создаётся backup `layout.json` в `/data/backups/` с понятным префиксом.
-- README/FAQ обновлены под v3.5.5.
-
-## v3.5.4.1 — room image hotfix + neutral fallback
-
-- Исправлена повторная загрузка той же картинки комнаты.
-- Исправлен сброс картинки комнаты к fallback.
-- Исправлено обновление открытой комнаты после upload/reset.
-- Fallback теперь нейтральная SVG-заглушка, а не встроенная demo-картинка квартиры.
-- Demo-картинки комнат/плана убраны из `public/assets`.
-- Добавлен cache-busting и no-cache/no-store для media routes.
-
-## v3.5.4 — room images + reset room image
-
-- Добавлен блок `Картинки найденных комнат` в настройках.
-- Для каждой найденной комнаты добавлены `Загрузить / заменить` и `Сбросить к fallback`.
-- Добавлены API `POST /api/images/rooms/:room_id` и `DELETE /api/images/rooms/:room_id`.
-- Картинки комнат сохраняются в `/data/images/rooms/`.
-- Оригиналы картинок комнат сохраняются в `/data/images/originals/rooms/`.
-- `images_meta.json` обновляется по комнатам.
-- Перед заменой/сбросом создаётся backup.
-
-## v3.5.3 — image converter pipeline
-
-- Добавлена проверка MIME type, расширения и реальной сигнатуры файла.
-- Добавлен лимит upload 25 MB на один файл.
-- Добавлен лимит изображения примерно 55 MP.
-- Оригиналы сохраняются в `/data/images/originals/`.
-- Рабочие версии конвертируются через `sharp` в WebP при наличии конвертера.
-- Aspect ratio сохраняется без растягивания.
-- EXIF orientation обрабатывается через `sharp`.
-- В диагностику добавлены converter, max long side и max upload.
-
-## v3.5.2 — upload overview + reset image
-
-- Добавлен раздел `Настройки → Картинки / План`.
-- Добавлены кнопки загрузки/замены общего плана и сброса к fallback.
-- Добавлены API `POST /api/images/overview` и `DELETE /api/images/overview`.
-- Общий план сохраняется в `/data/images/overview/`.
-- Оригинал сохраняется в `/data/images/originals/`.
-- Обновляется `/data/images/images_meta.json`.
-- Перед заменой/сбросом создаётся backup картинки, metadata и layout.
-
-## v3.5.1.1 — FAQ scroll + diagnostics hotfix
-
-- Исправлен скролл FAQ в настройках.
-- В диагностике добавлен явный раздел `Images storage`.
-- Добавлены строки для `/data/images`, overview, rooms, originals, backups и `images_meta.json`.
-
-## v3.5.1 — FAQ restore + /data/images foundation
-
-- Кнопка `FAQ / Помощь` возвращена в настройки.
-- Добавлено FAQ modal-окно.
-- Сервер создаёт `/data/images`, `/data/images/overview`, `/data/images/rooms`, `/data/images/originals`, `/data/backups`.
-- Создаётся `/data/images/images_meta.json`.
-- Добавлены media routes и `GET /api/images`.
-- Overview/room images переведены на media routes с fallback.
-
-## v3.5.0 — Setup from Scratch documentation start
-
-- Зафиксирован этап Setup from Scratch.
-- README и FAQ переписаны под add-on и runtime `/data`.
-- Подготовлен дальнейший план загрузки картинок, комнат, зон, профилей и backup/restore.
-
-## v3.5.9.6 — Kiosk Tile autoscale and duplicate level buttons cleanup
-
-- Kiosk-карточки теперь автоматически рассчитывают количество колонок и высоту плиток под размер экрана.
-- Экран карточек больше не должен требовать вертикальный scroll: плитки и заголовки сжимаются, чтобы поместиться в viewport.
-- Убраны нижние кнопки переключения уровней поверх экрана карточек, чтобы не было дублей и перекрытия.
-- Плитки остаются только для устройств общего плана, с группировкой по комнатам.
-
-## v3.5.9.8 — Kiosk cards pagination hardening
-
-- Исправлена пагинация kiosk-карточек: страницы теперь рассчитываются по реальным строкам сетки, включая заголовки комнат.
-- Экран карточек больше не должен уходить за нижние кнопки и не должен требовать vertical scroll.
-- Плитки и заголовки стали плотнее, с отдельными страницами `1 / N`, если все устройства не помещаются на один экран.
-- Переключатель Карта / Карточки поднят выше и больше не перекрывает заголовок.
-- Список комнат в kiosk-карточках должен открывать список устройств выбранной комнаты, а основной экран карточек остаётся только для устройств общего плана.
-
-
-## v3.5.9.12
-
-- Изменена концепция kiosk-карточек: главный экран всегда остаётся общей картой.
-- Добавлена настройка навигации kiosk mode: `Карты`, `Плитки`, `Переключаемый`.
-- В режиме `Карты` кнопки комнат открывают карты комнат.
-- В режиме `Плитки` кнопки комнат открывают карточки устройств выбранной комнаты.
-- В режиме `Переключаемый` кнопки `Карта / Карточки` выбирают поведение открытия комнат.
-- В kiosk mode внутри комнаты восстановлена кнопка устройств для выбора устройства и действия.
+## v5.0.0 — minimal HA add-on / Ingress restore
+
+- Restored minimal Home Assistant add-on entry flow on top of stable v4.3.3.
+- HA add-on root now opens the main ALLHA-2D app instead of the local /client landing page.
+- Added dynamic base path for Home Assistant Ingress so JS/CSS/manifest/assets can load under `/api/hassio_ingress/<token>/`.
+- Added `ingress_stream: true` to add-on config for streaming/SSE compatibility.
+- Kept local Docker workflow and mobile direct port 32457 unchanged.
+- Did not change virtual rooms, StandardSensors, Attention mode, web/mobile clients logic, or Server-client lifecycle yet.
+
+## v4.3.3 — render/SSE diagnostics + release cleanup/docs
+- Added a small cleanup for client-side render diagnostics: `states_batch/min` now resets together with `render/min` and `patch/min` in the minute window.
+- Kept the existing render/SSE counters visible in diagnostics: client `batch/min`, `state_changed/min`, `patch/min`, `render/min`; server batch/state counters where available.
+- Preserved v4.3.2 Attention mode UX and v4.3.1.x virtual room / StandardSensors fixes.
+- Refreshed release docs, transfer prompt, and master roadmap for the next v5 planning step.
+
+## v4.3.2 — Attention mode UX + StandardSensors orientation access fix
+
+- Improved Attention modal: active deviations, normal/current state, duration, room/device shortcuts, accept current as normal, ignore always.
+- Added server endpoint to accept current entity state as the new normal Attention state.
+- Kept StandardSensors orientation editable in admin/control and read-only in viewer.
+- Preserved v4.3.1.7 cleanup and working virtual room/StandardSensors fixes.
+
+## v4.3.2 — cleanup after StandardSensors and virtual rooms
+
+- Hid temporary virtual-room diagnostics from normal diagnostics UI; the copy button remains only in debug mode.
+- Preserved v4.3.1.6 fixes: overview navigation persistence and separate StandardSensors orientation for overview/rooms.
+- Preserved StandardSensors UX/stability changes and control-mode access fixes.
+- Release cleanup: refreshed documentation, roadmap, transfer prompt, and package structure.
+
+## v4.3.1.6 — overview navigation persistence + separate StandardSensors orientation
+
+- Исправлено восстановление навигации: `Общий план` теперь сохраняется и восстанавливается как полноценное состояние, а не заменяется последней комнатой.
+- Разделена ориентация плашек стандартных сенсоров для общего плана и режима комнат.
+- Ориентация меняется в окне стандартных сенсоров: изменение в комнате больше не меняет общий план, и наоборот.
+- Сохранены правки v4.3.1.5: разделение настроек карты/маркеров, control access, окно стандартных сенсоров по длинному нажатию.
+
+## v4.3.1.5 — map sliders separation + StandardSensors modal/orientation
+- Reorganized `Карта и маркеры`: global hardware scale first, then separate `Общий план` and `Комнаты` display sliders.
+- Added separate overview-only and room-only marker/sensor/opacity controls.
+- Ordinary sensor markers now follow marker scaling, while StandardSensors badges keep sensor scaling.
+- Added StandardSensors group modal opened only by long press on the StandardSensors badge.
+- StandardSensors modal shows configured sensor type, current value, and muted entity_id.
+- Added StandardSensors badge orientation control inside the modal: horizontal/vertical; editable in admin/control, read-only in viewer.
+
+## v4.3.1.4 — StandardSensors badge tap hotfix
+- Rollback base to v4.3.1.2 clean line; v4.3.1.3 is not used.
+- Fixed standard sensor badges on overview/room images catching taps above room zones.
+- Short/long press on standard sensor values now uses normal device/sensor actions instead of opening the room underneath.
+- Saving/clearing StandardSensors remains from v4.3.1.2.
+
+## v4.3.1.2 — StandardSensors map metrics + control settings access hotfix
+- fixed StandardSensors disappearing from the map/room image: metric rendering now keeps entity_id context and no longer throws while building standard sensor badges
+- rebound short/long press handlers after live metric patch updates
+- allowed control mode to edit checkboxes/sliders in Interface, Map and markers, Cards, Kiosk / Mobile panels
+- kept weather/temperature entity field admin-only
+
+## v4.3.1.1 — StandardSensors strict suggestions + control access hotfix
+- StandardSensors suggestions now require type evidence; same-room alone no longer creates unrelated suggestions
+- fixed false “Ошибка сохранения” after successful single sensor accept/save
+- standard sensor metric badges now use normal device/sensor short/long press handling instead of opening the room
+- Individual settings and “Для этого устройства” profile activation are available in control mode; admin-only actions remain admin-only
+
+## v4.3.1 — virtual rooms cleanup + StandardSensors UX/stability
+- Added StandardSensors source labels for selected room sensors: DB, room settings, cache, draft, suggestion or manual input.
+- StandardSensors suggestions now show an explicit “Почему предложено” explanation.
+- Opening a room StandardSensors panel now automatically loads suggestions if they are not cached yet.
+- Improved save feedback and status colors for StandardSensors actions.
+- Hid temporary virtual-room snapshot counter from normal diagnostics; it remains debug-only.
+- Preserved v4.3.0.12 virtual-room behavior and additional settings panels.
+
+## v4.3.0.12 — settings menu extra panels on Sonnet virtual-room baseline
+- used user-provided Sonnet-fixed archive as new baseline; virtual-room checkbox/card positioning fixes from that archive are preserved
+- added a separate “Дополнительные настройки отображения и поведения” menu block
+- moved only previously top-level/orphaned sliders and checkboxes into new additional panels: Интерфейс, Карта и маркеры, Карточки, Kiosk / Mobile, Безопасность, Live / обновления
+- existing large settings buttons/sections are unchanged
+- kept existing input ids and handlers, so save/preview logic remains compatible
+
+## v4.3.0.11 — virtual room render gate + image-aligned cards hotfix
+- prevent early normal-room render before server room settings are ready
+- force refresh current virtual room after /api/rooms and virtual checkbox changes
+- align virtual card layer to the actual room image rect, not screen/stage center
+- reinforce kiosk room overlay layer above kiosk controls
+
+## v4.3.0.11 — frontend init recovery + independent virtual card size control
+- restored missing applyConfigToInputs helper so refresh no longer aborts room settings hydration
+- added independent “Размер карточек виртуальной комнаты” slider, separate from card text size
+- card size slider changes tile size only; font remains controlled by “Размер текста карточек”
+- kept virtual card transparency 0–100% as background-only setting
+- strengthened kiosk room list overlay layering
+
+## v4.3.0.11 — virtual diagnostics + bounded card grid + kiosk rooms overlay
+- added temporary debug-mode virtual room diagnostics and `/api/debug/virtual-room-state`
+- bounded adaptive virtual card grid so cards fit inside image area without becoming giant
+- strengthened virtual room render stabilization after loading rooms settings
+- raised kiosk room list overlay above kiosk controls
+
+## v4.3.0.8 — virtual room font/transparency/render stabilization hotfix
+- reduced and clamped virtual room adaptive card font
+- fixed live preview for card font slider in virtual rooms
+- fixed virtual card transparency as 0–100 percent without double division
+- fixed live preview for virtual card background transparency
+- guarded bindRangePreview render callback against boolean values
+- added selected virtual room state stabilization after /api/rooms load
+
+## v4.3.0.8 — virtual room adaptive cards + automation toggle hotfix
+- canonical merged room settings for virtual room flags and hidden devices
+- virtual/kiosk/card state updates patch existing card DOM instead of full-rendering on frequent SSE events
+- automation cards toggle automation.turn_on / automation.turn_off and show Auto badge
+- virtual room cards use adaptive 90% image-area grid
+- added 0–100% virtual card background transparency setting for image mode
+
+## v4.3.0.8 — virtual room broken-image geometry + settings-only hidden devices hotfix
+- fixed virtual-room fallback geometry when room image is missing/404
+- added fallback sizing for virtual-room card layer
+- removed live hidden folder/button from virtual-room cards; hidden devices are settings-only
+- hidden-device settings list now stays open across save/re-render
+
+## v4.3.0.8 — virtual room image fallback + hidden devices settings
+- virtual rooms now render cards even when the room image is missing or returns 404
+- removed hide-on-long-press behavior from virtual room cards; long press stays reserved for device actions
+- added per-room hidden device settings inside the room settings card
+- hidden devices are stored per virtual room and do not touch markers, HA sources, or normal rooms
+- raised kiosk room overlay above kiosk side controls and disables side controls while the room list is open
+
+## v4.3.0.8 — virtual room cards visibility + hidden devices hotfix
+- fixed empty virtual room card overlay after v4.3.0.3
+- added per-room hidden devices for virtual rooms only
+- long press/context menu hides a virtual-room card only in that room
+- added `Скрытые` folder to restore hidden virtual-room devices
+
+## v4.3.0.3 — virtual room cards polish + card live state hotfix
+- virtual room cards now render inside room image bounds and target about 90% of room image space
+- removed entity_id from visible virtual room cards
+- improved card typography and added per-client card font size setting
+- fixed virtual room card taps and card/kiosk live state refresh
+- removed room image darkening in virtual room mode
+
+## v4.3.0.1 — virtual room checkbox model hotfix
+
+- Откат неправильной отдельной модели `virtualRooms` из v4.3.0: новая база собрана от v4.2.19 и реализует исходную идею через галочку у действующей комнаты.
+- В настройках комнаты добавлена галочка `Виртуальная`.
+- Виртуальная комната всегда показывает устройства карточками, а не маркерами/значками.
+- Переключатель `Карта / Карточки` для виртуальной комнаты меняет только подложку/фон, набор устройств остаётся списком устройств этой комнаты.
+- При снятии галочки маркеры комнаты не удаляются и возвращаются на прежние места.
+- Старые endpoints `/api/virtual-rooms` и отдельные ручные virtualRooms не добавлялись в эту базу.
+
+## v4.2.19 — SSE/runtime stability + Lovelace diagnostics
+
+- Added SSE connection hardening: global limit, per-IP limit, per-client limit, heartbeat cleanup and diagnostics counters for connected/disconnected/rejected/heartbeat/state_changed events.
+- Added runtime diagnostics for in-flight requests and graceful shutdown now waits briefly for active requests before closing DB.
+- Extended maintenance diagnostics UI with server-side SSE counters, last SSE event, in-flight requests and shutdown state.
+- Kept fallback polling selectable at 15/30/60 seconds; SSE-open clients use polling only as a safety fallback.
+- Added Lovelace diagnostics endpoints for the current level and all profiles/levels: dashboards read, RAW status/errors, source_config summary, cards/entities/rooms counts, parser warnings, skipped views and unassigned devices.
+- Level import keeps saved Lovelace sources unless a request explicitly sends new dashboard paths; import responses now include Lovelace diagnostics.
+- No automatic backups were enabled; release archive excludes /data, SQLite DB files, node_modules and local secrets.
+
+## v4.2.18 — maintenance cleanup + backup manager foundation
+
+- Edit UI polish: undo/redo buttons in edit mode now show icons only while keeping full `title`/`aria-label` text; mobile edit zoom right rail is raised by 30px using a scoped mobile-edit variable.
+- Mirror repair hardening: normal repair requires `REPAIR MIRROR`, backups are skipped by default, and backup repair requires explicit `includeBackups:true` plus `REPAIR MIRROR BACKUPS`.
+- Mirror diagnostics now reports stale/deleted/missing client settings separately.
+- Added stale client settings cleanup for DB-only `client_settings` documents of deleted/missing web/mobile clients; protected `Server` and active clients are not touched.
+- Backup manager foundation: manual backup writes `backup-manifest.json`, `/api/backups` reads manifest/file stats instead of recursively sizing every backup, backup copies redact secret-like keys, restore requires explicit `RESTORE BACKUP`, and directory backups can be downloaded as `.tar.gz`.
+- Automatic backups remain off by default; no `/data`, SQLite DB, node_modules or local secrets should be included in release archives.
+
+## v4.2.17.4 — mobile edit zoom right-rail isolation hotfix
+
+- Fixed mobile edit zoom controls overlapping the top edit toolbar and other buttons on screens narrower than about 1800 px.
+- Zoom controls are now moved to the viewport/right-rail layer only during `mobile-mode + editing`.
+- Normal mode, kiosk mode, desktop edit mode and non-edit zoom placement are restored/left unchanged.
+- Kept v4.2.17.1/v4.2.17.3 fixes: edit arrows and `Действие` stay in the viewport layer, and compact edit labels remain on narrow screens.
+
+## v4.2.17.3 — compact edit toolbar labels hotfix
+
+- Shortened edit-mode top commands on mobile/narrow/short screens: `Сохранить изменения` → `Сохранить`, `Отменить изменения` → `Сброс`.
+- Kept full command names in `title` and `aria-label`.
+- Added compact spacing for edit save/cancel buttons so zoom controls have more room on screens below ~1800px wide.
+- Did not change map pan/center/zoom behavior or server/data format.
+
+## v4.2.17.2 — mobile edit zoom rail vertical position hotfix
+
+- Moved edit-mode zoom controls down into the right rail on mobile/short screens.
+- Kept the v4.2.17.1 fix: edit action and movement controls stay outside the map container so `position: fixed` uses the viewport.
+- Did not change map pan/center/zoom behavior or server/data format.
+
+## v4.2.17.1 — mobile edit fixed controls containing-block hotfix
+
+- Fixed a real-device regression where right-side edit controls were positioned relative to `.canvas-card` instead of the viewport.
+- Cause: `body.overview-edit-lite .canvas-card { contain: layout paint }` creates a containing block for `position: fixed` descendants on mobile browsers, so arrows could jump upward and the `Действие` button could disappear.
+- Runtime now moves `#edit-map-nudge` and `#btn-edit-actions-float` to `document.body`, outside `.canvas-card`.
+- CSS also disables `.canvas-card` containment during `mobile-mode + editing`.
+- No backend/data format changes.
+
+## v4.2.17 — grouped edit movement controls polish
+
+- Zoom controls remain separate.
+- The edit movement arrows and the “Действие” button are grouped visually in the right rail.
+- The second row of movement buttons is positioned about 10% below screen center.
+- Movement buttons are circular instead of vertical ovals.
+- Added safer row/column spacing between movement buttons.
+
+## v4.2.14 — edit controls safe spacing hotfix
+
+- Fixed overlap between zoom controls, edit map movement arrows, and the floating “Действие” button on small mobile/landscape screens.
+- The “Действие” button and arrow block now use separate fixed right-rail zones with explicit vertical spacing.
+- Kept the two-row arrow layout and the center buttons from v4.2.11/v4.2.12.
+- No data format or backend logic changes.
+
+## v4.2.8 — edit mode map nudge arrows
+- Added edit-mode map nudge arrows: up/down/left/right.
+- Arrows appear near the “Действие” button and zoom controls, with touch-friendly spacing.
+- Each tap pans the active map through the existing clamped viewport logic, so the map cannot be lost off-screen.
+- Long-tap map panning was not added; explicit arrows avoid conflicts with selecting markers/sensors/zones.
+
+
+## v4.2.8 — mobile/kiosk edit UI polish + release debug cleanup
+- Replaced the long edit-mode banner with a short `Редактирование` indicator in the toolbar kiosk slot.
+- Tapping `Редактирование` shows: `Режим управления отключён, пока идёт редактирование`.
+- Renamed the hidden edit panel return button to `Действие` and moved it to the right side above Settings on mobile.
+- Hid map diagnostics button from normal UI unless debug mode is enabled.
+- Guarded temporary standard sensor console.debug output behind diagnostics/debug mode.
+
+## v4.2.3 - dangerous command confirmation + kiosk/attention UI cleanup
+
+- Fixed dangerous command confirmation flow: confirming a dangerous command no longer recursively hits the in-flight command lock, so the command executes after confirmation and the lock clears correctly.
+- Removed the extra kiosk “Заблокировано” badge/toast on lock; the Lock/Unlock button is the state indicator.
+- Centered the Attention/“Следить за состоянием” kiosk icon and increased it by roughly 20% for better visibility.
+
+
+## v4.2.2 — DB consistency + kiosk switcher layout hotfix
+
+- Added explicit DB transaction wrapper for multi-statement SQLite operations.
+- Wrapped mobile/web client upsert/delete, project document clear, orphan cleanup, and standard sensor replacement in transactions.
+- Kept deleted/nonexistent web-client settings writes from creating or resurrecting clients.
+- Fixed kiosk “Карта/Карточки” switcher overlap by forcing a compact vertical stack with explicit height/gap/top reset.
+- Updated package/report/prompt/roadmap for v4.2.2.
+
+# v4.2.0.27 — rebased client lifecycle + control mode + Huawei/kiosk cleanup
+
+- Rebuilt explicitly on top of v4.2.0.22 server archive.
+- Deleted `/client/<slug>` no longer auto-recreates a web-client after refresh.
+- Start page handles `?missingClient=` with a clear deleted/unavailable client message and clears stale localStorage client slug/id/url.
+- Mobile WebView/public flow no longer reuses stored web-client slug unless URL is actually `/client/<slug>`.
+- Added bulk web-client delete endpoint and UI action; service `Server` client is protected.
+- Control mode can access profiles, levels, and individual client settings; viewer remains read-only.
+- Kiosk mobile overlays are shifted away from left side buttons.
+- Added old Android/Huawei fallback for placement editor / zone drawing and delayed map-dimension handling after settings restore.
+
+# v4.2.0.21 — old Android/Huawei settings modal compatibility hotfix
+
+- Added a mobile-only simple fullscreen settings panel fallback for old Huawei/Android Chrome/WebView.
+- Disabled `contain`, `transform`, `filter`, `backdrop-filter` and `will-change` inside `#settings-modal` on `body.mobile-mode`.
+- Kept settings scroll as a plain `overflow-y:auto` container with `-webkit-overflow-scrolling:touch`.
+- Reinforced mobile room list scroll so the outer `.sidebar` does not capture touch scroll.
+
+# Previous releases
+
+See package reports and roadmap documents for earlier v4.2.0.x changes.
+
+
+## v4.2.12 — edit map arrows positioning + wider safe pan
+
+- В режиме редактирования добавлена центральная кнопка `◎` для возврата карты в центр.
+- Стрелки перемещения карты перенесены так, чтобы не перекрывать блок масштаба и были доступны рядом с кнопкой `Действие`.
+- Открытая панель действий теперь находится выше стрелок по z-index и может перекрывать их, как задумано.
+- В режиме редактирования расширены безопасные пределы pan: край карты можно довести примерно на 20% за центр экрана, но карту нельзя полностью потерять.
+- Long-tap pan не добавлялся, чтобы не конфликтовать с выбором объектов.

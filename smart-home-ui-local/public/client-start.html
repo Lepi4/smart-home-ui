@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ALLHA-2D — ссылка клиента</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0d1117;--card:#121923;--card2:#0f1722;--text:#e8edf4;--muted:#9aa7b7;--accent:#2f7df6;--line:rgba(255,255,255,.12);--ok:#6dd28d;--warn:#f0b34b;--err:#ff8a8a}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#17243a 0,#0d1117 52%,#080b10 100%);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px}
+    .wrap{width:min(980px,100%);display:grid;gap:18px}.head{text-align:center}.brand{font-size:28px;font-weight:900;letter-spacing:.08em}.sub{margin-top:8px;color:var(--muted);line-height:1.45}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:linear-gradient(180deg,rgba(18,25,35,.96),rgba(12,18,27,.96));border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 22px 70px rgba(0,0,0,.35)}.card h2{margin:0 0 10px;font-size:20px}.card p{margin:0 0 14px;color:var(--muted);line-height:1.45}.small{font-size:13px;color:var(--muted)}label{display:block;font-weight:800;margin:12px 0 6px}.input{width:100%;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);border-radius:14px;padding:12px 14px;font:inherit}.btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.btn{border:0;border-radius:14px;background:#1d2633;color:var(--text);font-weight:900;padding:11px 15px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}.btn.primary{background:var(--accent)}.btn:hover{filter:brightness(1.08)}.result{display:none;margin-top:16px;padding:14px;border-radius:16px;background:rgba(47,125,246,.10);border:1px solid rgba(47,125,246,.35)}.result.ok{display:block}.url{display:block;word-break:break-all;margin:10px 0;padding:12px;border-radius:12px;background:rgba(0,0,0,.25);border:1px solid var(--line);font-weight:800;color:#dce9ff}.status{min-height:20px;margin-top:10px;color:var(--muted)}.client-picker{display:none;margin-top:16px;padding:14px;border-radius:16px;background:rgba(255,255,255,.045);border:1px solid var(--line)}.client-picker.ok{display:block}.client-list{display:grid;gap:10px;margin-top:12px}.client-row{display:grid;grid-template-columns:minmax(160px,1fr) auto;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(0,0,0,.18)}.client-name{font-weight:900;color:#dce9ff;text-decoration:none}.client-name:hover{text-decoration:underline}.client-meta{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.35}.client-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.btn.smallbtn{padding:8px 10px;border-radius:11px;font-size:12px}.pill{display:inline-flex;margin-left:6px;padding:2px 7px;border-radius:999px;background:rgba(109,210,141,.16);color:var(--ok);font-size:11px;font-weight:900}.status.err{color:var(--err)}.status.ok{color:var(--ok)}.missing-client-alert{display:none;border:1px solid rgba(255,138,138,.42);background:rgba(255,138,138,.10);color:#ffd5d5;border-radius:18px;padding:14px 16px;line-height:1.45}.missing-client-alert.ok{display:block}.note{border-left:3px solid var(--warn);padding:10px 12px;background:rgba(240,179,75,.08);border-radius:12px;color:#ead7ad}@media(max-width:760px){.grid{grid-template-columns:1fr}.brand{font-size:23px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="head">
+      <div class="brand">ALLHA-2D</div>
+      <div class="sub">Постоянные настройки браузера/панели сохраняются через индивидуальную ссылку клиента.</div>
+    </section>
+    <div id="missing-client-alert" class="missing-client-alert"></div>
+    <section class="grid">
+      <article class="card">
+        <h2>У меня уже есть ссылка-ID</h2>
+        <p>Откройте сохранённую ссылку вида <b>http://IP:8099/client/xxxxx</b>. Именно она восстанавливает настройки этой панели.</p>
+        <label for="existing-link">Вставить ссылку-ID</label>
+        <input id="existing-link" class="input" placeholder="http://IP:8099/client/xxxxx">
+        <div class="btns"><button id="open-existing" class="btn primary" type="button">Открыть ссылку</button><button id="open-saved" class="btn" type="button">Открыть сохранённую</button><button id="choose-existing" class="btn" type="button">Выбрать существующего клиента</button></div>
+        <div id="existing-status" class="status"></div>
+        <div id="client-picker" class="client-picker">
+          <div class="small">Существующие web-клиенты / панели в локальной сети:</div>
+          <div id="client-list" class="client-list"></div>
+        </div>
+      </article>
+      <article class="card">
+        <h2>Создать новую ссылку-ID</h2>
+        <p>Для нового браузера, планшета или панели создайте постоянную локальную ссылку. Через неё будут храниться индивидуальные настройки.</p>
+        <label for="client-alias">Понятное имя клиента</label>
+        <input id="client-alias" class="input" placeholder="Например: pc-kabinet, panel-kuhnya, ipad-wall">
+        <label for="client-description">Описание, необязательно</label>
+        <input id="client-description" class="input" placeholder="Например: браузер в кабинете">
+        <div class="btns"><button id="create-client" class="btn primary" type="button">Создать новую ссылку-ID</button></div>
+        <div id="create-status" class="status"></div>
+        <div id="created-result" class="result">
+          <div class="small">Адрес вашего устройства:</div>
+          <span id="created-url" class="url"></span>
+          <div class="btns"><button id="copy-created" class="btn" type="button">Копировать</button><a id="continue-created" class="btn primary" href="#">Продолжить</a></div>
+          <p class="note">Сохраните эту ссылку, чтобы иметь возможность восстанавливать настройки этой панели.</p>
+        </div>
+      </article>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const params = new URLSearchParams(location.search || '');
+    const missingClient = (params.get('missingClient') || '').trim();
+    if(missingClient){
+      try{ localStorage.removeItem('allha_web_client_slug'); localStorage.removeItem('allha_web_client_url'); localStorage.removeItem('allha_web_client_id'); localStorage.removeItem('_client_id'); }catch{}
+      const alert = $('missing-client-alert');
+      if(alert){ alert.textContent = 'Клиент был удалён или недоступен. Создайте новую ссылку или выберите существующего клиента.'; alert.classList.add('ok'); }
+    }
+    function savedUrl(){ try{ if(missingClient) return ''; return localStorage.getItem('allha_web_client_url') || (localStorage.getItem('allha_web_client_slug') ? location.origin + '/client/' + localStorage.getItem('allha_web_client_slug') : '');}catch{return '';} }
+    function setStatus(id,msg,cls=''){ const el=$(id); if(el){ el.textContent=msg||''; el.className='status '+cls; } }
+    function formatDate(v){
+      if(!v) return 'нет данных';
+      try{
+        const d = new Date(v);
+        if(Number.isNaN(d.getTime())) return String(v);
+        return d.toLocaleString('ru-RU');
+      }catch{return String(v);}
+    }
+    function shortUrl(u){
+      try{ const x=new URL(u); return x.pathname; }catch{return u || '';}
+    }
+    async function copyText(text, statusId='existing-status'){
+      try{ await navigator.clipboard.writeText(text); setStatus(statusId,'Ссылка скопирована.','ok'); }
+      catch{ setStatus(statusId,'Не удалось скопировать автоматически. Скопируйте ссылку вручную.','err'); }
+    }
+    async function loadExistingClients(){
+      const box = $('client-picker');
+      const list = $('client-list');
+      if(!box || !list) return;
+      box.classList.add('ok');
+      list.innerHTML = '<div class="small">Загружаю список...</div>';
+      setStatus('existing-status','');
+      try{
+        const res = await fetch('/api/web-clients');
+        const data = await res.json().catch(()=>({}));
+        if(!res.ok || !data.ok) throw new Error(data.error || res.statusText || 'Не удалось получить список клиентов');
+        const currentSlug = (localStorage.getItem('allha_web_client_slug') || '').trim();
+        const currentId = (localStorage.getItem('allha_web_client_id') || '').trim();
+        const clients = Array.isArray(data.clients) ? data.clients.filter(c=>c && c.slug && c.url) : [];
+        if(!clients.length){
+          list.innerHTML = '<div class="small">Существующие клиенты пока не найдены. Создайте новую ссылку-ID справа.</div>';
+          return;
+        }
+        list.innerHTML = clients.map(c=>{
+          const alias = c.alias || c.name || c.slug || c.clientId || 'web-клиент';
+          const isCurrent = (currentSlug && c.slug === currentSlug) || (currentId && c.clientId === currentId);
+          const desc = c.description ? `Описание: ${c.description}` : 'Описание не задано';
+          const last = `Последняя активность: ${formatDate(c.lastSeen)}`;
+          const urlText = shortUrl(c.url);
+          return `<div class="client-row" data-url="${String(c.url).replace(/"/g,'&quot;')}">
+            <div>
+              <a class="client-name" href="${c.url}">${alias}</a>${isCurrent ? '<span class="pill">текущий</span>' : ''}
+              <div class="client-meta">${desc}<br>${urlText}<br>${last}</div>
+            </div>
+            <div class="client-actions">
+              <a class="btn smallbtn primary" href="${c.url}">Открыть</a>
+              <button class="btn smallbtn copy-client-link" type="button" data-url="${String(c.url).replace(/"/g,'&quot;')}">Копировать ссылку</button>
+            </div>
+          </div>`;
+        }).join('');
+        list.querySelectorAll('.copy-client-link').forEach(btn=>{
+          btn.addEventListener('click', ()=>copyText(btn.dataset.url || ''));
+        });
+      }catch(e){
+        list.innerHTML = '';
+        setStatus('existing-status', e.message || String(e), 'err');
+      }
+    }
+
+    $('existing-link').value = savedUrl();
+    $('choose-existing').onclick = loadExistingClients;
+    $('open-saved').onclick = () => { const u=savedUrl(); if(!u) return setStatus('existing-status','Сохранённая ссылка не найдена. Создайте новую ссылку-ID.','err'); location.href=u; };
+    $('open-existing').onclick = () => { const raw=$('existing-link').value.trim(); const m=raw.match(/\/client\/([a-zA-Z0-9_-]+)/); if(!m) return setStatus('existing-status','В ссылке не найден /client/xxxxx.','err'); location.href = location.origin + '/client/' + m[1]; };
+    $('create-client').onclick = async () => {
+      try{
+        setStatus('create-status','Создаю ссылку...');
+        const alias = $('client-alias').value.trim() || 'web-client';
+        const description = $('client-description').value.trim();
+        const screenInfo = `${window.screen?.width || innerWidth}x${window.screen?.height || innerHeight}@${window.devicePixelRatio || devicePixelRatio || 1}`;
+        const res = await fetch('/api/web-clients', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({alias,name:alias,description,screen:screenInfo})});
+        const data = await res.json().catch(()=>({}));
+        if(!res.ok || !data.client) throw new Error(data.error || res.statusText || 'Ошибка создания ссылки');
+        const c = data.client;
+        try{ localStorage.setItem('allha_web_client_id', c.clientId); localStorage.setItem('_client_id', c.clientId); localStorage.setItem('allha_web_client_slug', c.slug); localStorage.setItem('allha_web_client_url', c.url); localStorage.setItem('allha_web_client_alias', c.alias || alias); }catch{}
+        $('created-url').textContent = c.url;
+        $('continue-created').href = c.url;
+        $('created-result').classList.add('ok');
+        setStatus('create-status','Ссылка создана. Нажмите “Продолжить”.','ok');
+      }catch(e){ setStatus('create-status', e.message || String(e), 'err'); }
+    };
+    $('copy-created').onclick = async () => { const u=$('created-url').textContent; try{ await navigator.clipboard.writeText(u); setStatus('create-status','Ссылка скопирована.','ok'); }catch{ setStatus('create-status','Не удалось скопировать автоматически. Скопируйте ссылку вручную.','err'); } };
+  </script>
+</body>
+</html>

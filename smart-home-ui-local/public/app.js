@@ -8,6 +8,24 @@ function clientTrace(message, details){
   try{ console.debug('[ALLHA-2D][client-trace]', row.message, row.details); }catch(e){}
 }
 
+function clientLogEvent(event, payload){
+  try{
+    if(!window.ALLHA_CLIENT_DEBUG_LOG) return;
+    if(typeof apiJson !== 'function') return;
+    apiJson('api/debug/client-event', {
+      method:'POST',
+      body:JSON.stringify({
+        event,
+        payload: payload || {},
+        client:{
+          clientId: window.localStorage?.getItem?.('allha_web_client_id') || '',
+          path: location.pathname
+        }
+      })
+    }).catch(()=>{});
+  }catch(e){}
+}
+
 const state = {
   selectedRoom: 'overview',
   states: {},
@@ -25,10 +43,65 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, showAllDevicesInRoom:false, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), standardSensorSuggestions:{}, standardSensorVisibility:{}, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, placementEditorPanelHidden:false, editActionSheetHidden:false, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), virtualHiddenOpenRooms:new Set(), openVirtualHiddenSettingsRooms:new Set(), standardSensorSuggestions:{}, standardSensorBusy:{}, standardSensorVisibility:{}, roomsHydrated:false, roomsReady:false, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}, renderMetrics:{sseConnected:false, sseConnectedAt:'', sseDisconnectedAt:'', stateChangedMinute:0, statesBatchMinute:0, patchCountMinute:0, renderCountMinute:0, totalPatch:0, totalRender:0, lastFullRenderAt:'', minuteStartedAt:Date.now()}
 };
+
+const DEFAULT_CLIENT_UI = { ...state.ui };
+function resetProfileScopedUiDefaults(){
+  const defaults = pickKeys(DEFAULT_CLIENT_UI, CLIENT_STATE_UI_KEYS);
+  state.ui = { ...state.ui, ...defaults, hideSidebar:true, hideDevicePanel:true };
+  state.selectedRoom = 'overview';
+  state.viewport = { overview:{zoom:1,panX:0,panY:0}, rooms:{} };
+}
+function setLocalUiContext(profileId, levelId){
+  const ctx = `${profileId || ''}/${levelId || ''}`;
+  if(ctx !== '/') localStorage.setItem('ui_prefs_context', ctx);
+}
+function localContextKey(profileId, levelId){ return `${profileId || ''}/${levelId || ''}`; }
+function localUiPrefsStorageKey(ctx){
+  const key = ctx || localStorage.getItem('ui_prefs_context') || '';
+  return key && key !== '/' ? `ui_prefs:${key}` : 'ui_prefs';
+}
+function hasAnyScopedUiPrefs(){
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i) || '';
+      if(k.startsWith('ui_prefs:')) return true;
+    }
+  }catch(_){}
+  return false;
+}
+function getLocalUiPrefs(){
+  try{
+    const scopedKey = localUiPrefsStorageKey();
+    const scoped = localStorage.getItem(scopedKey);
+    if(scoped) return JSON.parse(scoped || '{}');
+    // v4.2.0.12: legacy ui_prefs must not leak into newly created profile/level contexts.
+    // Migrate it only once, and only when no scoped ui_prefs exist yet.
+    const legacy = localStorage.getItem('ui_prefs');
+    if(legacy && !hasAnyScopedUiPrefs() && !localStorage.getItem('ui_prefs_legacy_migrated')){
+      const parsed = JSON.parse(legacy || '{}');
+      if(scopedKey && scopedKey !== 'ui_prefs') localStorage.setItem(scopedKey, JSON.stringify(parsed));
+      localStorage.setItem('ui_prefs_legacy_migrated', scopedKey || 'ui_prefs');
+      return parsed;
+    }
+    return {};
+  }catch(_){ return {}; }
+}
+function saveLocalUiPrefs(payload){
+  try{ localStorage.setItem(localUiPrefsStorageKey(), JSON.stringify(payload || {})); }catch(_){}
+}
+function removeLocalUiPrefsForContext(profileId, levelId){
+  try{ localStorage.removeItem(localUiPrefsStorageKey(localContextKey(profileId, levelId))); }catch(_){}
+}
+function saveLocalLastView(payload){
+  try{ localStorage.setItem(`last_view:${localStorage.getItem('ui_prefs_context') || ''}`, JSON.stringify(payload || {})); }catch(_){}
+}
+function getLocalLastView(){
+  try{ return JSON.parse(localStorage.getItem(`last_view:${localStorage.getItem('ui_prefs_context') || ''}`) || localStorage.getItem('last_view') || '{}'); }catch(_){ return {}; }
+}
 
 const STATIC_ROOMS = window.PLAN_CONFIG.rooms || [];
 
@@ -50,17 +123,49 @@ function runtimeRoomLabel(roomId, rawLabel){
 let ROOMS = [];
 let ROOM_MAP = {};
 function rebuildRoomMap(){ ROOM_MAP = Object.fromEntries(ROOMS.map(r => [r.id, r])); }
+
+function bumpRenderMetric(type){
+  const m=state.renderMetrics || (state.renderMetrics={});
+  const now=Date.now();
+  if(!m.minuteStartedAt || now-m.minuteStartedAt>60000){ m.minuteStartedAt=now; m.stateChangedMinute=0; m.statesBatchMinute=0; m.patchCountMinute=0; m.renderCountMinute=0; }
+  if(type==='state_changed') m.stateChangedMinute=(m.stateChangedMinute||0)+1;
+  if(type==='states_batch') m.statesBatchMinute=(m.statesBatchMinute||0)+1;
+  if(type==='patch'){ m.patchCountMinute=(m.patchCountMinute||0)+1; m.totalPatch=(m.totalPatch||0)+1; }
+  if(type==='render'){ m.renderCountMinute=(m.renderCountMinute||0)+1; m.totalRender=(m.totalRender||0)+1; m.lastFullRenderAt=new Date().toISOString(); }
+}
+function fullRenderBlockedByUserInput(){
+  if(settingsInputActive()) return true;
+  const active=document.activeElement;
+  if(active && ['INPUT','SELECT','TEXTAREA'].includes(active.tagName)) return true;
+  if(document.querySelector('.modal:not(.hidden) input:focus, .modal:not(.hidden) select:focus, .modal:not(.hidden) textarea:focus')) return true;
+  return false;
+}
+function safeFullRender(reason){
+  if(fullRenderBlockedByUserInput()){
+    updateStandardSensorMetricsOnly();
+    updateVisibleDeviceStatesOnly();
+    return false;
+  }
+  bumpRenderMetric('render');
+  render();
+  return true;
+}
+
 function refreshRuntimeRooms(){
   const byId = new Map();
   // v3.5.8.8: do not merge hardcoded/static room geometry into imported rooms.
   // Zones, metrics and room sensors must appear only after user/imported runtime data exists in /data.
   for(const item of (state.roomsSettings?.knownRooms || [])){
     const id=normalizedRoomId(item.id); if(!id || id==='overview') continue;
-    byId.set(id, { id, label:item.settings?.alias || runtimeRoomLabel(id, item.label), image:`media/images/rooms/${encodeURIComponent(id)}.webp` });
+    const settings = state.roomsSettings?.rooms?.[id] || item.settings || {};
+    byId.set(id, { id, label:item.settings?.alias || runtimeRoomLabel(id, item.label), image:`media/images/rooms/${encodeURIComponent(id)}.webp`, virtual: settings.virtual === true });
   }
   for(const d of allDevices()){
     const id=normalizedRoomId(d.room); if(!id || id==='overview' || id==='unassigned') continue;
-    if(!byId.has(id)) byId.set(id,{id,label:runtimeRoomLabel(id, d.roomLabel),image:`media/images/rooms/${encodeURIComponent(id)}.webp`});
+    if(!byId.has(id)){
+      const settings = state.roomsSettings?.rooms?.[id] || {};
+      byId.set(id,{id,label:runtimeRoomLabel(id, d.roomLabel),image:`media/images/rooms/${encodeURIComponent(id)}.webp`, virtual: settings.virtual === true});
+    }
   }
   ROOMS=[{id:'overview',label:'Общий план'}, ...[...byId.values()].sort((a,b)=>(a.label||a.id).localeCompare(b.label||b.id,'ru'))];
   rebuildRoomMap();
@@ -78,23 +183,27 @@ const DRAG_SUPPRESS_MS = 420;
 // Ключи, хранящиеся на сервере глобально (одинаковы для всех устройств)
 const GLOBAL_UI_KEYS = new Set(['weatherEntity']);
 // Ключи, хранящиеся per-device в /api/prefs (у каждого устройства свои)
-const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','showAllDevicesInRoom','debugMode']);
+const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors','theme']);
+const CLIENT_STATE_UI_KEYS = new Set([...DEVICE_UI_KEYS, ...CLIENT_UI_KEYS]);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
 function applyGlobalConfig(cfg){
   const src = (cfg && cfg.ui) ? cfg.ui : cfg || {};
-  // Читаем и GLOBAL и CLIENT ключи из серверного конфига как дефолты (backward compat).
-  // После loadClientPrefs() client-ключи будут перекрыты per-device значениями.
-  const next = pickKeys(src, new Set([...GLOBAL_UI_KEYS, ...CLIENT_UI_KEYS]));
+  // v4.2.0.10: addon_config.ui is global only. Do not use legacy global
+  // scale/opacity values as active client/profile values, otherwise a newly
+  // created profile looks like it inherited the previous profile's display settings.
+  const next = pickKeys(src, GLOBAL_UI_KEYS);
   if(Object.keys(next).length){ state.ui = { ...state.ui, ...next }; applyUiPrefs(); renderKioskWidget(); }
 }
 // В глобальный конфиг отправляем только действительно общие ключи
 function buildGlobalConfigPayload(){ return { ui: pickKeys(state.ui, GLOBAL_UI_KEYS) }; }
 function buildSecurityConfigPayload(){ return { security:{panelMode:el('pref-panel-mode')?.value||state.config?.security?.panelMode||'admin',confirmDangerousServices:!!el('pref-confirm-dangerous')?.checked,dangerousRequirePin:!!el('pref-dangerous-pin')?.checked,pinEnabled:!!state.config?.security?.pinEnabled} }; }
-function mobileAccessMode(){ return _mobileAuth.active ? (state.mobileSession?.accessMode || state.mobileSession?.device?.accessMode || 'viewer') : null; }
+function mobileAccessMode(){ return _mobileAuth.active ? (state.mobileSession?.accessMode || state.mobileSession?.device?.accessMode || 'control') : null; }
 function panelMode(){ const mm=mobileAccessMode(); if(mm) return mm==='user'?'viewer':mm; const m=state.config?.security?.panelMode || 'admin'; return m==='user'?'viewer':m; }
 function isMobileAccessLocked(){ return !!_mobileAuth.active; }
 function canEditLayout(){ return panelMode()==='admin'; }
+function canManageProfileLevel(){ return panelMode()!=='viewer'; }
+function canManageClientPersonalSettings(){ return panelMode()!=='viewer'; }
 function canControlDevices(){ return panelMode()!=='viewer'; }
 function canOpenViewerSettings(){ return true; }
 function panelModeRank(mode){ return ({viewer:0,control:1,admin:2})[mode==='user'?'viewer':mode] ?? 2; }
@@ -114,6 +223,32 @@ async function saveGlobalPrefs(){
   return res;
 }
 
+
+async function loadAuthoritativeClientSettings(){
+  try{
+    const data = await apiJson('api/client-settings/current');
+    const settings = data?.settings || {};
+    if(settings.ui){
+      const over = pickKeys(settings.ui, CLIENT_STATE_UI_KEYS);
+      if(Object.keys(over).length){
+        state.ui = { ...state.ui, ...over };
+        saveLocalUiPrefs(pickKeys(state.ui, CLIENT_STATE_UI_KEYS));
+      }
+    }
+    if(settings.navigation){
+      const prefRoom = settings.navigation.roomId || settings.navigation.selectedRoom;
+      // v4.3.1.6: overview is a valid navigation state and must be restored.
+      if(prefRoom) state.selectedRoom = normalizedRoomId(prefRoom) || state.selectedRoom;
+    }
+    state._clientSettingsDebug = data;
+    applyUiPrefs();
+    return data;
+  }catch(e){
+    console.warn('[client-settings] authoritative load failed', e);
+    return null;
+  }
+}
+
 async function loadClientPrefs(){
   try{
     if(!_mobileAuth.active) await registerLocalWebClient();
@@ -121,7 +256,7 @@ async function loadClientPrefs(){
       try{
         const sess = await apiJson('api/mobile/session');
         state.mobileSession = sess || null;
-        if(state.config?.security) state.config.security.panelMode = sess?.accessMode || 'viewer';
+        if(state.config?.security) state.config.security.panelMode = sess?.accessMode || 'control';
       }catch(e){
         console.warn('[mobile-session] invalid', e);
         localStorage.removeItem('_mobile_token');
@@ -131,17 +266,22 @@ async function loadClientPrefs(){
       }
     }
     const prefs = await apiJson('api/prefs');
-    if(_mobileAuth.active && prefs.mobileDevice){ state.mobileSession = { ...(state.mobileSession||{}), device:prefs.mobileDevice, accessMode:prefs.panelMode || state.mobileSession?.accessMode || 'viewer' }; }
+    if(_mobileAuth.active && prefs.mobileDevice){ state.mobileSession = { ...(state.mobileSession||{}), device:prefs.mobileDevice, accessMode:prefs.panelMode || state.mobileSession?.accessMode || 'control' }; }
     // Применяем per-device UI настройки (перекрывают глобальные дефолты)
     if(prefs.ui){
-      const over = pickKeys(prefs.ui, CLIENT_UI_KEYS);
-      if(Object.keys(over).length){ state.ui={...state.ui,...over}; applyUiPrefs(); renderKioskWidget(); }
+      const over = pickKeys(prefs.ui, CLIENT_STATE_UI_KEYS);
+      if(Object.keys(over).length){
+        state.ui={...state.ui,...over};
+        saveLocalUiPrefs(pickKeys(state.ui, CLIENT_STATE_UI_KEYS));
+        applyUiPrefs();
+        renderKioskWidget();
+      }
     }
     // v4.1.13: режим доступа мобильного устройства применяется только в mobile context.
     // В обычной HA/Ingress/Web-панели не берём prefs.panelMode/mobileDevice, чтобы старый mobile-token
     // или per-client prefs не переводили всю панель в viewer и не блокировали клики/оверлеи.
     if(_mobileAuth.active && (prefs.panelMode || state.mobileSession?.accessMode) && state.config?.security){
-      const lockedMode = state.mobileSession?.accessMode || prefs.panelMode || 'viewer';
+      const lockedMode = state.mobileSession?.accessMode || prefs.panelMode || 'control';
       state.config.security.panelMode = lockedMode;
       const pm = el('pref-panel-mode'); if(pm){ pm.value = state.config.security.panelMode; pm.disabled = true; }
     } else if(!_mobileAuth.active && state.config?.security){
@@ -149,26 +289,166 @@ async function loadClientPrefs(){
       state.config.security.panelMode = state.config.security.panelMode || 'admin';
       const pm = el('pref-panel-mode'); if(pm){ pm.value = state.config.security.panelMode; pm.disabled = false; }
     }
-    // Активный профиль (применяется в renderProfilesManager после загрузки)
+    // Активный профиль/уровень (применяется после загрузки profiles/levels)
     if(prefs.activeProfileId !== undefined) state._clientActiveProfileId = prefs.activeProfileId;
+    if(prefs.activeLevelId !== undefined) state._clientActiveLevelId = prefs.activeLevelId;
+    const ctxProfile = prefs.activeProfileId || prefs.navigation?.profileId || '';
+    const ctxLevel = prefs.activeLevelId || prefs.navigation?.levelId || '';
+    const nextCtx = `${ctxProfile}/${ctxLevel}`;
+    const prevCtx = localStorage.getItem('ui_prefs_context') || '';
+    if(ctxProfile && prevCtx && prevCtx !== nextCtx){
+      // v4.2.0.11: do not delete old profile slider/opacity prefs.
+      // They are stored per profile/level context and must remain intact when a new empty profile is created.
+      resetProfileScopedUiDefaults();
+    }
+    if(ctxProfile) setLocalUiContext(ctxProfile, ctxLevel);
+    const prefRoom = prefs.activeRoomId || prefs.navigation?.roomId || prefs.navigation?.selectedRoom;
+    // v4.3.1.6: overview is a valid navigation state and must be restored.
+    if(prefRoom) state.selectedRoom = normalizedRoomId(prefRoom) || state.selectedRoom;
   }catch(e){ console.warn('[prefs] load', e); }
 }
 
 async function saveClientPrefs(){
-  const prefs = { ui: pickKeys(state.ui, CLIENT_UI_KEYS) };
+  const prefs = {
+    ui: pickKeys(state.ui, CLIENT_STATE_UI_KEYS),
+    navigation: { roomId: state.selectedRoom },
+    activeRoomId: state.selectedRoom
+  };
   // v4.1.13: panelMode не сохраняем в per-client prefs для web, чтобы старые viewer prefs не ломали ingress/UI.
-  if(isMobileAccessLocked()) prefs.panelMode = state.mobileSession?.accessMode || state.config?.security?.panelMode || 'viewer';
+  if(isMobileAccessLocked()) prefs.panelMode = state.mobileSession?.accessMode || state.config?.security?.panelMode || 'control';
   if(state._clientActiveProfileId !== undefined) prefs.activeProfileId = state._clientActiveProfileId;
+  if(state._clientActiveLevelId !== undefined) prefs.activeLevelId = state._clientActiveLevelId;
+  if(prefs.activeProfileId) setLocalUiContext(prefs.activeProfileId, prefs.activeLevelId || '');
   await apiJson('api/prefs', {method:'PUT', body:JSON.stringify(prefs)});
 }
 
 function el(id){return document.getElementById(id)}
 function qsa(s,p=document){return [...p.querySelectorAll(s)]}
+let editZoomControlsPlaceholder = null;
+function ensureEditViewportControlsRoot(){
+  /* v4.2.17.4: keep mobile edit viewport controls outside .canvas-card.
+     CSS contain:layout/paint on the map container creates a containing block for
+     position:fixed descendants on mobile browsers, especially old Huawei/Chrome 80.
+     The zoom controls are moved only in mobile edit mode and restored afterwards, so
+     normal/kiosk/desktop zoom positioning stays unchanged. */
+  ['edit-map-nudge','btn-edit-actions-float'].forEach(id=>{
+    const node=el(id);
+    if(node && node.parentElement !== document.body) document.body.appendChild(node);
+  });
+
+  const zoom = el('zoom-controls');
+  if(!zoom) return;
+  const shouldUseEditRail = document.body.classList.contains('mobile-mode') && document.body.classList.contains('editing');
+  zoom.classList.toggle('edit-viewport-zoom', shouldUseEditRail);
+
+  if(shouldUseEditRail){
+    if(zoom.parentElement !== document.body){
+      if(!editZoomControlsPlaceholder){
+        editZoomControlsPlaceholder = document.createComment('zoom-controls-original-position');
+        zoom.parentElement.insertBefore(editZoomControlsPlaceholder, zoom);
+      }
+      document.body.appendChild(zoom);
+    }
+    return;
+  }
+
+  if(editZoomControlsPlaceholder && editZoomControlsPlaceholder.parentElement && zoom.parentElement === document.body){
+    editZoomControlsPlaceholder.parentElement.insertBefore(zoom, editZoomControlsPlaceholder);
+    editZoomControlsPlaceholder.remove();
+    editZoomControlsPlaceholder = null;
+  }
+}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
 function midpoint(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}}
 function room(id){return ROOM_MAP[id]}
+function roomSettingsFor(id){
+  const rid=normalizedRoomId(id);
+  const direct=(state.roomsSettings?.rooms && state.roomsSettings.rooms[rid]) || null;
+  const known=(state.roomsSettings?.knownRooms || []).find(r=>normalizedRoomId(r?.id)===rid || normalizedRoomId(r?.room_id)===rid);
+  const knownSettings=known?.settings && typeof known.settings==='object' ? known.settings : {};
+  return { ...knownSettings, ...(direct && typeof direct==='object' ? direct : {}) };
+}
+function isVirtualRoom(id){
+  const rid=normalizedRoomId(id);
+  return !!(rid && rid !== 'overview' && roomSettingsFor(rid).virtual === true);
+}
+function virtualRoomStatus(id){
+  const rid=normalizedRoomId(id);
+  if(!rid || rid==='overview') return 'normal';
+  if(!state.roomsReady) return 'unknown';
+  return isVirtualRoom(rid) ? 'virtual' : 'normal';
+}
+function forceRefreshCurrentRoomMode(reason='manual'){
+  try{
+    const rid=canonicalRoomId(state.selectedRoom) || normalizedRoomId(state.selectedRoom);
+    if(!rid || rid==='overview') return false;
+    if(rid !== state.selectedRoom) state.selectedRoom=rid;
+    refreshRuntimeRooms();
+    renderRoom();
+    requestAnimationFrame(()=>{
+      const status=virtualRoomStatus(rid);
+      if(status==='virtual'){
+        if(kioskRoomTilesActive()){
+          hideVirtualRoomCards();
+          virtualDebugSnapshot('forceRefreshCurrentRoomMode:kiosk-tiles:'+reason, rid);
+        } else {
+          document.body.classList.add('virtual-room-active');
+          clearRoomMarkersLayer();
+          renderVirtualRoomCards(rid);
+          positionVirtualRoomCardsLayer();
+          applyVirtualRoomAdaptiveGrid(rid);
+          virtualDebugSnapshot('forceRefreshCurrentRoomMode:'+reason, rid);
+        }
+      } else if(status==='normal'){
+        document.body.classList.remove('virtual-room-active');
+        hideVirtualRoomCards();
+        renderRoomMarkers();
+      }
+    });
+    return true;
+  }catch(e){ console.warn('[virtual-room] force refresh failed', reason, e); return false; }
+}
+function virtualDebugSnapshot(step, roomId=state.selectedRoom){
+  try{
+    const rid=normalizedRoomId(roomId);
+    const direct=state.roomsSettings?.rooms?.[rid] || null;
+    const known=(state.roomsSettings?.knownRooms||[]).find(r=>normalizedRoomId(r?.id)===rid || normalizedRoomId(r?.room_id)===rid || normalizedRoomId(r?.label)===rid || normalizedRoomId(r?.settings?.label)===rid);
+    const layer=el('room-virtual-cards');
+    const content=el('room-content');
+    const img=el('room-image');
+    const r=layer?.getBoundingClientRect?.();
+    const cr=content?.getBoundingClientRect?.();
+    const devicesForRoom = rid && rid!=='overview' ? roomDevices(rid) : [];
+    const snap={
+      ts:new Date().toISOString(), step, selectedRoom:state.selectedRoom, requestedRoom:rid,
+      roomMapExists:!!ROOM_MAP[rid], isVirtual:isVirtualRoom(rid),
+      directVirtual:direct?.virtual, knownVirtual:known?.settings?.virtual,
+      directKeys:direct?Object.keys(direct):[], knownId:known?.id||'', knownLabel:known?.label||known?.settings?.label||'',
+      roomsKeys:Object.keys(state.roomsSettings?.rooms||{}).slice(0,40), knownRooms:(state.roomsSettings?.knownRooms||[]).map(x=>x.id).slice(0,40),
+      hiddenDevices:roomSettingsFor(rid).hiddenDevices||[],
+      visibleDeviceCount:devicesForRoom.filter(d=>IMPORTANT_DOMAINS.has(d.domain) && !roomVirtualHiddenSet(rid).has(d.entity_id)).length,
+      allDeviceCount:devicesForRoom.length,
+      layer:{exists:!!layer, hidden:layer?.classList?.contains('hidden'), w:Math.round(r?.width||0), h:Math.round(r?.height||0), z:getComputedStyle(layer||document.body).zIndex},
+      content:{w:Math.round(cr?.width||0), h:Math.round(cr?.height||0)},
+      image:{src:img?.getAttribute?.('src')||'', naturalWidth:img?.naturalWidth||0, naturalHeight:img?.naturalHeight||0, complete:!!img?.complete},
+      bodyVirtual:document.body.classList.contains('virtual-room-active'), kiosk:document.body.classList.contains('kiosk-mode')
+    };
+    const arr=window.__ALLHA_VIRTUAL_DEBUG__ = window.__ALLHA_VIRTUAL_DEBUG__ || [];
+    arr.push(snap); while(arr.length>80) arr.shift();
+    if(state.ui?.debugMode) console.debug('[virtual-room-debug]', snap);
+    return snap;
+  }catch(e){ console.warn('[virtual-room-debug] snapshot failed', step, e); return null; }
+}
+function copyVirtualRoomDiagnostics(){
+  try{
+    const snap=virtualDebugSnapshot('manual-copy');
+    const payload={snapshot:snap, history:window.__ALLHA_VIRTUAL_DEBUG__||[]};
+    copyTextToClipboard(JSON.stringify(payload,null,2));
+    showToast('Диагностика виртуальной комнаты скопирована');
+  }catch(e){ showToast('Ошибка копирования диагностики: '+e.message); }
+}
 function roomWithLayout(id){const r=room(id); return {...r,...(state.layout.zones?.[id]||{})}}
 function hasZoneRect(r){ return Number.isFinite(Number(r?.x)) && Number.isFinite(Number(r?.y)) && Number.isFinite(Number(r?.w)) && Number.isFinite(Number(r?.h)) && Number(r.w)>0 && Number(r.h)>0; }
 function sanitizeZonePoints(points){
@@ -221,10 +501,10 @@ async function loadPersistedUiState(){
 function loadUiPrefs(){
   try{
     const server = state.serverUiState || {};
-    const savedRaw=JSON.parse(localStorage.getItem('ui_prefs')||'{}');
-    const saved=pickKeys(savedRaw, DEVICE_UI_KEYS);
-    const serverUi=pickKeys(server.ui||{}, DEVICE_UI_KEYS);
-    const last=JSON.parse(localStorage.getItem('last_view')||'{}');
+    const savedRaw=getLocalUiPrefs();
+    const saved=pickKeys(savedRaw, CLIENT_STATE_UI_KEYS);
+    const serverUi=pickKeys(server.ui||{}, CLIENT_STATE_UI_KEYS);
+    const last=getLocalLastView();
     const coarsePointer = !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
     const autoMobile = !!(window.matchMedia && (
       window.matchMedia('(max-width: 760px)').matches ||
@@ -233,7 +513,10 @@ function loadUiPrefs(){
     ));
     // Global display settings intentionally are NOT loaded from localStorage/ui_state.
     // They are applied from /api/config so PC and mobile share scale/opacity/clock/theme.
-    state.ui = { ...state.ui, ...serverUi, ...saved, hideSidebar:true };
+    // v4.1.21.18.17: server/client ui-state is authoritative for per-client display settings.
+    // localStorage is only a fast fallback. This prevents mobile restart from restoring old default
+    // scale/opacity over the saved mobile device settings.
+    state.ui = { ...state.ui, ...saved, ...serverUi, hideSidebar:true };
     // v3.5.8.9: mobile version is a normal user switch again.
     // Default/reset enables it, but the user can turn it off in settings.
     // The old left sidebar still stays hidden until the Rooms button opens it.
@@ -247,18 +530,23 @@ function loadUiPrefs(){
     applyUiPrefs();
   }catch(e){ loadViewportPrefs(); applyUiPrefs(); }
 }
-function currentUiStatePayload(){ return { selectedRoom: state.selectedRoom, ui: pickKeys(state.ui, DEVICE_UI_KEYS), viewport: state.viewport }; }
+function currentUiStatePayload(){ return { selectedRoom: state.selectedRoom, ui: pickKeys(state.ui, CLIENT_STATE_UI_KEYS), viewport: state.viewport }; }
 function persistUiStateSoon(){
   clearTimeout(state.persistTimer);
   state.persistTimer=setTimeout(()=>{
-    fetch('api/ui-state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentUiStatePayload())}).catch(()=>{});
+    apiJson('api/ui-state',{method:'POST',body:JSON.stringify(currentUiStatePayload())}).catch(()=>{});
   }, 500);
 }
 function saveUiPrefs(){
-  localStorage.setItem('ui_prefs', JSON.stringify(pickKeys(state.ui, DEVICE_UI_KEYS)));
-  localStorage.setItem('last_view', JSON.stringify({selectedRoom:state.selectedRoom, updatedAt:new Date().toISOString()}));
+  const uiPayload = captureDisplayPrefsFromInputs();
+  saveLocalUiPrefs(uiPayload);
+  saveLocalLastView({selectedRoom:state.selectedRoom, updatedAt:new Date().toISOString()});
   applyUiPrefs();
   persistUiStateSoon();
+  apiJson('api/client-settings/current',{method:'POST',body:JSON.stringify({
+    ui: uiPayload,
+    navigation: { roomId: state.selectedRoom }
+  })}).then(res=>{ state._clientSettingsDebug = res; }).catch(()=>{});
 }
 
 function saveKioskLockLocal(){
@@ -271,8 +559,9 @@ function setKioskLocked(locked, reason=''){
   state.kioskLocked=!!locked;
   saveKioskLockLocal();
   applyKioskLockUi();
-  if(locked) showToast(reason || 'Киоск заблокирован');
-  else { showToast('Киоск разблокирован'); resetKioskAutoLock(); }
+  // Kiosk state is shown by the Lock/Unlock button. Do not show an extra
+  // “Заблокировано” message because it clutters/overlaps kiosk UI.
+  if(!locked){ showToast('Киоск разблокирован'); resetKioskAutoLock(); }
 }
 function applyKioskLockUi(){
   document.body.classList.toggle('kiosk-locked', !!(state.ui.kioskMode && state.kioskLocked));
@@ -283,7 +572,7 @@ function applyKioskLockUi(){
     btn.classList.toggle('is-locked', state.kioskLocked);
   }
   const badge=el('kiosk-lock-badge');
-  if(badge) badge.classList.toggle('hidden', !(state.ui.kioskMode && state.kioskLocked));
+  if(badge) badge.classList.add('hidden');
 }
 function resetKioskAutoLock(){
   if(state.kioskAutoLockTimer) clearTimeout(state.kioskAutoLockTimer);
@@ -301,15 +590,62 @@ function registerKioskActivity(e){
 function isKioskInputLocked(){ return !!(state.ui.kioskMode && state.kioskLocked); }
 
 
+
+function activeDisplayScope(){ return normalizedRoomId(state.selectedRoom)==='overview' ? 'overview' : 'room'; }
+function displayPrefValue(key, fallback){
+  const v=Number(state.ui?.[key]);
+  return Number.isFinite(v) ? v : fallback;
+}
+function scopedDisplayPrefs(scope=activeDisplayScope()){
+  if(scope==='overview'){
+    return {
+      haloScale: displayPrefValue('overviewHaloScale', Number(state.ui.haloScale ?? 0.50)),
+      markerScale: displayPrefValue('overviewMarkerScale', Number(state.ui.markerScale ?? 1.00)),
+      markerOpacity: displayPrefValue('overviewMarkerOpacity', Number(state.ui.markerOpacity ?? 0.00)),
+      sensorScale: displayPrefValue('overviewSensorScale', Number(state.ui.sensorScale ?? 1.00)),
+      roomLabelScale: displayPrefValue('overviewRoomLabelScale', Number(state.ui.roomLabelScale ?? 1.00)),
+      sensorOpacity: displayPrefValue('overviewSensorOpacity', Number(state.ui.sensorOpacity ?? 0.00))
+    };
+  }
+  return {
+    haloScale: displayPrefValue('roomHaloScale', Number(state.ui.haloScale ?? 0.50)),
+    markerScale: displayPrefValue('roomMarkerScale', Number(state.ui.markerScale ?? 1.00)),
+    markerOpacity: displayPrefValue('roomMarkerOpacity', Number(state.ui.markerOpacity ?? 0.00)),
+    sensorScale: displayPrefValue('roomSensorScale', Number(state.ui.sensorScale ?? 1.00)),
+    roomLabelScale: displayPrefValue('roomLabelScale', Number(state.ui.roomLabelScale ?? 1.00)),
+    sensorOpacity: displayPrefValue('roomSensorOpacity', Number(state.ui.sensorOpacity ?? 0.00))
+  };
+}
+function syncLegacyDisplayPrefs(){
+  const ui=state.ui||{};
+  if(ui.overviewHaloScale==null) ui.overviewHaloScale=Number(ui.haloScale ?? .50);
+  if(ui.overviewMarkerScale==null) ui.overviewMarkerScale=Number(ui.markerScale ?? 1);
+  if(ui.overviewMarkerOpacity==null) ui.overviewMarkerOpacity=Number(ui.markerOpacity ?? 0);
+  if(ui.overviewSensorScale==null) ui.overviewSensorScale=Number(ui.sensorScale ?? 1);
+  if(ui.overviewRoomLabelScale==null) ui.overviewRoomLabelScale=Number(ui.roomLabelScale ?? 1);
+  if(ui.overviewSensorOpacity==null) ui.overviewSensorOpacity=Number(ui.sensorOpacity ?? 0);
+  if(ui.roomHaloScale==null) ui.roomHaloScale=Number(ui.haloScale ?? .50);
+  if(ui.roomMarkerScale==null) ui.roomMarkerScale=Number(ui.markerScale ?? 1);
+  if(ui.roomMarkerOpacity==null) ui.roomMarkerOpacity=Number(ui.markerOpacity ?? 0);
+  if(ui.roomSensorScale==null) ui.roomSensorScale=Number(ui.sensorScale ?? 1);
+  if(ui.roomSensorOpacity==null) ui.roomSensorOpacity=Number(ui.sensorOpacity ?? 0);
+}
+
 function applyDisplayPrefsOnly(){
+  syncLegacyDisplayPrefs();
   const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
   const mobileMarkerFactor = isNarrowMobile ? 0.84 : 1;
   const mobileSensorFactor = isNarrowMobile ? 0.72 : 1;
-  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .1, 2) * mobileMarkerFactor));
-  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .1, 2) * mobileSensorFactor));
-  document.documentElement.style.setProperty('--room-label-scale', String(clamp(Number(state.ui.roomLabelScale ?? 1), .1, 2)));
-  document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(state.ui.markerOpacity ?? 0), 0, 1)));
-  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(state.ui.sensorOpacity ?? 0), 0, 1)));
+  const dp=scopedDisplayPrefs();
+  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(dp.markerScale ?? 1), .1, 2) * mobileMarkerFactor));
+  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(dp.sensorScale ?? 1), .1, 2) * mobileSensorFactor));
+  document.documentElement.style.setProperty('--room-label-scale', String(clamp(Number(dp.roomLabelScale ?? 1), .1, 2)));
+  document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(dp.markerOpacity ?? 0), 0, 1)));
+  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(dp.sensorOpacity ?? 0), 0, 1)));
+  document.documentElement.style.setProperty('--device-card-font-scale', String(clamp(Number(state.ui.cardFontScale ?? 0.90), 0.6, 1.6)));
+  const vct = clamp(Number(state.ui.virtualCardTransparency ?? 0), 0, 100);
+  document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - vct / 100, 0, 1)));
+  if(isVirtualRoom(state.selectedRoom)) requestAnimationFrame(()=>applyVirtualRoomAdaptiveGrid(state.selectedRoom));
 }
 function previewUiPrefsSoon(){
   if(state.previewPrefsRaf) cancelAnimationFrame(state.previewPrefsRaf);
@@ -320,22 +656,499 @@ function previewUiPrefsSoon(){
     updateZoomControls();
   });
   clearTimeout(state.previewPrefsSaveTimer);
-  state.previewPrefsSaveTimer=setTimeout(()=>saveGlobalPrefs().catch(()=>{}), 1200);
+  state.previewPrefsSaveTimer=setTimeout(()=>saveUiPrefs(), 1200);
 }
 function bindRangePreview(id, key, valueId, opts={}){
   const input=el(id);
   if(!input) return;
   const out=valueId ? el(valueId) : null;
   const update=e=>{
-    const n=Number(e.target.value)/100;
+    const raw=Number(e.target.value);
+    const n=opts.rawPercent ? raw : raw/100;
     state.ui[key]=n;
     if(out) out.textContent=e.target.value+'%';
     previewUiPrefsSoon();
-    if(opts.render) opts.render();
+    if(typeof opts.render === 'function') opts.render();
   };
   input.oninput=update;
-  input.onchange=()=>saveGlobalPrefs().catch(()=>{});
+  input.onchange=()=>saveUiPrefs();
 }
+
+
+function captureDisplayPrefsFromInputs(){
+  const map = [
+    ['pref-hardware-scale','hardwareScale'],
+    ['pref-overview-halo-scale','overviewHaloScale'],
+    ['pref-overview-marker-scale','overviewMarkerScale'],
+    ['pref-overview-marker-opacity','overviewMarkerOpacity'],
+    ['pref-overview-sensor-scale','overviewSensorScale'],
+    ['pref-overview-room-label-scale','overviewRoomLabelScale'],
+    ['pref-overview-sensor-opacity','overviewSensorOpacity'],
+    ['pref-room-halo-scale','roomHaloScale'],
+    ['pref-room-marker-scale','roomMarkerScale'],
+    ['pref-room-marker-opacity','roomMarkerOpacity'],
+    ['pref-room-sensor-scale','roomSensorScale'],
+    ['pref-room-sensor-opacity','roomSensorOpacity'],
+    ['pref-halo-scale','haloScale'],
+    ['pref-marker-scale','markerScale'],
+    ['pref-sensor-scale','sensorScale'],
+    ['pref-room-label-scale','roomLabelScale'],
+    ['pref-marker-opacity','markerOpacity'],
+    ['pref-sensor-opacity','sensorOpacity'],
+    ['pref-card-font-scale','cardFontScale'],
+    ['pref-virtual-card-transparency','virtualCardTransparency'],
+    ['pref-virtual-card-scale','virtualCardScale']
+  ];
+  for(const [id,key] of map){
+    const input = el(id);
+    if(input && input.value !== undefined && input.value !== ''){
+      const raw = Number(input.value);
+      const n = key === 'virtualCardTransparency' ? raw : raw / 100;
+      if(Number.isFinite(n)) state.ui[key] = n;
+    }
+  }
+  const toggles = [
+    ['toggle-devices','showMarkers'],
+    ['toggle-sensors','showSensors'],
+    ['pref-show-zones','showZones'],
+    ['pref-invisible-zones','invisibleZones']
+  ];
+  for(const [id,key] of toggles){
+    const input = el(id);
+    if(input) state.ui[key] = !!input.checked;
+  }
+  return pickKeys(state.ui, CLIENT_STATE_UI_KEYS);
+}
+async function saveClientDisplaySettingsNow(){
+  const uiPayload = captureDisplayPrefsFromInputs();
+  clientLogEvent('save-display:start',{ui:uiPayload});
+  saveLocalUiPrefs(uiPayload);
+  let uiStateError = null;
+  try{
+    await apiJson('api/ui-state',{method:'POST',body:JSON.stringify({
+      selectedRoom: state.selectedRoom,
+      ui: uiPayload,
+      viewport: state.viewport
+    })});
+  }catch(e){
+    uiStateError = e;
+    console.warn('[ALLHA-2D] ui-state save failed, continuing client settings save', e);
+  }
+  const res = await apiJson('api/client-settings/current',{method:'POST',body:JSON.stringify({
+    ui: uiPayload,
+    navigation: { roomId: state.selectedRoom },
+    viewport: state.viewport
+  })});
+  state._clientSettingsDebug = res;
+  clientLogEvent('save-display:done',{settingsKeys:Object.keys(res?.settings||{}), ui:res?.settings?.ui, uiStateError:uiStateError?.message||''});
+  applyUiPrefs();
+  if(uiStateError) showToast('Настройки клиента сохранены, но состояние экрана не сохранилось: '+uiStateError.message);
+  return res;
+}
+async function renderClientSettingsDebug(){
+  const box = el('client-settings-debug');
+  if(!box) return;
+  try{
+    const data = await apiJson('api/client-settings/current');
+    const serverUi = data?.settings?.ui || {};
+    const currentUi = pickKeys(state.ui, CLIENT_STATE_UI_KEYS);
+    const keys = ['hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','haloScale','showMarkers','showSensors','showZones'];
+    const rows = keys.map(k=>`<tr><td>${esc(k)}</td><td>${esc(serverUi[k])}</td><td>${esc(currentUi[k])}</td></tr>`).join('');
+    box.innerHTML = `
+      <div class="muted">Client: ${esc(data?.client?.type)} / ${esc(data?.client?.id)}</div>
+      <table class="mini-table"><thead><tr><th>key</th><th>server settings.ui</th><th>current state.ui</th></tr></thead><tbody>${rows}</tbody></table>
+      <button type="button" id="btn-refresh-client-settings-debug">Обновить debug</button>
+      <button type="button" id="btn-save-client-display-now">Сохранить display settings сейчас</button>
+    `;
+    const refresh = el('btn-refresh-client-settings-debug');
+    if(refresh) refresh.onclick = renderClientSettingsDebug;
+    const save = el('btn-save-client-display-now');
+    if(save) save.onclick = async()=>{ try{ await saveClientDisplaySettingsNow(); showToast('Client display settings сохранены'); await renderClientSettingsDebug(); }catch(e){ showToast('Ошибка client settings: '+e.message); } };
+  }catch(e){
+    box.innerHTML = `<p class="error">Client settings debug error: ${esc(e.message)}</p>`;
+  }
+}
+
+
+
+function webClientsStatus(msg, isError=false){
+  const box=el('web-clients-status');
+  if(box){ box.textContent=msg||''; box.classList.toggle('error', !!isError); }
+  if(msg) showToast(msg);
+}
+function webClientDisplayName(c){
+  return c?.alias || c?.name || c?.slug || c?.clientId || c?.client_id || 'web-клиент';
+}
+function webClientUrl(c){
+  if(c?.url) return c.url;
+  const slug = c?.slug || '';
+  if(!slug) return '';
+  return location.origin + '/client/' + slug;
+}
+async function loadWebClientsManager(){
+  const box=el('web-clients-manager');
+  if(!box) return;
+  box.innerHTML='<p class="muted">Загрузка web-клиентов...</p>';
+  try{
+    const data=await apiJson('api/web-clients');
+    const clients=data.clients || [];
+    state.webClients = clients;
+    const currentId = state.webClient?.clientId || state.webClient?.client_id || _clientId || '';
+    if(!clients.length){
+      box.innerHTML='<p class="muted">Постоянные web-клиенты пока не созданы. Откройте стартовую страницу и создайте ссылку-ID.</p>';
+      return;
+    }
+    box.innerHTML = `<div class="web-clients-bulk-actions"><button type="button" id="btn-delete-all-web-clients" class="danger-button" ${clients.length?'':'disabled'}>Удалить все прочие web-клиенты</button><span class="muted">Безопасный режим: текущая открытая /client-ссылка сохраняется. Служебный Server и mobile-устройства не затрагиваются.</span></div>` + clients.map(c=>{
+      const cid=c.clientId || c.client_id || '';
+      const current = cid && cid===currentId;
+      const url=webClientUrl(c);
+      const last=c.lastSeen ? new Date(c.lastSeen).toLocaleString() : 'нет данных';
+      const first=c.firstSeen ? new Date(c.firstSeen).toLocaleString() : 'нет данных';
+      const slug=c.slug || '';
+      const hasSettings = c.settings && Object.keys(c.settings||{}).length > 0;
+      return `<div class="web-client-row ${current?'is-current':''}" data-client-id="${esc(cid)}">
+        <div class="web-client-main">
+          <div class="web-client-title"><strong>${esc(webClientDisplayName(c))}</strong>${current?' <span class="pill">текущий клиент</span>':''}</div>
+          <div class="muted web-client-meta">ID: <code>${esc(cid)}</code>${slug?` · ссылка: <code>/client/${esc(slug)}</code>`:''}</div>
+          <div class="muted web-client-meta">Создан: ${esc(first)} · Последняя активность: ${esc(last)}${c.screen?` · Экран: ${esc(c.screen)}`:''}</div>
+          ${c.description?`<div class="muted web-client-desc">${esc(c.description)}</div>`:''}
+          <div class="muted web-client-meta">Индивидуальные настройки: ${hasSettings?'есть':'нет данных'}${url?` · <span class="web-client-url">${esc(url)}</span>`:''}</div>
+        </div>
+        <div class="web-client-actions">
+          <button type="button" data-web-copy="${esc(cid)}" ${url?'':'disabled'}>Скопировать ссылку</button>
+          <button type="button" data-web-open="${esc(cid)}" ${url?'':'disabled'}>Открыть</button>
+          <button type="button" data-web-rename="${esc(cid)}">Переименовать</button>
+          <button type="button" data-web-regenerate="${esc(cid)}">Перегенерировать ссылку</button>
+          <button type="button" data-web-clear-settings="${esc(cid)}">Очистить индивидуальные настройки</button>
+          <button type="button" data-web-delete="${esc(cid)}" class="danger-button">Удалить</button>
+        </div>
+      </div>`;
+    }).join('');
+    bindWebClientsManagerActions(clients);
+  }catch(e){
+    box.innerHTML='<p class="muted error">Ошибка загрузки web-клиентов: '+esc(e.message)+'</p>';
+    webClientsStatus('Ошибка загрузки web-клиентов: '+e.message, true);
+  }
+}
+function bindWebClientsManagerActions(clients){
+  const bulkDelete=el('btn-delete-all-web-clients');
+  if(bulkDelete) bulkDelete.onclick=async()=>{
+    const word=prompt('Удалить все прочие обычные web-клиенты, кроме текущего открытого клиента? Для подтверждения введите DELETE ALL WEB CLIENTS');
+    if(word!=='DELETE ALL WEB CLIENTS'){ webClientsStatus('Удаление всех web-клиентов отменено.'); return; }
+    try{ const res=await apiJson('api/web-clients',{method:'DELETE',body:JSON.stringify({keepCurrent:true})}); webClientsStatus('Удалено web-клиентов: '+(res.deleted||0)+(res.keptCurrent?' · текущий клиент сохранён':'')); await loadWebClientsManager(); await renderClientSettingsCopySources(); }
+    catch(e){ webClientsStatus('Ошибка удаления всех web-клиентов: '+e.message,true); }
+  };
+  const byId=new Map((clients||[]).map(c=>[String(c.clientId||c.client_id||''), c]));
+  qsa('[data-web-copy]').forEach(btn=>btn.onclick=()=>{
+    const c=byId.get(btn.dataset.webCopy); copyTextToClipboard(webClientUrl(c));
+  });
+  qsa('[data-web-open]').forEach(btn=>btn.onclick=()=>{
+    const c=byId.get(btn.dataset.webOpen); const url=webClientUrl(c); if(url) window.open(url, '_blank', 'noopener');
+  });
+  qsa('[data-web-rename]').forEach(btn=>btn.onclick=async()=>{
+    const c=byId.get(btn.dataset.webRename); if(!c) return;
+    const alias=prompt('Новое имя web-клиента / панели:', c.alias || c.name || '');
+    if(alias===null) return;
+    const description=prompt('Описание клиента / панели (можно оставить пустым):', c.description || '');
+    try{
+      await apiJson('api/web-clients/'+encodeURIComponent(c.clientId||c.client_id), {method:'PATCH', body:JSON.stringify({alias, name:alias, description:description||''})});
+      webClientsStatus('Web-клиент переименован.');
+      await loadWebClientsManager();
+      await renderClientSettingsCopySources();
+    }catch(e){ webClientsStatus('Ошибка переименования: '+e.message, true); }
+  });
+  qsa('[data-web-regenerate]').forEach(btn=>btn.onclick=async()=>{
+    const c=byId.get(btn.dataset.webRegenerate); if(!c) return;
+    if(!confirm('Перегенерировать ссылку этого web-клиента? Старая ссылка перестанет работать.')) return;
+    try{
+      const res=await apiJson('api/web-clients/'+encodeURIComponent(c.clientId||c.client_id)+'/regenerate-link', {method:'POST'});
+      webClientsStatus('Ссылка перегенерирована: '+webClientUrl(res.client));
+      await loadWebClientsManager();
+      await renderClientSettingsCopySources();
+    }catch(e){ webClientsStatus('Ошибка перегенерации ссылки: '+e.message, true); }
+  });
+  qsa('[data-web-clear-settings]').forEach(btn=>btn.onclick=async()=>{
+    const c=byId.get(btn.dataset.webClearSettings); if(!c) return;
+    if(!confirm('Очистить индивидуальные настройки этого web-клиента?')) return;
+    try{ await apiJson('api/web-clients/'+encodeURIComponent(c.clientId||c.client_id)+'/clear-settings', {method:'POST'}); webClientsStatus('Индивидуальные настройки очищены.'); await loadWebClientsManager(); await renderClientSettingsCopySources(); }catch(e){ webClientsStatus('Ошибка очистки настроек: '+e.message, true); }
+  });
+  qsa('[data-web-delete]').forEach(btn=>btn.onclick=async()=>{
+    const c=byId.get(btn.dataset.webDelete); if(!c) return;
+    if(!confirm('Удалить web-клиент / ссылку? Индивидуальные настройки этого клиента больше не будут доступны через эту запись.')) return;
+    try{
+      await apiJson('api/web-clients/'+encodeURIComponent(c.clientId||c.client_id), {method:'DELETE'});
+      webClientsStatus('Web-клиент удалён.');
+      await loadWebClientsManager();
+      await renderClientSettingsCopySources();
+    }catch(e){ webClientsStatus('Ошибка удаления: '+e.message, true); }
+  });
+}
+
+
+function maintenanceStatus(msg, isError=false){
+  const box=el('maintenance-status');
+  if(box){ box.textContent=msg||''; box.classList.toggle('error', !!isError); }
+  if(msg) showToast(msg);
+}
+function fmtCount(x){ return Array.isArray(x) ? x.length : Number(x||0); }
+async function loadMaintenanceManager(){
+  const box=el('maintenance-manager');
+  if(!box) return;
+  box.innerHTML='<p class="muted">Загрузка диагностики...</p>';
+  try{
+    const data=await apiJson('api/maintenance/status');
+    const r=data.report||{}; const issues=r.issues||{}; const counts=r.database?.counts||{};
+    const logs=data.logs?.files||[]; const ha=data.ha||{}; const rm=state.renderMetrics||{};
+    box.innerHTML=`
+      <div class="layout-service-card"><div><strong>SQLite / runtime</strong>
+        <p class="muted">Integrity: <b>${esc(r.integrity?.result||'unknown')}</b> · DB: ${esc(r.database?.path||'')}</p>
+        <p class="muted">web_clients: ${counts.web_clients||0} · mobile_devices: ${counts.mobile_devices||0} · project_documents: ${counts.project_documents||0} · standardSensors: ${counts.standard_sensor_bindings||0}</p>
+      </div></div>
+      <div class="layout-service-card"><div><strong>Live / SSE / render</strong>
+        <p class="muted">HA WS: ${ha.connected?'connected':'disconnected'} · SSE clients: ${ha.sseClients||0} · cached states: ${ha.statesCached||0}</p>
+        <p class="muted">SSE connected total: ${Number(ha.sseRuntime?.connectedTotal||0)} · disconnected: ${Number(ha.sseRuntime?.disconnectedTotal||0)} · rejected: ${Number(ha.sseRuntime?.rejectedTotal||0)} · heartbeat: ${Number(ha.sseRuntime?.heartbeatTotal||0)}</p>
+        <p class="muted">pollIntervalMs: ${esc(state.config?.pollIntervalMs||30000)} · SSE batch: ${esc(state.config?.sseBatchMs ?? 1000)} ms · server batch/min: ${Number(ha.sseRuntime?.statesBatchMinute||0)} · server state_changed/min: ${Number(ha.sseRuntime?.stateChangedMinute||0)} · client batch/min: ${rm.statesBatchMinute||0} · client state_changed/min: ${rm.stateChangedMinute||0} · patch/min: ${rm.patchCountMinute||0} · render/min: ${rm.renderCountMinute||0}</p>
+        <p class="muted">last SSE event: ${esc(ha.sseRuntime?.lastEventAt||'нет')} · last full render: ${esc(rm.lastFullRenderAt||'нет')}</p>
+      </div></div>
+      <div class="layout-service-card"><div><strong>Производительность сервера</strong>
+        <p class="muted">DB calls: ${Number(data.dbPerformance?.count||0)} · avg: ${Number(data.dbPerformance?.avgMs||0)} ms · max: ${Number(data.dbPerformance?.maxMs||0)} ms · slow: ${Number(data.dbPerformance?.slowCount||0)}</p>
+        <p class="muted">log writes: ${Number(data.performance?.logWrites||0)} · flushes: ${Number(data.performance?.logFlushes||0)} · rotation checks: ${Number(data.performance?.logRotationChecks||0)} · rotations: ${Number(data.performance?.logRotations||0)}</p>
+        <p class="muted">rate-limit checks: ${Number(data.performance?.rateLimitChecks||0)} · blocked: ${Number(data.performance?.rateLimitBlocked||0)} · store: ${Number(data.performance?.rateLimitStoreSize||0)} / ${Number(data.performance?.rateLimitMaxKeys||0)}</p>
+        <p class="muted">in-flight requests: ${Number(data.runtime?.inFlightRequests||0)} · shutting down: ${data.runtime?.shuttingDown?'yes':'no'}</p>
+      </div></div>
+      <div class="layout-service-card"><div><strong>Потенциальный мусор</strong>
+        <p class="muted">Временные web-клиенты без ссылки: ${fmtCount(issues.temporaryWebClients)} · orphan web settings: ${fmtCount(issues.orphanWebSettings)} · orphan mobile settings: ${fmtCount(issues.orphanMobileSettings)} · документы старых профилей: ${fmtCount(issues.deletedProfileDocuments)}</p>
+      </div></div>
+      <div class="layout-service-card"><div><strong>Логи</strong>
+        <p class="muted">Файлов: ${logs.length} · общий размер: ${logs.reduce((a,b)=>a+Number(b.size||0),0)} байт</p>
+        ${logs.slice(0,6).map(f=>`<div class="muted"><code>${esc(f.name)}</code> — ${Number(f.size||0)} байт · ${esc(f.mtime||'')}</div>`).join('')}
+      </div></div>`;
+  }catch(e){ box.innerHTML='<p class="error">Ошибка диагностики: '+esc(e.message)+'</p>'; maintenanceStatus('Ошибка диагностики: '+e.message, true); }
+}
+
+
+async function renderClientSettingsCopySources(){
+  const sel = el('client-settings-copy-source');
+  if(!sel) return;
+  try{
+    const data = await apiJson('api/client-settings/sources');
+    const current = data.current || {};
+    sel.innerHTML = (data.items || []).map(item => {
+      const disabled = item.type === current.type && item.id === current.id ? ' disabled' : '';
+      const suffix = item.current ? ' (текущее устройство)' : '';
+      return `<option value="${esc(item.type+':'+item.id)}"${disabled}>${esc(item.label + suffix)}</option>`;
+    }).join('');
+  }catch(e){
+    sel.innerHTML = `<option value="">Ошибка загрузки источников</option>`;
+    clientDefaultsStatus('Ошибка загрузки источников настроек: '+e.message, true);
+  }
+}
+function selectedClientSettingsSource(){
+  const sel = el('client-settings-copy-source');
+  const value = String(sel?.value || '');
+  const [sourceType, ...rest] = value.split(':');
+  const sourceId = rest.join(':');
+  if(!sourceType || !sourceId) return null;
+  return { sourceType, sourceId };
+}
+function clientSettingsSourceLabel(){
+  const sel = el('client-settings-copy-source');
+  if(!sel || sel.selectedIndex < 0) return 'выбранного источника';
+  return (sel.options[sel.selectedIndex]?.textContent || 'выбранного источника').replace(/\s*\(текущее устройство\)\s*$/,'').trim();
+}
+
+function readRectForDiagnostics(node){
+  if(!node || !node.getBoundingClientRect) return null;
+  const r=node.getBoundingClientRect();
+  return {w:r.width||0,h:r.height||0,left:r.left||0,top:r.top||0,right:r.right||0,bottom:r.bottom||0};
+}
+function findFirstMarkerForDiagnostics(kind){
+  const layer = el(kind==='overview'?'overview-markers':'room-markers');
+  if(!layer) return null;
+  return layer.querySelector('.marker-anchor .device-marker,.device-marker');
+}
+function firstMarkerSavedForDiagnostics(kind){
+  try{
+    if(kind==='overview'){
+      const entries=Object.entries(state.layout?.overviewMarkers||{});
+      if(!entries.length) return null;
+      const [id,p]=entries[0];
+      return {id, stored:p, renderPos:p};
+    }
+    const rid=normalizedRoomId(state.selectedRoom);
+    const entries=Object.entries(state.layout?.roomMarkers?.[rid]||{});
+    if(!entries.length) return null;
+    const [id,p]=entries[0];
+    return {id, stored:p, renderPos:roomStoredToImagePos(rid,p)};
+  }catch(_){ return null; }
+}
+function mapDimensionSnapshot(kind){
+  const activeKind = kind || (el('room-view')?.classList.contains('active') ? 'room' : 'overview');
+  const stage = el(activeKind==='overview'?'overview-stage':'room-stage') || document.querySelector('.plan-stage') || document.querySelector('.map-stage') || document.querySelector('.plan-wrap') || document.querySelector('.overview-map');
+  const img = el(activeKind==='overview'?'overview-image':'room-image') || document.querySelector('.overview-img,.plan-bg,img.map-bg,img[src*="overview"]');
+  const content = el(activeKind==='overview'?'overview-content':'room-content');
+  const zonesLayer = activeKind==='overview' ? el('overview-zones') : null;
+  const markersLayer = el(activeKind==='overview'?'overview-markers':'room-markers');
+  const marker = findFirstMarkerForDiagnostics(activeKind);
+  const markerInfo = firstMarkerSavedForDiagnostics(activeKind);
+  const stageRect = readRectForDiagnostics(stage);
+  const imgRect = readRectForDiagnostics(img);
+  const contentRect = readRectForDiagnostics(content);
+  const zonesRect = readRectForDiagnostics(zonesLayer);
+  const markersRect = readRectForDiagnostics(markersLayer);
+  const markerRect = readRectForDiagnostics(marker);
+  let expectedFromLayer=null, expectedFromImage=null, actualCenter=null;
+  const rp=markerInfo?.renderPos;
+  if(rp && markersRect?.w && markersRect?.h) expectedFromLayer={x:markersRect.left+markersRect.w*(Number(rp.x)||0)/100, y:markersRect.top+markersRect.h*(Number(rp.y)||0)/100};
+  if(rp && imgRect?.w && imgRect?.h) expectedFromImage={x:imgRect.left+imgRect.w*(Number(rp.x)||0)/100, y:imgRect.top+imgRect.h*(Number(rp.y)||0)/100};
+  if(markerRect?.w || markerRect?.h) actualCenter={x:markerRect.left+markerRect.w/2, y:markerRect.top+markerRect.h/2};
+  const v=getViewport(activeKind);
+  return {
+    kind:activeKind,
+    viewport:{w:window.innerWidth||0,h:window.innerHeight||0,dpr:window.devicePixelRatio||1},
+    stage:stageRect||{w:0,h:0,left:0,top:0,bottom:0},
+    content:contentRect||{w:0,h:0,left:0,top:0,bottom:0},
+    image:{...(imgRect||{w:0,h:0,left:0,top:0,bottom:0}),naturalW:img?.naturalWidth||0,naturalH:img?.naturalHeight||0,complete:!!img?.complete},
+    zonesLayer:zonesRect,
+    markersLayer:markersRect,
+    firstMarker:{...markerInfo, markerRect, expectedFromLayer, expectedFromImage, actualCenter,
+      diffImage:(actualCenter&&expectedFromImage)?{x:actualCenter.x-expectedFromImage.x,y:actualCenter.y-expectedFromImage.y}:null,
+      diffLayer:(actualCenter&&expectedFromLayer)?{x:actualCenter.x-expectedFromLayer.x,y:actualCenter.y-expectedFromLayer.y}:null},
+    viewportState:{zoom:v?.zoom||1,panX:v?.panX||0,panY:v?.panY||0},
+    bodyClasses:document.body?.className||'',
+    htmlClasses:document.documentElement?.className||'',
+    oldAndroid:!!(document.body?.classList.contains('old-android-webview')||document.documentElement?.classList.contains('old-android-webview')),
+    ua:navigator.userAgent||'',
+    ts:new Date().toISOString()
+  };
+}
+function mapDimensionsReady(){
+
+  const m=mapDimensionSnapshot();
+  const stageOk=m.stage.w>32 && m.stage.h>32;
+  const renderedImgOk=m.image.w>32 && m.image.h>32;
+  // v4.2.0.26: natural image size alone is not enough on old Huawei/WebView.
+  // The image may be loaded while the rendered canvas/container is still 0x0,
+  // which makes restored markers collapse into the lower-left corner.
+  if(m.image.naturalW>24 || m.image.naturalH>24) return stageOk && renderedImgOk;
+  return stageOk;
+}
+function waitForStableMapDimensions(opts={}){
+  const timeoutMs=Number(opts.timeoutMs||1200);
+  const started=Date.now();
+  return new Promise(resolve=>{
+    let last=''; let stable=0;
+    const tick=()=>{
+      const snap=mapDimensionSnapshot();
+      const key=JSON.stringify({stage:snap.stage,image:snap.image,viewport:snap.viewport});
+      if(mapDimensionsReady() && key===last) stable += 1; else stable = 0;
+      last=key;
+      if(stable>=2 || Date.now()-started>timeoutMs){
+        window.__allhaLastMapDimensionSnapshot=snap;
+        resolve(snap);
+        return;
+      }
+      requestAnimationFrame(()=>setTimeout(tick, document.body.classList.contains('old-android-webview')?80:20));
+    };
+    tick();
+  });
+}
+
+async function stabilizeMapThenRender(reason='layout-restore'){
+  // Render once to create/update image DOM, then wait for real non-zero rendered
+  // dimensions and render again. This is important on old Huawei/WebView where
+  // DOM image naturalWidth is available before layout/compositor sizes settle.
+  render();
+  stabilizeSelectedVirtualRoom('after-initial-render');
+  try{ await waitForStableMapDimensions({reason, timeoutMs:isOldAndroidWebView()?3600:1200}); }
+  catch(e){ console.warn('[map-stabilize] failed', reason, e); }
+  try{ render(); }catch(e){ console.warn('[map-stabilize] render failed', e); }
+}
+async function recalculateMapDimensions(reason='manual'){
+  try{
+    await waitForStableMapDimensions({reason, timeoutMs:isOldAndroidWebView()?2400:1000});
+    render();
+    showToast('Размеры карты пересчитаны');
+  }catch(e){ showToast('Не удалось пересчитать размеры карты: '+e.message); }
+}
+
+function describeRestoredClientSettingsSections(sections, result){
+  const list = Array.isArray(sections) ? sections : [];
+  if(list.includes('all')) return 'все индивидуальные настройки отображения и расположение датчиков и маркеров';
+  const names = [];
+  if(list.includes('position')) names.push('расположение датчиков и маркеров');
+  if(list.includes('visibility')) names.push('видимость датчиков, маркеров и зон');
+  if(list.includes('display')) names.push('масштаб, размеры и прозрачность');
+  if(list.includes('modes')) names.push('режимы панели, киоска и mobile');
+  if(result?.position && list.includes('position') && result.position.copiedPositions === false){
+    names.push('источник не содержит индивидуального расположения');
+  }
+  return names.length ? names.join('; ') : 'выбранные настройки';
+}
+async function copyClientSettingsSections(sections, label){
+  clientLogEvent('copy-settings:start',{sections,label,source:selectedClientSettingsSource()});
+  const source = selectedClientSettingsSource();
+  if(!source){ clientDefaultsStatus('Выберите источник настроек', true); return; }
+  const sourceLabel = clientSettingsSourceLabel();
+  if(!confirm(`${label}? Настройки изменятся только у текущего клиента.`)) return;
+  try{
+    const result = await apiJson('api/client-settings/current/copy-from',{
+      method:'POST',
+      body:JSON.stringify({ ...source, sections })
+    });
+    await loadPersistedUiState();
+    await loadAuthoritativeClientSettings();
+    if(sections.includes('all') || sections.includes('position')){
+      try{ await loadLayout(); }catch(e){ console.warn('[client-copy] position reload failed', e); }
+      applyUiPrefs();
+      if(isOldAndroidWebView()){ try{ resetViewport('overview'); }catch(_){} }
+      await stabilizeMapThenRender('client-settings-copy');
+    } else {
+      applyUiPrefs();
+      render();
+    }
+    clientLogEvent('copy-settings:done',{sections,label,source,result:{position:result?.position,sections:result?.sections}});
+    const restored = describeRestoredClientSettingsSections(sections, result);
+    let msg = `Настройки восстановлены из: ${sourceLabel}. Восстановлено: ${restored}.`;
+    if(result?.position && result.position.copiedPositions === false){
+      msg += ' В источнике не найдено сохранённое расположение датчиков и маркеров.';
+    }
+    clientDefaultsStatus(msg);
+  }catch(e){ clientDefaultsStatus('Ошибка восстановления настроек: '+e.message, true); }
+}
+
+
+function clientDefaultsStatus(msg, isError=false){
+  const box = el('client-default-settings-status');
+  if(box){ box.textContent = msg || ''; box.classList.toggle('error', !!isError); }
+  if(msg) showToast(msg);
+}
+async function resetCurrentClientToDefaultSettings(){
+  if(!confirm('Сбросить настройки этого клиента к настройкам по умолчанию? Другие устройства не изменятся.')) return;
+  try{
+    const res = await apiJson('api/client-settings/current/reset-to-default',{method:'POST',body:JSON.stringify({})});
+    if(res?.settings){
+      if(res.settings.ui) state.ui = { ...state.ui, ...pickKeys(res.settings.ui, CLIENT_STATE_UI_KEYS) };
+      if(res.settings.navigation?.roomId) state.selectedRoom = normalizedRoomId(res.settings.navigation.roomId) || state.selectedRoom;
+    }
+    await loadAuthoritativeClientSettings();
+    applyUiPrefs();
+    render();
+    clientDefaultsStatus('Мои настройки сброшены к настройкам по умолчанию.');
+  }catch(e){ clientDefaultsStatus('Ошибка сброса настроек: '+e.message, true); }
+}
+async function saveCurrentClientAsDefaultSettings(){
+  if(!confirm('Сохранить текущие настройки этого клиента как настройки по умолчанию? Новые клиенты и сброс к умолчанию будут использовать этот шаблон.')) return;
+  try{
+    await saveClientDisplaySettingsNow();
+    await saveClientPrefs();
+    const payload = await apiJson('api/client-settings/current');
+    const currentSettings = (payload && payload.settings && typeof payload.settings === 'object') ? payload.settings : {};
+    await apiJson('api/client-settings/current/save-as-default',{method:'POST',body:JSON.stringify(currentSettings)});
+    clientDefaultsStatus('Текущие настройки сохранены как настройки по умолчанию.');
+  }catch(e){ clientDefaultsStatus('Ошибка сохранения настроек по умолчанию: '+e.message, true); }
+}
+
 
 function shouldUseMobileMode(){
   if(!window.matchMedia) return false;
@@ -387,10 +1200,19 @@ function clampViewportPan(kind, v){
   }
   const stageW=stage.clientWidth, stageH=stage.clientHeight;
   const contentW=content.offsetWidth*scale, contentH=content.offsetHeight*scale;
-  // The content is centered by flex layout before transform. Pan is therefore limited around zero.
-  // This prevents the old "endless scroll" feeling on mobile/landscape.
-  let maxX = contentW > stageW ? Math.ceil((contentW-stageW)/2 + 80) : 0;
-  let maxY = contentH > stageH ? Math.ceil((contentH-stageH)/2 + 80) : 0;
+  // The content is centered by flex layout before transform.  In edit mode we
+  // intentionally allow the map to move farther than the old strict bounds so
+  // a user can bring any edge closer to the middle of a small screen.  The
+  // limits still keep a visible part of the map on screen: an edge may cross
+  // the viewport center by about 20%, but the map cannot be lost completely.
+  let maxX = Math.ceil((contentW / 2) + (stageW * 0.20));
+  let maxY = Math.ceil((contentH / 2) + (stageH * 0.20));
+  if(!state.edit){
+    maxX = contentW > stageW ? Math.ceil((contentW-stageW)/2 + 80) : 0;
+    maxY = contentH > stageH ? Math.ceil((contentH-stageH)/2 + 80) : 0;
+  }
+  maxX = Math.min(Math.max(0, maxX), Math.max(1200, stageW + contentW));
+  maxY = Math.min(Math.max(0, maxY), Math.max(1200, stageH + contentH));
   v.panX=clamp(Number(v.panX)||0, -maxX, maxX);
   v.panY=clamp(Number(v.panY)||0, -maxY, maxY);
   return v;
@@ -406,6 +1228,43 @@ function setViewport(kind, next, persist=true){
   if(persist) saveViewportPrefs();
 }
 function resetViewport(kind){ setViewport(kind,{zoom:1,panX:0,panY:0}); }
+
+// v4.2.0.21: Old Android/Huawei WebView compatibility.
+// Some Huawei/old Chromium builds render fixed/composited overlays as black
+// rectangles when transform/contain/backdrop layers are active. Add a stable
+// body/html class and app-height CSS variable so CSS can use a simpler path.
+function detectOldAndroidWebViewCompat(){
+  const ua = String(navigator.userAgent || '');
+  const isAndroid = /Android/i.test(ua);
+  const isHuawei = /Huawei|HONOR|HUAWEI|HMSCore|Ascend|ANE-|FIG-|PRA-|DRA-/i.test(ua);
+  const chromeMatch = ua.match(/(?:Chrome|CriOS|Version)\/(\d+)/i);
+  const chromeMajor = chromeMatch ? Number(chromeMatch[1]) : 0;
+  const isWebView = /; wv\)|\bwv\b|Version\/\d+\.\d+ Chrome\//i.test(ua);
+  return !!(isAndroid && (isHuawei || isWebView || (chromeMajor && chromeMajor < 92)));
+}
+function syncOldAndroidCompatClass(){
+  const compat = detectOldAndroidWebViewCompat();
+  document.documentElement.classList.toggle('old-android-webview', compat);
+  if(document.body) document.body.classList.toggle('old-android-webview', compat);
+  const h = Math.max(320, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));
+  document.documentElement.style.setProperty('--app-height', h + 'px');
+}
+function isOldAndroidWebView(){
+  try{
+    syncOldAndroidCompatClass();
+    return !!(document.documentElement?.classList.contains('old-android-webview') || document.body?.classList.contains('old-android-webview'));
+  }catch(_){
+    try{ return detectOldAndroidWebViewCompat(); }catch(__){ return false; }
+  }
+}
+syncOldAndroidCompatClass();
+try{
+  document.addEventListener('DOMContentLoaded', syncOldAndroidCompatClass, {once:false});
+  window.addEventListener('load', syncOldAndroidCompatClass, {passive:true});
+  window.addEventListener('resize', syncOldAndroidCompatClass, {passive:true});
+  window.addEventListener('orientationchange', ()=>setTimeout(syncOldAndroidCompatClass, 120), {passive:true});
+}catch{}
+
 function zoomViewport(kind, factor){
   const v=getViewport(kind);
   setViewport(kind,{zoom:v.zoom*factor});
@@ -417,19 +1276,59 @@ function applyStageTransform(kind){
   const hardware=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5);
   const scale=hardware*v.zoom;
   content.style.transformOrigin='0 0';
-  content.style.transform=`translate3d(${v.panX}px, ${v.panY}px, 0) scale(${scale})`;
+  const oldAndroidCompat = document.documentElement.classList.contains('old-android-webview') || document.body.classList.contains('old-android-webview');
+  content.style.transform = oldAndroidCompat
+    ? `translate(${v.panX}px, ${v.panY}px) scale(${scale})`
+    : `translate3d(${v.panX}px, ${v.panY}px, 0) scale(${scale})`;
   content.dataset.scale=String(scale);
+  if(kind==='room' && isVirtualRoom(state.selectedRoom)) requestAnimationFrame(positionVirtualRoomCardsLayer);
 }
 function activeStageKind(){ return state.selectedRoom==='overview'?'overview':'room'; }
 function updateZoomControls(){
   const zv=el('zoom-value'); if(zv){ const v=getViewport(activeStageKind()); const hw=clamp(Number(state.ui.hardwareScale ?? 1), .3, 1.5); zv.textContent=Math.round(v.zoom*hw*100)+'%'; }
 }
 function fitViewport(kind){ resetViewport(kind); }
+function nudgeEditMap(direction, step){
+  if(!state.edit) return;
+  const kind=activeStageKind();
+  const v=getViewport(kind);
+  if(direction==='center'){
+    setViewport(kind,{panX:0, panY:0}, true);
+    return;
+  }
+  const base=Number(step)||Math.max(44, Math.min(110, Math.round(Math.min(window.innerWidth||360, window.innerHeight||720)*0.12)));
+  let dx=0, dy=0;
+  if(direction==='left') dx=base;
+  else if(direction==='right') dx=-base;
+  else if(direction==='up') dy=base;
+  else if(direction==='down') dy=-base;
+  setViewport(kind,{panX:(Number(v.panX)||0)+dx, panY:(Number(v.panY)||0)+dy}, true);
+}
+function bindEditMapNudgeButton(btn){
+  if(!btn || btn.dataset.nudgeBound) return;
+  btn.dataset.nudgeBound='1';
+  const dir=btn.dataset.editPan;
+  let repeatTimer=null, repeatDelay=null;
+  const clear=()=>{ if(repeatTimer){clearInterval(repeatTimer); repeatTimer=null;} if(repeatDelay){clearTimeout(repeatDelay); repeatDelay=null;} };
+  const run=()=>nudgeEditMap(dir);
+  btn.addEventListener('click', e=>{ e.preventDefault(); e.stopPropagation(); run(); });
+  btn.addEventListener('pointerdown', e=>{
+    if(e.button!==undefined && e.button!==0) return;
+    e.preventDefault(); e.stopPropagation();
+    clear();
+    try{btn.setPointerCapture(e.pointerId)}catch(_){}
+    repeatDelay=setTimeout(()=>{ repeatTimer=setInterval(run, 120); }, 360);
+  });
+  ['pointerup','pointercancel','pointerleave'].forEach(ev=>btn.addEventListener(ev, e=>{ try{btn.releasePointerCapture(e.pointerId)}catch(_){} clear(); }, {passive:true}));
+}
 function lockViewportScroll(){
   document.documentElement.style.overflow='hidden';
   document.body.style.overflow='hidden';
   document.body.style.position='fixed';
-  document.body.style.inset='0';
+  document.body.style.top='0';
+  document.body.style.right='0';
+  document.body.style.bottom='0';
+  document.body.style.left='0';
   document.body.style.width='100%';
   document.body.style.height='100dvh';
 }
@@ -477,6 +1376,7 @@ function updateMobileLockedSettingsUI(){
 }
 
 function applyUiPrefs(){
+  syncOldAndroidCompatClass();
   document.body.classList.toggle('touch-capable', !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
   document.body.classList.toggle('hide-sidebar', !!state.ui.hideSidebar);
   document.body.classList.toggle('hide-device-panel', !!state.ui.hideDevicePanel);
@@ -485,6 +1385,11 @@ function applyUiPrefs(){
   document.body.classList.toggle('mobile-devices-open', !!state.ui.mobileMode && !state.ui.hideDevicePanel);
   document.body.classList.toggle('hide-toolbar', !!state.ui.hideToolbar);
   document.body.classList.toggle('mobile-mode', !!state.ui.mobileMode);
+  const vv = window.visualViewport || null;
+  const vw = Math.round(vv?.width || window.innerWidth || document.documentElement.clientWidth || 0);
+  const vh = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 0);
+  const compactMobileUi = !!state.ui.mobileMode && ((vw > 0 && vw <= 480) || (vh > 0 && vh <= 680) || (navigator.maxTouchPoints > 0 && Math.min(vw || 9999, vh || 9999) <= 420));
+  document.body.classList.toggle('compact-mobile-ui', compactMobileUi);
   document.body.classList.toggle('auto-hide-menus', !!state.ui.autoHide);
   document.body.classList.toggle('compact-mode', !!state.ui.compact);
   const activeTheme = state.ui.theme || (state.ui.darkTheme ? 'dark' : 'light');
@@ -497,14 +1402,18 @@ function applyUiPrefs(){
   const invZonesBox=el('pref-invisible-zones'); if(invZonesBox) invZonesBox.disabled=state.ui.showZones===false;
   applyKioskLockUi();
   resetKioskAutoLock();
+  syncLegacyDisplayPrefs();
   const isNarrowMobile = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
   const mobileMarkerFactor = isNarrowMobile ? 0.84 : 1;
   const mobileSensorFactor = isNarrowMobile ? 0.72 : 1;
-  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(state.ui.markerScale ?? 1), .1, 2) * mobileMarkerFactor));
-  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(state.ui.sensorScale ?? 1), .1, 2) * mobileSensorFactor));
-  document.documentElement.style.setProperty('--room-label-scale', String(clamp(Number(state.ui.roomLabelScale ?? 1), .1, 2)));
-  document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(state.ui.markerOpacity ?? 0), 0, 1))); // setting is background transparency
-  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(state.ui.sensorOpacity ?? 0), 0, 1))); // setting is background transparency
+  const displayPrefs=scopedDisplayPrefs();
+  document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(displayPrefs.markerScale ?? 1), .1, 2) * mobileMarkerFactor));
+  document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(displayPrefs.sensorScale ?? 1), .1, 2) * mobileSensorFactor));
+  document.documentElement.style.setProperty('--room-label-scale', String(clamp(Number(displayPrefs.roomLabelScale ?? 1), .1, 2)));
+  document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(displayPrefs.markerOpacity ?? 0), 0, 1))); // setting is background transparency
+  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(displayPrefs.sensorOpacity ?? 0), 0, 1))); // setting is background transparency
+  document.documentElement.style.setProperty('--device-card-font-scale', String(clamp(Number(state.ui.cardFontScale ?? 0.90), 0.6, 1.6)));
+  document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - Number(state.ui.virtualCardTransparency ?? 0) / 100, 0, 1)));
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
   const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel || state.ui.kioskMode);
   const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar || state.ui.kioskMode);
@@ -525,18 +1434,34 @@ function applyUiPrefs(){
   const kas=el('pref-kiosk-autolock-seconds'); if(kas) kas.value=String(Number(state.ui.kioskAutoLockSeconds||15));
   const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
   const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
+  updateKioskOverviewButton();
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
   const tz=el('toggle-zones'); if(tz) tz.checked=state.ui.showZones!==false;
   const iz=el('pref-invisible-zones'); if(iz){ iz.checked=!!state.ui.invisibleZones; }
   const tdv=el('toggle-devices'); if(tdv) tdv.checked=state.ui.showMarkers!==false;
   const ts=el('toggle-sensors'); if(ts) ts.checked=state.ui.showSensors!==false;
   const ph=el('pref-halo-scale'); if(ph){ ph.value=String(Math.round(Number(state.ui.haloScale ?? 0.50)*100)); const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=ph.value+'%'; }
+  syncLegacyDisplayPrefs();
+  setPercentRange('pref-overview-halo-scale', 'pref-overview-halo-scale-value', state.ui.overviewHaloScale ?? state.ui.haloScale ?? .50);
+  setPercentRange('pref-overview-marker-scale', 'pref-overview-marker-scale-value', state.ui.overviewMarkerScale ?? state.ui.markerScale ?? 1);
+  setPercentRange('pref-overview-marker-opacity', 'pref-overview-marker-opacity-value', state.ui.overviewMarkerOpacity ?? state.ui.markerOpacity ?? 0);
+  setPercentRange('pref-overview-sensor-scale', 'pref-overview-sensor-scale-value', state.ui.overviewSensorScale ?? state.ui.sensorScale ?? 1);
+  setPercentRange('pref-overview-room-label-scale', 'pref-overview-room-label-scale-value', state.ui.overviewRoomLabelScale ?? state.ui.roomLabelScale ?? 1);
+  setPercentRange('pref-overview-sensor-opacity', 'pref-overview-sensor-opacity-value', state.ui.overviewSensorOpacity ?? state.ui.sensorOpacity ?? 0);
+  setPercentRange('pref-room-halo-scale', 'pref-room-halo-scale-value', state.ui.roomHaloScale ?? state.ui.haloScale ?? .50);
+  setPercentRange('pref-room-marker-scale', 'pref-room-marker-scale-value', state.ui.roomMarkerScale ?? state.ui.markerScale ?? 1);
+  setPercentRange('pref-room-marker-opacity', 'pref-room-marker-opacity-value', state.ui.roomMarkerOpacity ?? state.ui.markerOpacity ?? 0);
+  setPercentRange('pref-room-sensor-scale', 'pref-room-sensor-scale-value', state.ui.roomSensorScale ?? state.ui.sensorScale ?? 1);
+  setPercentRange('pref-room-sensor-opacity', 'pref-room-sensor-opacity-value', state.ui.roomSensorOpacity ?? state.ui.sensorOpacity ?? 0);
   const hw=el('pref-hardware-scale'); if(hw){ hw.value=String(Math.round(Number(state.ui.hardwareScale ?? 1)*100)); const hv=el('pref-hardware-scale-value'); if(hv) hv.textContent=hw.value+'%'; }
   const ms=el('pref-marker-scale'); if(ms){ ms.value=String(Math.round(Number(state.ui.markerScale ?? 1)*100)); const mv=el('pref-marker-scale-value'); if(mv) mv.textContent=ms.value+'%'; }
   const ss=el('pref-sensor-scale'); if(ss){ ss.value=String(Math.round(Number(state.ui.sensorScale ?? 1)*100)); const sv=el('pref-sensor-scale-value'); if(sv) sv.textContent=ss.value+'%'; }
   const rls=el('pref-room-label-scale'); if(rls){ rls.value=String(Math.round(Number(state.ui.roomLabelScale ?? 1)*100)); const rv=el('pref-room-label-scale-value'); if(rv) rv.textContent=rls.value+'%'; }
   const mo=el('pref-marker-opacity'); if(mo){ mo.value=String(Math.round(Number(state.ui.markerOpacity ?? 0)*100)); const mv=el('pref-marker-opacity-value'); if(mv) mv.textContent=mo.value+'%'; }
   const so=el('pref-sensor-opacity'); if(so){ so.value=String(Math.round(Number(state.ui.sensorOpacity ?? 0)*100)); const sv=el('pref-sensor-opacity-value'); if(sv) sv.textContent=so.value+'%'; }
+  const cfs=el('pref-card-font-scale'); if(cfs){ cfs.value=String(Math.round(Number(state.ui.cardFontScale ?? 0.90)*100)); const cv=el('pref-card-font-scale-value'); if(cv) cv.textContent=cfs.value+'%'; }
+  const vct=el('pref-virtual-card-transparency'); if(vct){ vct.value=String(Math.round(Number(state.ui.virtualCardTransparency ?? 0))); const vv=el('pref-virtual-card-transparency-value'); if(vv) vv.textContent=vct.value+'%'; }
+  const vcs=el('pref-virtual-card-scale'); if(vcs){ vcs.value=String(Math.round(Number(state.ui.virtualCardScale ?? 1.00)*100)); const vs=el('pref-virtual-card-scale-value'); if(vs) vs.textContent=vcs.value+'%'; }
   const pmode=el('pref-panel-mode'); if(pmode && state.config?.security?.panelMode){ pmode.value=state.config.security.panelMode; pmode.disabled=isMobileAccessLocked(); pmode.title=isMobileAccessLocked()?'Режим доступа задаётся на сервере для этого мобильного устройства':''; }
   const cd=el('pref-confirm-dangerous'); if(cd){ cd.checked=state.config?.security?.confirmDangerousServices!==false; cd.disabled=isMobileAccessLocked() && panelMode()!=='admin'; }
   const dp=el('pref-dangerous-pin'); if(dp){ dp.checked=!!state.config?.security?.dangerousRequirePin; dp.disabled=isMobileAccessLocked() && panelMode()!=='admin'; }
@@ -547,7 +1472,7 @@ function applyUiPrefs(){
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
 }
 function normalizedRoomId(id){return String(id||'').trim()}
-function roomDevices(id){const rid=normalizedRoomId(id);return devices().filter(d=>normalizedRoomId(d.room)===rid || (rid==='overview' && d.room!=='media'))}
+function roomDevices(id){const rid=normalizedRoomId(id);return devices().filter(d=>normalizedRoomId(effectiveDeviceRoomId(d) || d.room)===rid || (rid==='overview' && d.room!=='media'))}
 function getState(id){return state.states[id] || null}
 function lightKind(d){
   const text = `${d.label||''} ${d.name||''} ${d.icon||''} ${d.entity_id||''}`.toLowerCase();
@@ -660,7 +1585,7 @@ function canPrimaryAction(d){ return canToggle(d) || ['button','script','automat
 function primaryActionLabel(d,s=getState(d.entity_id)){
   if(d.domain==='button') return 'Нажать';
   if(d.domain==='script') return 'Запустить';
-  if(d.domain==='automation') return String(s?.state||'').toLowerCase()==='on' ? 'Запустить' : 'Включить';
+  if(d.domain==='automation') return String(s?.state||'').toLowerCase()==='on' ? 'Выключить автоматизацию' : 'Включить автоматизацию';
   if(d.domain==='valve') return isOn(d,s) ? 'Закрыть' : 'Открыть';
   return isOn(d,s) ? 'Выключить' : 'Включить';
 }
@@ -826,7 +1751,7 @@ function visualClass(d){
   if(d.domain==='input_number' || d.domain==='input_select') return 'input-value';
   return isOn(d)?'active':'inactive';
 }
-function haloMul(){ return clamp(Number(state.ui.haloScale ?? 0.50),0.25,1.25); }
+function haloMul(){ return clamp(Number(scopedDisplayPrefs().haloScale ?? state.ui.haloScale ?? 0.50),0.25,1.25); }
 function haloScale(v){ return 1 + (Number(v)-1)*haloMul(); }
 function haloCss(alpha, scale){ return `--halo-alpha:${Number(alpha).toFixed(3)};--halo-scale:${haloScale(scale).toFixed(2)};`; }
 function visualStyle(d){
@@ -870,7 +1795,7 @@ function stateText(d){
   if(d.domain==='valve') return isOn(d,s)?'открыто':'закрыто';
   if(d.domain==='lock') return isOn(d,s)?'открыто':'закрыто';
   if(['light','switch','input_boolean','fan','humidifier'].includes(d.domain)) return isOn(d,s)?'включено':'выключено';
-  if(d.domain==='automation') return st==='on'?'включено':'выключено';
+  if(d.domain==='automation') return st==='on'?'автоматизация включена':'автоматизация выключена';
   if(d.domain==='media_player') return mediaStateKind(d)==='playing'?'воспроизведение':'остановлено';
   if(d.domain==='climate') return localizedRawState(st);
   if(d.domain==='binary_sensor') return st==='on'?'обнаружено':'не обнаружено';
@@ -950,9 +1875,21 @@ function fitStage(kind){
   const stage = el(kind==='overview'?'overview-stage':'room-stage');
   const img = el(kind==='overview'?'overview-image':'room-image');
   const content = kind==='overview'?el('overview-content'):el('room-content');
-  if(!stage||!img||!img.naturalWidth||!content)return;
+  if(!stage||!img||!content)return;
   const pad = kind==='overview' ? 36 : 24;
-  const sw=Math.max(0, stage.clientWidth-pad), sh=Math.max(0, stage.clientHeight-pad), ratio=img.naturalWidth/img.naturalHeight;
+  const sw=Math.max(0, stage.clientWidth-pad), sh=Math.max(0, stage.clientHeight-pad);
+  if(!img.naturalWidth || !img.naturalHeight){
+    // v4.3.0.6: virtual rooms must still have a stable card area even when
+    // the room image is missing/404. Without this, #room-content stays 0×0
+    // and the virtual card layer cannot be sized.
+    if(kind==='room' && isVirtualRoom(state.selectedRoom)){
+      content.style.width=Math.max(240, sw)+'px';
+      content.style.height=Math.max(160, sh)+'px';
+      applyStageTransform(kind);
+    }
+    return;
+  }
+  const ratio=img.naturalWidth/img.naturalHeight;
   let w=sw,h=w/ratio; if(h>sh){h=sh;w=h*ratio}
   content.style.width=w+'px'; content.style.height=h+'px';
   applyStageTransform(kind);
@@ -960,15 +1897,26 @@ function fitStage(kind){
 
 function renderNav(){
   const nav=el('room-nav'); nav.innerHTML='';
-  ROOMS.forEach(r=>{const b=document.createElement('button'); b.className='room-btn'+(state.selectedRoom===r.id?' active':''); b.textContent=r.label; b.onclick=()=>selectRoom(r.id); nav.appendChild(b)})
+  ROOMS.forEach(r=>{const b=document.createElement('button'); b.className='room-btn'+(state.selectedRoom===r.id?' active':'')+(isVirtualRoom(r.id)?' virtual-room-nav':''); b.textContent=(isVirtualRoom(r.id)?'★ ':'')+r.label; b.onclick=()=>selectRoom(r.id); nav.appendChild(b)})
 }
 
 
+function setPlacementEditorPanelHidden(hidden){
+  state.placementEditorPanelHidden = !!hidden;
+  const modal = el('placement-editor-modal');
+  if(modal) modal.classList.toggle('placement-panel-hidden', !!hidden);
+  const btn = el('btn-toggle-placement-panel');
+  if(btn){
+    btn.textContent = hidden ? 'Панель' : 'Скрыть панель';
+    btn.title = hidden ? 'Показать панель редактора' : 'Скрыть панель редактора';
+  }
+}
 function closePlacementEditor(){
   const modal=el('placement-editor-modal');
   if(modal) modal.classList.add('hidden');
   document.body.classList.remove('placement-editor-open');
   state.placementEditor=null;
+  setPlacementEditorPanelHidden(false);
   const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
   const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
   const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
@@ -1047,11 +1995,34 @@ function setLayoutDirty(value=true){
 }
 function updateEditButtons(){
   const allowed = canEditLayout();
-  const eb=el('edit-mode-badge'); if(eb){ eb.textContent=state.edit?(state.layoutDirty?'Редактирование · есть изменения':'Редактирование'):'Режим управления'; eb.className='edit-mode-badge '+(state.edit?'is-edit':'is-view'); }
+  const eb=el('edit-mode-badge');
+  if(eb){
+    eb.textContent=state.edit?(state.layoutDirty?'Редактирование · есть изменения':'Редактирование'):'Режим управления';
+    eb.className='edit-mode-badge '+(state.edit?'is-edit':'is-view');
+  }
+  const toolbarKiosk=el('btn-toolbar-kiosk');
+  if(toolbarKiosk){
+    toolbarKiosk.classList.toggle('edit-indicator', !!state.edit);
+    toolbarKiosk.textContent = state.edit ? 'Редактирование' : 'Киоск';
+    toolbarKiosk.title = state.edit ? 'Режим управления отключён, пока идёт редактирование' : 'Включить режим киоска';
+    toolbarKiosk.setAttribute('aria-label', toolbarKiosk.title);
+  }
   const editBtn=el('btn-edit'), saveBtn=el('btn-save-edit'), cancelBtn=el('btn-cancel-edit');
+  const compactEditCommands = !!(document.body.classList.contains('mobile-mode') || window.innerWidth < 1800 || window.innerHeight < 780);
   if(editBtn) editBtn.classList.toggle('hidden', state.edit || !allowed);
-  if(saveBtn){ saveBtn.classList.toggle('hidden', !state.edit || !allowed); saveBtn.disabled=false; saveBtn.textContent='Сохранить изменения'; }
-  if(cancelBtn) cancelBtn.classList.toggle('hidden', !state.edit || !allowed);
+  if(saveBtn){
+    saveBtn.classList.toggle('hidden', !state.edit || !allowed);
+    saveBtn.disabled=false;
+    saveBtn.textContent=compactEditCommands?'Сохранить':'Сохранить изменения';
+    saveBtn.title='Сохранить изменения';
+    saveBtn.setAttribute('aria-label','Сохранить изменения');
+  }
+  if(cancelBtn){
+    cancelBtn.classList.toggle('hidden', !state.edit || !allowed);
+    cancelBtn.textContent=compactEditCommands?'Сброс':'Отменить изменения';
+    cancelBtn.title='Отменить изменения';
+    cancelBtn.setAttribute('aria-label','Отменить изменения');
+  }
   updateUndoRedoButtons();
   renderLayoutMaintenanceTools();
 }
@@ -1061,6 +2032,7 @@ function enterEditMode(){
   pauseLiveDashboard();
   state.editSnapshot=cloneLayout(state.layout);
   state.selectedEdit=null;
+  state.editActionSheetHidden=false;
   closePlacementEditor();
   state.edit=true;
   // On a touch overview screen the full 180+ device list is expensive and covers the map.
@@ -1078,6 +2050,7 @@ async function saveEditChanges(){
     state.edit=false;
     state.stageGesture=null;
     state.editSnapshot=null;
+    state.editActionSheetHidden=false;
     closePlacementEditor();
     resumeLiveDashboard();
     updateEditButtons();
@@ -1090,6 +2063,7 @@ async function saveEditChanges(){
   state.stageGesture=null;
   state.editSnapshot=null;
   state.selectedEdit=null;
+  state.editActionSheetHidden=false;
   closePlacementEditor();
   resumeLiveDashboard();
   setLayoutDirty(false);
@@ -1103,6 +2077,7 @@ function cancelEditChanges(){
   state.stageGesture=null;
   state.editSnapshot=null;
   state.selectedEdit=null;
+  state.editActionSheetHidden=false;
   closePlacementEditor();
   resumeLiveDashboard();
   setLayoutDirty(false);
@@ -1160,6 +2135,42 @@ function roomIdFromOverviewMarkerPoint(point){
   hits.sort((a,b)=>a.area-b.area);
   return hits[0]?.rid || '';
 }
+function overviewImagePointFromEvent(e){
+  const img=el('overview-image');
+  const rect=img?.getBoundingClientRect?.();
+  if(!rect || !rect.width || !rect.height) return null;
+  const x=(Number(e.clientX)-rect.left)/rect.width*100;
+  const y=(Number(e.clientY)-rect.top)/rect.height*100;
+  if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||x>100||y<0||y>100) return null;
+  return {x:clamp(x,0,100), y:clamp(y,0,100)};
+}
+function canonicalRoomId(id){
+  const rid=normalizedRoomId(id);
+  if(rid==='overview') return 'overview';
+  if(rid && ROOM_MAP[rid]) return rid;
+  const raw=String(id||'').trim().toLowerCase();
+  if(raw){
+    const byLabel=(ROOMS||[]).find(r=>String(r.label||'').trim().toLowerCase()===raw);
+    if(byLabel?.id) return normalizedRoomId(byLabel.id);
+  }
+  return '';
+}
+function roomIdFromOverviewEvent(e){
+  const point=overviewImagePointFromEvent(e);
+  return point ? roomIdFromOverviewMarkerPoint(point) : '';
+}
+function openOverviewRoomFromEvent(e, fallbackRoomId=''){
+  if(isKioskInputLocked()){ showToast('Киоск заблокирован'); return true; }
+  if(state.edit) return false;
+  if(state.suppressClick){ state.suppressClick=false; return true; }
+  if(e?.target?.closest?.('.device-marker,.marker-anchor,.badge,.metric-item,[data-quick],button:not(.room-zone),a,input,textarea,select,label,.device-card,.quick-overlay,.edit-action-sheet')) return false;
+  const rid=canonicalRoomId(roomIdFromOverviewEvent(e) || fallbackRoomId);
+  if(!rid || rid==='overview' || !ROOM_MAP[rid]) return false;
+  e?.preventDefault?.();
+  e?.stopPropagation?.();
+  selectRoom(rid);
+  return true;
+}
 function kioskTileRoomIdForDevice(d){
   return normalizedRoomId(d?.__kioskTileRoom || effectiveDeviceRoomId(d) || d?.room || inferRoomIdFromDevice(d) || '__noroom') || '__noroom';
 }
@@ -1194,7 +2205,7 @@ function kioskTileDeviceHtml(d){
   const st=stateText(d);
   const value=markerValueLabel(d)||st;
   const rid=kioskTileRoomIdForDevice(d);
-  return `<button type="button" class="kiosk-tile-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}"><span class="kiosk-tile-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-text"><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-room-name">${esc(roomGroupLabel(rid))}</span></span><span class="kiosk-tile-state state">${esc(value)}</span></button>`;
+  return `<button type="button" class="kiosk-tile-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-kiosk-tile-device="${esc(d.entity_id)}">${automationBadgeHtml(d)}<span class="kiosk-tile-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="kiosk-tile-text"><span class="kiosk-tile-name">${esc(displayName(d))}</span><span class="kiosk-tile-room-name">${esc(roomGroupLabel(rid))}</span></span><span class="kiosk-tile-state state">${esc(value)}</span></button>`;
 }
 function buildKioskTilePages(groups, cols, maxRows){
   const pages=[];
@@ -1297,19 +2308,41 @@ function renderKioskTiles(){
   qsa('[data-kiosk-tile-device]', pages).forEach(btn=>{ const d=devices().find(x=>x.entity_id===btn.dataset.kioskTileDevice); if(d) attachPressActions(btn,d); });
 }
 
+function updateKioskOverviewButton(){
+  const btn=el('btn-kiosk-overview-direct');
+  if(!btn) return;
+  const selected=normalizedRoomId(state.selectedRoom||'overview');
+  const tileRoom=normalizedRoomId(state.kioskTileRoomFilter||'');
+  const shouldShow=!!(state.ui.kioskMode && (selected !== 'overview' || (kioskEffectiveTileNavigation() && tileRoom && tileRoom !== 'overview')));
+  btn.classList.toggle('hidden', !shouldShow);
+  btn.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+}
+
 function render(){
   if(!state.edit && state.placementEditor){
     closePlacementEditor();
   }
+  const isOverview = state.selectedRoom==='overview';
   document.body.classList.toggle('editing', state.edit);
   document.body.classList.toggle('viewing', !state.edit);
   document.body.classList.toggle('overview-editing', !!(state.edit && state.selectedRoom==='overview'));
   document.body.classList.toggle('overview-edit-lite', !!(state.edit && state.selectedRoom==='overview' && isMobilePanelMode()));
+  const _vrStatus = virtualRoomStatus(state.selectedRoom);
+  document.body.classList.toggle('virtual-room-active', !!(!isOverview && _vrStatus==='virtual' && !kioskRoomTilesActive()));
+  document.body.classList.toggle('virtual-room-card-bg', false);
   const eb=el('edit-mode-badge'); if(eb){ eb.textContent=state.edit?(state.layoutDirty?'Редактирование · есть изменения':'Редактирование'):'Режим управления'; eb.className='edit-mode-badge '+(state.edit?'is-edit':'is-view'); }
+  const toolbarKioskForRender=el('btn-toolbar-kiosk');
+  if(toolbarKioskForRender){
+    toolbarKioskForRender.classList.toggle('edit-indicator', !!state.edit);
+    toolbarKioskForRender.textContent = state.edit ? 'Редактирование' : 'Киоск';
+    toolbarKioskForRender.title = state.edit ? 'Режим управления отключён, пока идёт редактирование' : 'Включить режим киоска';
+    toolbarKioskForRender.setAttribute('aria-label', toolbarKioskForRender.title);
+  }
   const be=el('btn-edit'); if(be){ be.classList.toggle('edit-active', state.edit); be.setAttribute('aria-pressed', String(state.edit)); }
   updateEditButtons();
-  const isOverview = state.selectedRoom==='overview';
   const qbtn=el('btn-quick-overlay'); if(qbtn) qbtn.classList.toggle('hidden', isOverview);
+  const mobileOverviewBtn=el('btn-mobile-overview'); if(mobileOverviewBtn) mobileOverviewBtn.classList.toggle('hidden', isOverview);
+  updateKioskOverviewButton();
   el('overview-view').classList.toggle('active', isOverview);
   el('room-view').classList.toggle('active', !isOverview);
   el('page-title').textContent = isOverview ? 'Общий план' : room(state.selectedRoom).label;
@@ -1317,6 +2350,7 @@ function render(){
   renderNav();
   if(isOverview){ renderOverview(); } else { renderRoom(); }
   renderDevices();
+  ensureEditViewportControlsRoot();
   renderEditSheet();
   renderKioskWidget();
   renderKioskTiles();
@@ -1370,18 +2404,96 @@ function renderOverviewZones(){
     }
     z.innerHTML=`<span class="zone-label">${esc(r.label)}</span>`;
     z.addEventListener('pointerdown', zoneDown);
-    z.onclick=e=>{if(isKioskInputLocked()){showToast('Киоск заблокирован'); return;} if(state.edit||state.suppressClick){state.suppressClick=false;return} selectRoom(r.id)};
+    z.onclick=e=>{ openOverviewRoomFromEvent(e, r.id); };
     layer.appendChild(z);
   });
 }
 function metricContent(r){
   const items = standardMetricItems(r);
   if(!items.length) return '';
-  return items.map(({def,value})=>{
+  return items.map(({def,value,entityId})=>{
     const icon = def.icon || def.shortLabel || def.label;
     const aria = `${def.label}: ${value}`;
-    return `<span class="metric-item metric-${esc(def.key)} compact-metric-item" title="${esc(aria)}" aria-label="${esc(aria)}"><span class="metric-icon" aria-hidden="true">${esc(icon)}</span><span class="metric-value">${esc(value)}</span></span>`;
+    return `<span class="metric-item metric-${esc(def.key)} compact-metric-item" data-metric-entity="${esc(entityId)}" title="${esc(aria)}" aria-label="${esc(aria)}"><span class="metric-icon" aria-hidden="true">${esc(icon)}</span><span class="metric-value">${esc(value)}</span></span>`;
   }).join(' ');
+}
+
+function bindMetricItems(container){
+  if(!container) return;
+  const badge = container.matches?.('.badge[data-room]') ? container : container.closest?.('.badge[data-room]');
+  if(badge && badge.dataset.metricGroupBound!=='1'){
+    badge.dataset.metricGroupBound='1';
+    attachStandardSensorBadgeActions(badge, badge.dataset.room || state.selectedRoom, badge.dataset.scope || 'overview');
+  }
+  qsa('[data-metric-entity]', container).forEach(node=>{
+    if(node.dataset.metricBound==='1') return;
+    node.dataset.metricBound='1';
+    attachStandardSensorBadgeActions(node, node.closest?.('.badge[data-room]')?.dataset?.room || state.selectedRoom, node.closest?.('.badge[data-room]')?.dataset?.scope || 'room');
+  });
+}
+function attachStandardSensorBadgeActions(node, roomId, scope='room'){
+  if(!node || node.dataset.standardSensorsLongPress==='1') return;
+  node.dataset.standardSensorsLongPress='1';
+  node.addEventListener('click', e=>{ e.preventDefault(); e.stopPropagation(); }, true);
+  node.addEventListener('contextmenu', e=>{ e.preventDefault(); e.stopPropagation(); openStandardSensorsModal(roomId, scope); }, true);
+  node.addEventListener('pointerdown', e=>{
+    if(state.edit) return;
+    e.preventDefault(); e.stopPropagation();
+    const rid=normalizedRoomId(roomId || node.closest?.('.badge[data-room]')?.dataset?.room || state.selectedRoom);
+    const modalScope = scope || node.closest?.('.badge[data-room]')?.dataset?.scope || 'room';
+    let fired=false;
+    const sx=e.clientX, sy=e.clientY;
+    const timer=setTimeout(()=>{ fired=true; openStandardSensorsModal(rid, modalScope); },650);
+    const cleanup=()=>{ clearTimeout(timer); window.removeEventListener('pointermove',move,true); window.removeEventListener('pointerup',up,true); window.removeEventListener('pointercancel',up,true); };
+    const move=ev=>{ if(Math.hypot(ev.clientX-sx, ev.clientY-sy)>10) cleanup(); };
+    const up=ev=>{ cleanup(); ev.preventDefault(); ev.stopPropagation(); if(!fired) showToast('Удерживайте плашку стандартных датчиков для просмотра'); };
+    window.addEventListener('pointermove',move,true);
+    window.addEventListener('pointerup',up,true);
+    window.addEventListener('pointercancel',up,true);
+  }, true);
+}
+function standardSensorOrientation(roomId, scope='room'){
+  const settings=roomSettingsFor(roomId) || {};
+  const key = scope==='overview' ? 'standardSensorOverviewOrientation' : 'standardSensorRoomOrientation';
+  const legacy = settings.standardSensorOrientation;
+  const v=String(settings[key] || legacy || 'horizontal');
+  return v==='vertical' ? 'vertical' : 'horizontal';
+}
+function standardSensorValueForModal(def, entityId){
+  return standardSensorDisplayValue(def.key, entityId) || '—';
+}
+function openStandardSensorsModal(roomId, scope='room'){
+  const rid=normalizedRoomId(roomId || state.selectedRoom);
+  const modal=el('standard-sensors-modal');
+  if(!modal) return;
+  const title=el('standard-sensors-modal-title');
+  const body=el('standard-sensors-modal-body');
+  const roomObj=room(rid);
+  if(title) title.textContent='Стандартные датчики — '+(roomObj?.label || rid);
+  const sensors=standardSensorsForSettings(rid);
+  const items=STANDARD_SENSOR_DEFS.map(def=>({def, entityId:String(sensors?.[def.key]||'').trim()})).filter(x=>x.entityId);
+  const canChange=panelMode()==='admin' || panelMode()==='control';
+  const modalScope = scope==='overview' ? 'overview' : 'room';
+  const orientation=standardSensorOrientation(rid, modalScope);
+  if(body){
+    body.innerHTML = `${items.length ? `<div class="standard-sensors-modal-list">${items.map(({def,entityId})=>`<div class="standard-sensors-modal-row"><div><strong>${esc(def.label)}</strong><small>${esc(entityId)}</small></div><b>${esc(standardSensorValueForModal(def, entityId))}</b></div>`).join('')}</div>` : '<p class="muted">В этой комнате не настроены стандартные датчики.</p>'}
+      <div class="standard-sensors-orientation"><strong>Ориентация плашки ${modalScope==='overview'?'общего плана':'комнаты'}</strong><div class="segmented"><button type="button" data-standard-sensors-orientation="horizontal" ${orientation==='horizontal'?'class="active"':''} ${canChange?'':'disabled'}>Горизонтальная</button><button type="button" data-standard-sensors-orientation="vertical" ${orientation==='vertical'?'class="active"':''} ${canChange?'':'disabled'}>Вертикальная</button></div>${canChange?'':'<p class="muted">В режиме просмотра изменение ориентации недоступно.</p>'}</div>`;
+    qsa('[data-standard-sensors-orientation]', body).forEach(btn=>{ btn.onclick=()=>setStandardSensorsOrientation(rid, btn.dataset.standardSensorsOrientation, modalScope); });
+  }
+  modal.classList.remove('hidden');
+}
+function closeStandardSensorsModal(){ el('standard-sensors-modal')?.classList.add('hidden'); }
+async function setStandardSensorsOrientation(roomId, orientation, scope='room'){
+  const rid=normalizedRoomId(roomId), value=orientation==='vertical'?'vertical':'horizontal', modalScope=scope==='overview'?'overview':'room';
+  if(!(panelMode()==='admin' || panelMode()==='control')){ showToast('Изменение ориентации доступно в control/admin'); return; }
+  try{
+    const payload=await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/orientation`, {method:'PATCH', body:JSON.stringify({orientation:value, scope:modalScope})});
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(payload);
+    refreshRuntimeRooms();
+    render();
+    openStandardSensorsModal(rid, modalScope);
+    showToast('Ориентация плашки сохранена');
+  }catch(e){ showToast('Ошибка ориентации плашки: '+e.message); }
 }
 function defaultMetricPos(r){ if(!hasZoneRect(r)) return null; return {x:clamp(Number(r.x)-Number(r.w)/4,2,98),y:clamp(Number(r.y)-Number(r.h)/4,2,98)} }
 function safeMetricPoint(stored, fallback){
@@ -1395,7 +2507,8 @@ function renderOverviewMetrics(){
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
     const fallback=defaultMetricPos(r); if(!fallback) return;
     const p=safeMetricPoint(state.layout.overviewMetrics?.[r.id], fallback);
-    const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('overviewMetric', r.id, 'overview')?' edit-selected':''); b.dataset.kind='overviewMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
+    const b=document.createElement('div'); b.className='badge standard-sensors-badge '+(standardSensorOrientation(r.id,'overview')==='vertical'?'standard-sensors-vertical':'standard-sensors-horizontal')+(isSelectedEdit('overviewMetric', r.id, 'overview')?' edit-selected':''); b.dataset.kind='overviewMetric'; b.dataset.room=r.id; b.dataset.scope='overview'; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
+    bindMetricItems(b);
     b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
   })
 }
@@ -1408,31 +2521,217 @@ function renderOverviewMarkers(){
   requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function renderRoom(){
+  virtualDebugSnapshot('renderRoom:start');
   const r=room(state.selectedRoom); if(!r)return;
+  const status=virtualRoomStatus(r.id);
+  if(status==='unknown'){
+    clearRoomMarkersLayer();
+    hideVirtualRoomCards();
+    const title=el('room-title'); if(title) title.textContent=r.label||state.selectedRoom;
+    const line=el('room-climate-line'); if(line) line.innerHTML='<span class="muted">Загрузка настроек комнаты…</span>';
+    virtualDebugSnapshot('renderRoom:virtual-status-unknown', r.id);
+    return;
+  }
   const img=el('room-image');
+  ensureVirtualRoomCardsLayer();
+  const virtual = status==='virtual';
   const afterRoomImageReady = ()=>{
     fitStage('room');
     if(migrateCurrentRoomCoordinateSpace()) return;
     renderRoomMetrics();
-    renderRoomMarkers();
+    if(virtual){
+      clearRoomMarkersLayer();
+      if(kioskRoomTilesActive()){
+        // карточки-режим: kiosk tile view рендерит тайлы как у обычных комнат; overlay не нужен
+        hideVirtualRoomCards();
+        virtualDebugSnapshot('renderRoom:virtual-kiosk-tiles', r.id);
+      } else {
+        virtualDebugSnapshot('renderRoom:virtual-before-cards', r.id);
+        renderVirtualRoomCards(r.id);
+        requestAnimationFrame(()=>{ applyVirtualRoomAdaptiveGrid(r.id); virtualDebugSnapshot('renderRoom:virtual-after-grid', r.id); });
+      }
+    } else {
+      virtualDebugSnapshot('renderRoom:not-virtual', r.id);
+      hideVirtualRoomCards();
+      renderRoomMarkers();
+    }
     renderQuickActions();
   };
   img.onload=afterRoomImageReady;
+  img.onerror=afterRoomImageReady;
   const src = roomImageSrc(r.id);
   if(img.src !== new URL(src, location.href).href) img.src = src;
   else if(img.complete) afterRoomImageReady();
-  el('room-title').textContent=r.label;
-  el('room-climate-line').innerHTML=metricContent(r)||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>';
+  el('room-title').textContent=(virtual?'★ ':'')+r.label;
+  { const mline=el('room-climate-line'); if(mline){ mline.innerHTML=metricContent(r)||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>'; bindMetricItems(mline); } }
+}
+function clearRoomMarkersLayer(){ const layer=el('room-markers'); if(layer) layer.innerHTML=''; }
+function ensureVirtualRoomCardsLayer(){
+  let layer=el('room-virtual-cards');
+  const stage=el('room-stage');
+  if(!stage) return layer || null;
+  if(!layer){
+    layer=document.createElement('div');
+    layer.id='room-virtual-cards';
+    layer.className='room-virtual-cards hidden';
+  }
+  if(layer.parentElement !== stage) stage.appendChild(layer);
+  return layer;
+}
+function positionVirtualRoomCardsLayer(){
+  const layer=el('room-virtual-cards'), stage=el('room-stage'), content=el('room-content'), img=el('room-image');
+  if(!layer || !stage) return;
+  const sr=stage.getBoundingClientRect();
+  if(!sr.width || !sr.height) return;
+  let cr = null;
+  const ir = img ? img.getBoundingClientRect() : null;
+  // v4.3.0.11: align virtual cards to the real image rect. In kiosk the stage
+  // can include side/bottom safe areas, so stage-centered cards drift away from
+  // the picture. getBoundingClientRect() includes current pan/zoom transforms.
+  if(ir && ir.width > 4 && ir.height > 4 && img?.complete && (img.naturalWidth || img.naturalHeight)) cr = ir;
+  if(!cr || !cr.width || !cr.height) cr=content ? content.getBoundingClientRect() : null;
+  if(!cr || !cr.width || !cr.height){
+    const pad=12;
+    cr={left:sr.left+pad, top:sr.top+pad, width:Math.max(1, sr.width-pad*2), height:Math.max(1, sr.height-pad*2)};
+  }
+  layer.style.left=Math.max(0, cr.left-sr.left)+'px';
+  layer.style.top=Math.max(0, cr.top-sr.top)+'px';
+  layer.style.width=Math.max(1, cr.width)+'px';
+  layer.style.height=Math.max(1, cr.height)+'px';
+}
+function hideVirtualRoomCards(){ const layer=el('room-virtual-cards'); if(layer){ layer.classList.add('hidden'); layer.innerHTML=''; } }
+
+function roomVirtualHiddenSet(roomId){
+  const arr=roomSettingsFor(roomId).hiddenDevices;
+  return new Set(Array.isArray(arr) ? arr.map(String) : []);
+}
+function virtualRoomHiddenOpen(roomId){ return !!state.virtualHiddenOpenRooms?.has?.(normalizedRoomId(roomId)); }
+function setVirtualRoomHiddenOpen(roomId, open){
+  if(!state.virtualHiddenOpenRooms) state.virtualHiddenOpenRooms=new Set();
+  const rid=normalizedRoomId(roomId);
+  if(open) state.virtualHiddenOpenRooms.add(rid); else state.virtualHiddenOpenRooms.delete(rid);
+}
+function automationBadgeHtml(d){ return d?.domain==='automation' ? '<span class="auto-badge" title="Автоматизация Home Assistant">Auto</span>' : ''; }
+function virtualRoomDeviceCardHtml(d){
+  const st=stateText(d);
+  const value=markerValueLabel(d)||st;
+  return `<button type="button" class="virtual-room-device device-card ${visualClass(d)}" style="${visualStyle(d)}" data-virtual-room-device="${esc(d.entity_id)}" title="${esc(displayName(d))}\n${esc(d.entity_id)}">${automationBadgeHtml(d)}<span class="virtual-room-icon dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span class="virtual-room-text"><span class="virtual-room-name">${esc(displayName(d))}</span></span><span class="virtual-room-state state">${esc(value)}</span></button>`;
+}
+function hiddenVirtualRoomDeviceHtml(d){
+  return `<button type="button" class="virtual-room-hidden-device ${visualClass(d)}" style="${visualStyle(d)}" data-virtual-room-restore="${esc(d.entity_id)}" title="Вернуть устройство в эту виртуальную комнату"><span class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</span><span>${esc(displayName(d))}</span><b>${esc(markerValueLabel(d)||stateText(d))}</b></button>`;
+}
+async function setVirtualRoomDeviceHidden(roomId, entityId, hidden){
+  const rid=normalizedRoomId(roomId), eid=String(entityId||'').trim();
+  if(!rid || !eid) return;
+  const current=roomVirtualHiddenSet(rid);
+  if(hidden) current.add(eid); else current.delete(eid);
+  try{
+    const payload=await apiJson(`api/rooms/${encodeURIComponent(rid)}/hidden-devices`, {method:'PATCH', body:JSON.stringify({ hiddenDevices:[...current] })});
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(payload);
+    showToast(hidden ? 'Устройство скрыто в этой виртуальной комнате' : 'Устройство возвращено в виртуальную комнату');
+    render();
+  }catch(e){ showToast('Ошибка скрытия устройства: '+e.message); }
+}
+function attachVirtualRoomCardActions(btn,d,roomId){
+  // v4.3.0.5: do not use long press for hiding devices.
+  // Long press belongs to normal device actions/modal. Hiding is managed in room settings.
+  attachPressActions(btn,d);
+}
+
+
+function chooseVirtualRoomGrid(count, workW, workH){
+  count=Math.max(1, Number(count)||1);
+  workW=Math.max(120, Number(workW)||120);
+  workH=Math.max(90, Number(workH)||90);
+  const scale=clamp(Number(state.ui.virtualCardScale ?? 1), .70, 1.60);
+  const desiredW=clamp(185 * scale, 112, 330);
+  const desiredH=clamp(66 * scale, 40, 118);
+  const minTileW=82;
+  const minTileH=32;
+  let best=null;
+  for(let cols=1; cols<=Math.min(count, 16); cols++){
+    const rows=Math.ceil(count/cols);
+    const rawTileW=workW/cols;
+    const rawTileH=workH/rows;
+    const tileW=Math.min(rawTileW, desiredW);
+    const tileH=Math.min(rawTileH, desiredH);
+    const gap=clamp(Math.floor(Math.min(tileW, tileH) * .08), 2, 10);
+    const gridW=Math.min(workW, cols*tileW + Math.max(0, cols-1)*gap);
+    const gridH=Math.min(workH, rows*tileH + Math.max(0, rows-1)*gap);
+    const ratio=tileW/Math.max(1,tileH);
+    const targetRatio=2.55;
+    const shapePenalty=Math.abs(Math.log(Math.max(.2,ratio)/targetRatio));
+    const sizePenalty=Math.abs(Math.log(Math.max(1,tileW)/desiredW))*.75 + Math.abs(Math.log(Math.max(1,tileH)/desiredH));
+    const tinyPenalty=(tileW<minTileW?8:0)+(tileH<minTileH?8:0);
+    const waste=(cols*rows-count)*0.12;
+    // Prefer more compact grids over very tall cards when score is close.
+    const heightPenalty=Math.max(0, tileH - desiredH) / Math.max(1, desiredH);
+    const score=shapePenalty+sizePenalty+tinyPenalty+waste+heightPenalty;
+    if(!best || score<best.score) best={cols,rows,tileW,tileH,gap,gridW,gridH,score};
+  }
+  return best || {cols:1,rows:count,tileW:Math.min(workW,desiredW),tileH:Math.min(workH,desiredH),gap:6,gridW:Math.min(workW,desiredW),gridH:Math.min(workH,count*desiredH),score:0};
+}
+function applyVirtualRoomAdaptiveGrid(roomId, visibleCount){
+  const layer=el('room-virtual-cards');
+  const grid=layer?.querySelector?.('.virtual-room-grid');
+  if(!layer || !grid) return;
+  positionVirtualRoomCardsLayer();
+  const count = Number.isFinite(Number(visibleCount)) ? Number(visibleCount) : grid.children.length;
+  const rect=layer.getBoundingClientRect();
+  const workW=Math.max(80, rect.width * .90);
+  const workH=Math.max(60, rect.height * .90);
+  const chosen=chooseVirtualRoomGrid(count, workW, workH);
+  const cardFontScale=clamp(Number(state.ui.cardFontScale ?? .90), .60, 1.40);
+  // v4.3.0.10: text size is independent from virtualCardScale.
+  const font=clamp(11.5 * cardFontScale, 7.5, 15);
+  const stateFont=clamp(10.5 * cardFontScale, 7.5, 13.5);
+  grid.style.setProperty('--vroom-cols', String(chosen.cols));
+  grid.style.setProperty('--vroom-rows', String(chosen.rows));
+  grid.style.setProperty('--vroom-gap', chosen.gap+'px');
+  grid.style.setProperty('--vroom-font', font+'px');
+  grid.style.setProperty('--vroom-state-font', stateFont+'px');
+  grid.style.setProperty('--vroom-tile-min-h', Math.max(28, chosen.tileH)+'px');
+  grid.style.setProperty('--vroom-grid-w', Math.max(80, chosen.gridW)+'px');
+  grid.style.setProperty('--vroom-grid-h', Math.max(60, chosen.gridH)+'px');
+  virtualDebugSnapshot('applyVirtualRoomAdaptiveGrid', roomId);
+}
+
+function stabilizeSelectedVirtualRoom(reason='manual'){
+  try{
+    const rid=canonicalRoomId(state.selectedRoom);
+    if(!rid || rid==='overview' || virtualRoomStatus(rid)!=='virtual') return false;
+    if(kioskRoomTilesActive()) return false; // карточки-режим: kiosk tiles рендерят сами
+    state.selectedRoom=rid;
+    document.body.classList.add('virtual-room-active');
+    renderVirtualRoomCards(rid);
+    requestAnimationFrame(()=>{ applyVirtualRoomAdaptiveGrid(rid); virtualDebugSnapshot('stabilize:'+reason, rid); });
+    return true;
+  }catch(e){ console.warn('[virtual-room] stabilize failed', reason, e); return false; }
+}
+
+function renderVirtualRoomCards(roomId){
+  const layer=ensureVirtualRoomCardsLayer(); if(!layer) return;
+  const rid=normalizedRoomId(roomId);
+  const hiddenSet=roomVirtualHiddenSet(rid);
+  const all=roomDevices(rid).filter(d=>IMPORTANT_DOMAINS.has(d.domain)).sort((a,b)=>displayName(a).localeCompare(displayName(b),'ru'));
+  const list=all.filter(d=>!hiddenSet.has(d.entity_id));
+  layer.classList.remove('hidden');
+  layer.innerHTML=list.length
+    ? `<div class="virtual-room-grid">${list.map(virtualRoomDeviceCardHtml).join('')}</div>`
+    : '<div class="virtual-room-empty">В этой виртуальной комнате нет видимых устройств. Скрытые устройства настраиваются в настройках комнаты.</div>';
+  positionVirtualRoomCardsLayer();
+  applyVirtualRoomAdaptiveGrid(rid, list.length);
+  qsa('[data-virtual-room-device]', layer).forEach(btn=>{ const d=devices().find(x=>x.entity_id===btn.dataset.virtualRoomDevice); if(d) attachVirtualRoomCardActions(btn,d,rid); });
 }
 function renderRoomMetrics(){
   const layer=el('room-metrics'); layer.innerHTML=''; if(state.ui.showSensors===false)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
   const stored=safeMetricPoint(state.layout.roomMetrics?.[r.id], {x:16,y:16});
   const p=roomStoredToImagePos(r.id, stored);
-  const b=document.createElement('div'); b.className='badge'+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
+  const b=document.createElement('div'); b.className='badge standard-sensors-badge '+(standardSensorOrientation(r.id,'room')==='vertical'?'standard-sensors-vertical':'standard-sensors-horizontal')+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.dataset.scope='room'; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
   b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
 }
 function renderRoomMarkers(){
-  const layer=el('room-markers'); layer.innerHTML=''; if(state.ui.showMarkers===false)return;
+  const layer=el('room-markers'); layer.innerHTML=''; if(isVirtualRoom(state.selectedRoom)) return; if(state.ui.showMarkers===false)return;
   Object.entries(state.layout.roomMarkers?.[state.selectedRoom]||{}).forEach(([id,p])=>{
     const d=devices().find(x=>x.entity_id===id); if(!d)return;
     layer.appendChild(markerEl(d,p,'room'));
@@ -1442,7 +2741,7 @@ function renderRoomMarkers(){
 function markerEl(d,p,scope){
   const renderPos = scope==='room' ? roomStoredToImagePos(state.selectedRoom, p) : p;
   const editSimple = !!state.edit;
-  const isSensorAnchor = d.domain==='sensor' || d.domain==='binary_sensor' || shouldRenderSensorTextMarker(d, scope);
+  const isSensorAnchor = false; // ordinary sensor markers follow marker scaling; standard sensor badges use sensor scaling
   const anchor=document.createElement('div');
   anchor.className='marker-anchor'+(isSensorAnchor?' sensor-anchor':'');
   anchor.dataset.entity=d.entity_id;
@@ -1470,6 +2769,44 @@ function markerEl(d,p,scope){
   return anchor;
 }
 /* ── Точечное обновление маркера без пересоздания DOM ────────── */
+
+function updateStandardSensorMetricsOnly(){
+  try{
+    const overviewLayer = el('overview-metrics');
+    if(overviewLayer){
+      qsa('.badge[data-kind="overviewMetric"][data-room]', overviewLayer).forEach(b=>{
+        const rid = b.dataset.room;
+        const r = room(rid);
+        if(!r) return;
+        const html = metricContent(roomWithLayout(rid));
+        if(html){ b.innerHTML = html; bindMetricItems(b); }
+      });
+    }
+    const roomLayer = el('room-metrics');
+    if(roomLayer && state.selectedRoom !== 'overview'){
+      qsa('.badge[data-kind="roomMetric"][data-room]', roomLayer).forEach(b=>{
+        const rid = b.dataset.room || state.selectedRoom;
+        const r = room(rid);
+        if(!r) return;
+        const html = metricContent(r);
+        if(html){ b.innerHTML = html; bindMetricItems(b); }
+      });
+      const rClimate = el('room-climate-line');
+      const r = room(state.selectedRoom);
+      if(rClimate && r){
+        const html = metricContent(r);
+        rClimate.innerHTML = html || '<span class="muted">Нет назначенных стандартных датчиков комнаты</span>';
+        bindMetricItems(rClimate);
+      }
+    }
+  }catch(e){ console.warn('updateStandardSensorMetricsOnly', e); }
+}
+function updateLiveStateOnly(){
+  updateStandardSensorMetricsOnly();
+  patchMarkerForEntity('__noop__');
+  updateVisibleDeviceStatesOnly();
+}
+
 function patchMarkerForEntity(entity_id){
   if(state.edit) return false;
   const d=devices().find(x=>x.entity_id===entity_id);
@@ -1497,7 +2834,7 @@ function patchMarkerForEntity(entity_id){
     const r=room(state.selectedRoom);
     if(rClimate && r){
       const html=metricContent(r);
-      rClimate.innerHTML=html||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>';
+      rClimate.innerHTML=html||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>'; bindMetricItems(rClimate);
     }
   }
   return patched;
@@ -1526,7 +2863,7 @@ function attachEditMarkerActions(b,d,scope){
     e.preventDefault(); e.stopPropagation();
     if(longFired){ longFired=false; return; }
     selectEditObject({kind:'marker', id:d.entity_id, scope, label:displayName(d)});
-    showToast('Маркер выбран. Удерживайте его для перемещения через SVG Layout Editor.');
+    showToast('Маркер выбран. Удерживайте его для перемещения через редактор расположения.');
   });
 }
 function quickActionsHtml(list){
@@ -1552,9 +2889,9 @@ function deviceCardHtml(d, showAllInRoom=false){
   const roomLabel = ROOM_MAP[normalizedRoomId(d.room)]?.label || d.room || 'Без комнаты';
   const extra = showAllInRoom && !sameRoom ? ` · ${esc(roomLabel)}` : '';
   const title = canPlace ? `${d.entity_id}
-Редактирование через SVG Layout Editor` : `${d.entity_id}
+Редактирование через редактор расположения` : `${d.entity_id}
 Устройство из другой комнаты. Перенос между комнатами отключён.`;
-  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}"><div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div>${panelMode()==='viewer'?`<span class="state readonly" title="Режим просмотра: управление недоступно">${esc(stateText(d))}</span>`:`<button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button>`}</div>`;
+  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}">${automationBadgeHtml(d)}<div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div>${panelMode()==='viewer'?`<span class="state readonly" title="Режим просмотра: управление недоступно">${esc(stateText(d))}</span>`:`<button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button>`}</div>`;
 }
 function bindDeviceCards(list){
   qsa('.device-card',list).forEach(card=>{
@@ -1573,7 +2910,7 @@ function bindDeviceCards(list){
   qsa('[data-toggle]',list).forEach(btn=>{const d=devices().find(x=>x.entity_id===btn.dataset.toggle); if(d && !state.edit) attachPressActions(btn,d)});
 }
 
-// Stable edit workflow: edit mode uses a lightweight picker and SVG Layout Editor, not the live map.
+// Stable edit workflow: edit mode uses a lightweight picker and редактор расположения, not the live map.
 function devicePickerCardHtml(d){
   const rid=effectiveDeviceRoomId(d);
   const roomLabel = ROOM_MAP[normalizedRoomId(rid)]?.label || d.room || d.haArea?.name || 'Без комнаты';
@@ -1624,7 +2961,7 @@ function renderDevicePicker(){
   if(!state.openDevicePickerGroup && q && ordered.length===1) state.openDevicePickerGroup=ordered[0].id;
   const count=el('device-picker-count'); if(count) count.textContent=`${ordered.length} групп · ${visible.length} устройств`;
   const title=el('device-picker-title'); if(title) title.textContent=state.selectedRoom==='overview'?'Выбрать устройство для общего плана':`Выбрать устройство: ${room(state.selectedRoom)?.label||state.selectedRoom}`;
-  const subtitle=el('device-picker-subtitle'); if(subtitle) subtitle.textContent='Тапните устройство: откроется SVG Layout Editor. Перетаскивание отключено.';
+  const subtitle=el('device-picker-subtitle'); if(subtitle) subtitle.textContent='Тапните устройство: откроется редактор расположения. Перетаскивание отключено.';
   if(!ordered.length){ list.innerHTML=`<p class="muted device-empty">Нет устройств для размещения. Включите “Показать уже размещённые” или измените поиск.</p>`; return; }
   list.innerHTML=`<div class="device-picker-groups">${ordered.map(g=>{
     const open=g.id===state.openDevicePickerGroup;
@@ -1817,6 +3154,11 @@ function attachPressActions(node,d,opts={}){
     if(opts.ignoreSelector && e.target.closest(opts.ignoreSelector)) return;
     if(state.edit) return;
     if(e.button !== undefined && e.button !== 0) return;
+    // Standard sensor metric badges live above room zones. Prevent the
+    // underlying room-zone/stage gesture handlers from treating the same tap
+    // as room navigation while still allowing short/long press device actions.
+    e.preventDefault();
+    e.stopPropagation();
     pointerId=e.pointerId; sx=e.clientX; sy=e.clientY; longFired=false;
     try{ node.setPointerCapture(pointerId); }catch(_){}
     timer=setTimeout(()=>{ longFired=true; timer=null; openDeviceModal(d); }, LONG_PRESS_MS);
@@ -1869,7 +3211,8 @@ function domainControls(d){
   } else if(d.domain==='script'){
     rows.push(`<p class="muted">Скрипт запускается через <b>script.turn_on</b>.</p>`);
   } else if(d.domain==='automation'){
-    rows.push(`<div class="device-modal-actions mode-grid"><button data-action="automation" data-service="trigger">Запустить</button><button data-action="automation" data-service="turn_on">Включить</button><button data-action="automation" data-service="turn_off">Выключить</button></div>`);
+    rows.push(`<p class="muted">Карточка управляет состоянием самой автоматизации: включить или отключить правило Home Assistant.</p>`);
+    rows.push(`<div class="device-modal-actions mode-grid"><button data-action="automation" data-service="turn_on">Включить автоматизацию</button><button data-action="automation" data-service="turn_off">Выключить автоматизацию</button></div>`);
   } else if(d.domain==='input_number'){
     const min=Number(a.min ?? 0), max=Number(a.max ?? 100), step=Number(a.step ?? 1), val=Number(s?.state ?? min);
     const unit=esc(a.unit_of_measurement||'');
@@ -1905,30 +3248,47 @@ async function requestPin(message='Введите PIN-код'){
   if(pin===null) return null;
   return String(pin).trim();
 }
+const _serviceInFlight = new Map();
+function serviceLockKey(domain, service, data){ return `${domain}.${service}:${String(data?.entity_id || '')}`; }
+function refreshStatesSoon(){
+  clearTimeout(refreshStatesSoon._timer);
+  refreshStatesSoon._timer = setTimeout(() => loadStates().catch(e => console.warn('state refresh after service failed', e)), 700);
+}
 async function callService(domain,service,data,opts={}){
   if(panelMode()==='viewer'){ throw new Error('Устройство в режиме viewer: управление запрещено'); }
-  const payload={domain,service,data,confirmDangerous:!!opts.confirmDangerous};
-  if(opts.pin) payload.pin=opts.pin;
-  try{
-    await apiJson('api/ha/service',{method:'POST',body:JSON.stringify(payload)});
-    await loadStates();
-  }catch(e){
-    if(e.status===409 && e.data?.requiresPin){
-      const pin=await requestPin(e.data.message || `Введите PIN для ${domain}.${service}`);
-      if(pin){
-        await callService(domain,service,data,{...opts,pin,confirmDangerous:!!opts.confirmDangerous});
-        return;
-      }
-    }
-    if(e.status===409 && e.data?.requiresConfirmation){
-      const msg=e.data.message || `Подтвердить опасную команду ${domain}.${service}?`;
-      if(window.confirm(msg)){
-        await callService(domain,service,data,{...opts,confirmDangerous:true});
-        return;
-      }
-    }
-    throw e;
+  const lockKey = serviceLockKey(domain, service, data);
+  if(_serviceInFlight.has(lockKey)){
+    showToast('Команда уже выполняется…');
+    return _serviceInFlight.get(lockKey);
   }
+  const run = (async()=>{
+    const payload={domain,service,data,confirmDangerous:!!opts.confirmDangerous};
+    if(opts.pin) payload.pin=opts.pin;
+    for(let attempt=0; attempt<4; attempt++){
+      try{
+        await apiJson('api/ha/service',{method:'POST',body:JSON.stringify(payload)});
+        refreshStatesSoon();
+        return;
+      }catch(e){
+        if(e.status===409 && e.data?.requiresPin){
+          const pin=await requestPin(e.data.message || `Введите PIN для ${domain}.${service}`);
+          if(!pin) return;
+          payload.pin=pin;
+          continue;
+        }
+        if(e.status===409 && e.data?.requiresConfirmation){
+          const msg=e.data.message || `Подтвердить опасную команду ${domain}.${service}?`;
+          if(!window.confirm(msg)) return;
+          payload.confirmDangerous=true;
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new Error('Не удалось выполнить команду после подтверждения');
+  })().finally(()=>_serviceInFlight.delete(lockKey));
+  _serviceInFlight.set(lockKey, run);
+  return run;
 }
 function bindDeviceModalActions(d){
   const body=el('device-modal-body');
@@ -2435,6 +3795,7 @@ function getInitialPlacementPoint(kind,entityId){
   return p ? roomStoredToImagePos(rid,p) : {x:50,y:50};
 }
 function openPlacementEditor(entityId){
+  try{ syncOldAndroidCompatClass(); }catch(_){}
   if(!state.edit) return;
   const d=devices().find(x=>x.entity_id===entityId);
   if(!d || !canEditDeviceInCurrentScope(d)){ showToast('Это устройство нельзя редактировать в текущем scope'); return; }
@@ -2454,7 +3815,7 @@ function openPlacementEditor(entityId){
   const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
   const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
   const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
-  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden'); setPlacementEditorPanelHidden(false);
   ['btn-clear-zone-draw','btn-delete-placement-zone'].forEach(id=>{const b=el(id); if(b) b.classList.add('hidden');});
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(initial.x,initial.y);
@@ -2546,6 +3907,7 @@ function deletePlacementEditorZone(){
 }
 
 function openZoneLayoutEditor(roomId){
+  try{ syncOldAndroidCompatClass(); }catch(_){}
   if(!state.edit) return;
   const rid=normalizedRoomId(roomId);
   const r=roomWithLayout(rid);
@@ -2562,7 +3924,7 @@ function openZoneLayoutEditor(roomId){
   const title=el('placement-editor-title'); if(title) title.textContent='Редактирование зоны комнаты';
   updatePlacementEditorZoneLabels();
   const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
-  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden'); setPlacementEditorPanelHidden(false);
   ['btn-clear-zone-draw','btn-delete-placement-zone'].forEach(id=>{const b=el(id); if(b) b.classList.remove('hidden');});
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(b.x,b.y);
@@ -2572,6 +3934,7 @@ function openZoneLayoutEditor(roomId){
 }
 
 function openMetricLayoutEditor(metricKind, roomId){
+  try{ syncOldAndroidCompatClass(); }catch(_){}
   if(!state.edit) return;
   const rid=normalizedRoomId(roomId || state.selectedRoom);
   const kind = metricKind==='overviewMetric' ? 'overview' : 'room';
@@ -2596,7 +3959,7 @@ function openMetricLayoutEditor(metricKind, roomId){
   const sizeBox=el('placement-editor-size-controls'); if(sizeBox) sizeBox.classList.add('hidden');
   const zr=el('placement-editor-zone-rect'); if(zr) zr.classList.add('hidden');
   const pm=el('placement-editor-marker'); if(pm) pm.classList.remove('hidden');
-  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden');
+  const modal=el('placement-editor-modal'); if(modal) modal.classList.remove('hidden'); setPlacementEditorPanelHidden(false);
   ['btn-clear-zone-draw','btn-delete-placement-zone'].forEach(id=>{const b=el(id); if(b) b.classList.add('hidden');});
   document.body.classList.add('placement-editor-open');
   setPlacementEditorPoint(initial.x,initial.y);
@@ -2611,6 +3974,7 @@ function isSelectedEdit(kind,id,scope){
 function selectEditObject(obj){
   if(!state.edit) return;
   state.selectedEdit = obj;
+  state.editActionSheetHidden = false;
   renderEditSheet();
   qsa('.edit-selected').forEach(x=>x.classList.remove('edit-selected'));
   const selector = obj.kind==='marker'
@@ -2633,16 +3997,23 @@ function selectedEditLabel(){
 }
 function renderEditSheet(){
   const sheet=el('edit-action-sheet'); if(!sheet) return;
-  sheet.classList.toggle('hidden', !state.edit);
+  const floatBtn = el('btn-edit-actions-float');
+  const isHidden = !!state.editActionSheetHidden && !!state.edit;
+  sheet.classList.toggle('hidden', !state.edit || isHidden);
+  if(floatBtn){
+    floatBtn.classList.toggle('hidden', !state.edit || !isHidden);
+    floatBtn.textContent = 'Действие';
+  }
+  sheet.classList.toggle('edit-sheet-has-selection', !!state.selectedEdit);
   const title=el('edit-sheet-title'); if(title) title.textContent=selectedEditLabel();
   const hint=el('edit-sheet-hint');
   const isMetric=!!(state.selectedEdit && (state.selectedEdit.kind==='overviewMetric'||state.selectedEdit.kind==='roomMetric'));
   const isZone=!!(state.selectedEdit && state.selectedEdit.kind==='zone');
   if(hint){
-    if(!state.selectedEdit) hint.textContent='Короткий тап выбирает объект. Удержание открывает SVG Layout Editor. Устройства добавляются через кнопку “Устройства”.';
-    else if(isMetric) hint.textContent='Это системный сдвоенный датчик. Короткий тап выбирает его, удержание открывает SVG Layout Editor для перемещения. Удалить окончательно нельзя.';
-    else if(isZone) hint.textContent='Зона выбрана. Удержание открывает SVG Layout Editor: X/Y перемещают прямоугольник, W/H меняют ширину и высоту отдельно. Форма остаётся прямоугольной.';
-    else hint.textContent='Маркер выбран. Для перемещения удерживайте его, затем в SVG Layout Editor кликните/тапните новую точку и нажмите “Применить”.';
+    if(!state.selectedEdit) hint.textContent='Короткий тап выбирает объект. Удержание открывает редактор расположения. Устройства добавляются через кнопку “Устройства”.';
+    else if(isMetric) hint.textContent='Это системный сдвоенный датчик. Короткий тап выбирает его, удержание открывает редактор расположения для перемещения. Удалить окончательно нельзя.';
+    else if(isZone) hint.textContent='Зона выбрана. Удержание открывает редактор расположения: X/Y перемещают прямоугольник, W/H меняют ширину и высоту отдельно. Форма остаётся прямоугольной.';
+    else hint.textContent='Маркер выбран. Для перемещения удерживайте его, затем в редактор расположения кликните/тапните новую точку и нажмите “Применить”.';
   }
   const del=el('btn-delete-selected');
   const reset=el('btn-reset-selected');
@@ -2701,7 +4072,7 @@ async function toggleDevice(d){
   else if(domain==='valve') { service=(st==='open' || st==='opening') ? 'close_valve' : 'open_valve'; }
   else if(domain==='button') { service='press'; }
   else if(domain==='script') { service='turn_on'; }
-  else if(domain==='automation') { service=st==='on' ? 'trigger' : 'turn_on'; }
+  else if(domain==='automation') { service=st==='on' ? 'turn_off' : 'turn_on'; }
   else { openDevice(d); return; }
   try{ await callService(domain,service,data); showToast(`${displayName(d)}: команда отправлена`); }
   catch(e){showToast('Ошибка управления: '+e.message)}
@@ -2750,7 +4121,7 @@ function metricDown(e){
   window.addEventListener('pointercancel',up,true);
 }function pointerPoint(e){return {id:e.pointerId,x:e.clientX,y:e.clientY}}
 function stageKindFromEl(stage){return stage && stage.id==='overview-stage'?'overview':'room'}
-function isStageInteractiveTarget(target){return !!target.closest('.device-marker,.badge,.room-zone,button,a,input,textarea,select,label,.device-card,.edit-action-sheet,.quick-overlay')}
+function isStageInteractiveTarget(target){return !!target.closest('.device-marker,.badge,.metric-item,.room-zone,button,a,input,textarea,select,label,.device-card,.edit-action-sheet,.quick-overlay')}
 function bindStageGestures(){
   [[el('overview-stage'),'overview'],[el('room-stage'),'room']].forEach(([stage,kind])=>{
     if(!stage || stage.dataset.gestureBound) return;
@@ -2805,6 +4176,7 @@ function bindStageGestures(){
       try{stage.releasePointerCapture(e.pointerId)}catch(_){}
       if(g.pointers.size===0){
         if(g.moved){ saveViewportPrefs(); state.suppressClick=true; setTimeout(()=>state.suppressClick=false,DRAG_SUPPRESS_MS); }
+        else if(kind==='overview' && !g.startedOnInteractive){ openOverviewRoomFromEvent(e); }
         state.stageGesture=null;
       } else {
         const pts=[...g.pointers.values()];
@@ -2820,6 +4192,7 @@ function bindStageGestures(){
 }
 
 function hideKioskRooms(){
+  document.body.classList.remove('kiosk-rooms-open');
   const o=el('kiosk-room-overlay');
   if(o) o.classList.add('hidden');
   if(state.kioskRoomTimer){ clearTimeout(state.kioskRoomTimer); state.kioskRoomTimer=null; }
@@ -2843,27 +4216,74 @@ async function loadAttention(){
 function renderAttentionButton(){
   const btn=el('btn-kiosk-attention'); if(!btn) return;
   const count=(state.attention?.rules||[]).filter(r=>r.alert).length;
-  const hasAlert=!!state.attention?.hasAlerts;
+  const hasAlert=!!state.attention?.hasAlerts && count > 0;
   btn.classList.toggle('has-alert', hasAlert);
   btn.classList.toggle('hidden', !hasAlert);
+  btn.setAttribute('aria-hidden', hasAlert ? 'false' : 'true');
   btn.textContent = count>1 ? `! ${count}` : '!';
   btn.title = hasAlert ? 'Открыть окно Внимание' : 'Нет активных alerts';
 }
 function attentionStatusText(rule){ return rule?.alert ? 'Внимание' : 'OK'; }
+
+function attentionDurationText(rule){
+  const start=Date.parse(rule?.last_changed || rule?.last_updated || rule?.updated_at || rule?.created_at || '');
+  if(!Number.isFinite(start)) return '';
+  const ms=Math.max(0, Date.now()-start);
+  const min=Math.floor(ms/60000), hr=Math.floor(min/60), day=Math.floor(hr/24);
+  if(day>0) return day+' дн. '+(hr%24)+' ч';
+  if(hr>0) return hr+' ч '+(min%60)+' мин';
+  if(min>0) return min+' мин';
+  return 'меньше минуты';
+}
+function attentionDevice(entityId){ return devices().find(d=>d.entity_id===entityId) || null; }
+function attentionRoomId(entityId){ const d=attentionDevice(entityId); return d ? canonicalRoomId(effectiveDeviceRoomId(d) || d.room || inferRoomIdFromDevice(d)) : ''; }
+async function acceptAttentionCurrent(entityId){
+  if(!canManageAttention()){ showToast('Изменение доступно только в admin mode и при разблокированном киоске'); return; }
+  await apiJson('api/attention/'+encodeURIComponent(entityId)+'/normal',{method:'POST'});
+  await loadAttention();
+  renderAttentionModal();
+  showToast('Текущее состояние принято как нормальное');
+}
+async function removeAttentionRule(entityId, toast='Удалено из Внимание'){
+  if(!canManageAttention()){ showToast('Изменение доступно только в admin mode и при разблокированном киоске'); return; }
+  await apiJson('api/attention/'+encodeURIComponent(entityId),{method:'DELETE'});
+  await loadAttention();
+  await loadSecurityRules();
+  renderAttentionModal();
+  showToast(toast);
+}
+function openAttentionDevice(entityId){ const d=attentionDevice(entityId); if(d){ closeAttentionModal(); openDeviceModal(d); } else showToast('Entity не найдена среди устройств'); }
+function openAttentionRoom(entityId){ const rid=attentionRoomId(entityId); if(rid && ROOM_MAP[rid]){ closeAttentionModal(); selectRoom(rid); } else showToast('Комната для entity не найдена'); }
 function renderAttentionModal(){
   updateAttentionFromStates();
   const body=el('attention-body'); if(!body) return;
   const rules=state.attention?.rules||[];
   const active=rules.filter(r=>r.alert), ok=rules.filter(r=>!r.alert);
-  const section=(title,list)=>`<h3>${esc(title)}</h3>`+(list.length?`<div class="attention-list">${list.map(r=>`<div class="attention-row ${r.alert?'alert':'ok'}" data-attention-entity="${esc(r.entity_id)}"><div><b>${esc(r.name||r.entity_id)}</b><span>${esc(r.entity_id)}</span></div><div><span>Сейчас: <b>${esc(attentionStateText(r,r.current_state))}</b></span><span>Норма: <b>${esc(attentionStateText(r,r.normal_state))}</b></span><span>${esc(attentionStatusText(r))}</span></div></div>`).join('')}</div>`:'<p class="muted">—</p>');
-  body.innerHTML=`<p class="muted">Список глобальный: alert показывается в киоске независимо от текущей комнаты.</p>${section('Активные',active)}${section('Наблюдаются',ok)}`;
-  qsa('[data-attention-entity]', body).forEach(row=>bindHold(row, async()=>{
-    if(!canManageAttention()){ showToast('Изменение доступно только в admin mode и при разблокированном киоске'); return; }
+  const canManage=canManageAttention();
+  const rowHtml=(r)=>{
+    const dur=attentionDurationText(r);
+    const roomId=attentionRoomId(r.entity_id);
+    const roomName=roomId && ROOM_MAP[roomId] ? ROOM_MAP[roomId].label : '';
+    return `<div class="attention-row ${r.alert?'alert':'ok'}" data-attention-entity="${esc(r.entity_id)}">
+      <div class="attention-main"><b>${esc(r.name||r.friendly_name||r.entity_id)}</b><span>${esc(r.entity_id)}</span>${roomName?`<span>Комната: ${esc(roomName)}</span>`:''}${dur?`<span>Длительность: ${esc(dur)}</span>`:''}</div>
+      <div class="attention-state"><span>Сейчас: <b>${esc(attentionStateText(r,r.current_state))}</b></span><span>Нормальное состояние: <b>${esc(attentionStateText(r,r.normal_state))}</b></span><span>${esc(attentionStatusText(r))}</span></div>
+      <div class="attention-row-actions">
+        <button type="button" data-attention-action="open-device">Устройство</button>
+        <button type="button" data-attention-action="open-room" ${roomName?'':'disabled'}>Комната</button>
+        <button type="button" data-attention-action="accept-current" ${canManage?'':'disabled'}>Принять текущее как нормальное</button>
+        <button type="button" class="danger" data-attention-action="remove-rule" ${canManage?'':'disabled'}>Игнорировать всегда</button>
+      </div>
+    </div>`;
+  };
+  const section=(title,list)=>`<h3>${esc(title)}</h3>`+(list.length?`<div class="attention-list">${list.map(rowHtml).join('')}</div>`:'<p class="muted">—</p>');
+  body.innerHTML=`<p class="muted">Список глобальный: индикатор Внимание показывается независимо от текущей комнаты. Для правил используется нормальное состояние, сохранённое при включении наблюдения или при действии “Принять текущее как нормальное”.</p>${section('Активные отклонения',active)}${section('Наблюдаются без отклонений',ok)}`;
+  qsa('[data-attention-entity]', body).forEach(row=>{
     const eid=row.dataset.attentionEntity;
-    await apiJson('api/attention/'+encodeURIComponent(eid),{method:'DELETE'});
-    await loadAttention();
-  await loadSecurityRules(); renderAttentionModal(); showToast('Удалено из Внимание');
-  }));
+    row.querySelector('[data-attention-action="open-device"]')?.addEventListener('click', e=>{ e.preventDefault(); e.stopPropagation(); openAttentionDevice(eid); });
+    row.querySelector('[data-attention-action="open-room"]')?.addEventListener('click', e=>{ e.preventDefault(); e.stopPropagation(); openAttentionRoom(eid); });
+    row.querySelector('[data-attention-action="accept-current"]')?.addEventListener('click', async e=>{ e.preventDefault(); e.stopPropagation(); await acceptAttentionCurrent(eid); });
+    row.querySelector('[data-attention-action="remove-rule"]')?.addEventListener('click', async e=>{ e.preventDefault(); e.stopPropagation(); if(confirm('Больше не следить за этим устройством?')) await removeAttentionRule(eid, 'Правило Внимание удалено'); });
+  });
 }
 function openAttentionModal(){ renderAttentionModal(); el('attention-modal')?.classList.remove('hidden'); document.body.classList.add('modal-open'); }
 function closeAttentionModal(){ el('attention-modal')?.classList.add('hidden'); document.body.classList.remove('modal-open'); }
@@ -2896,7 +4316,7 @@ function dangerousSectionHtml(d){
 function attentionSectionHtml(d){
   const r=attentionRule(d.entity_id); const admin=canManageAttention();
   const current=stateText(d);
-  return `<section class="device-attention-section"><h3>Внимание</h3><p class="muted">Правило глобальное: кнопка “Внимание!” в киоске сработает независимо от комнаты, где сейчас открыт экран.</p>${r?`<div class="attention-mini ${r.alert?'alert':'ok'}"><b>${r.alert?'Внимание':'OK'}</b><span>Норма: ${esc(r.normal_state)}</span><span>Сейчас: ${esc(r.current_state||current)}</span></div>`:`<p class="muted">Сейчас: ${esc(current)}. При включении это состояние будет сохранено как норма.</p>`}<button type="button" data-action="attention-toggle" ${admin?'':'disabled'}>${r?'Не следить':'Следить за изменением состояния'}</button>${admin?'':'<p class="muted">Изменение доступно только в admin mode и при разблокированном киоске.</p>'}</section>`;
+  return `<section class="device-attention-section"><h3>Внимание</h3><p class="muted">Правило глобальное: кнопка “Внимание!” в киоске сработает независимо от комнаты, где сейчас открыт экран.</p>${r?`<div class="attention-mini ${r.alert?'alert':'ok'}"><b>${r.alert?'Внимание':'OK'}</b><span>Нормальное состояние: ${esc(r.normal_state)}</span><span>Сейчас: ${esc(r.current_state||current)}</span></div>`:`<p class="muted">Сейчас: ${esc(current)}. При включении это состояние будет сохранено как норма.</p>`}<button type="button" data-action="attention-toggle" ${admin?'':'disabled'}>${r?'Не следить':'Следить за изменением состояния'}</button>${admin?'':'<p class="muted">Изменение доступно только в admin mode и при разблокированном киоске.</p>'}</section>`;
 }
 
 function renderKioskRoomOverlay(){
@@ -2916,6 +4336,7 @@ function renderKioskRoomOverlay(){
   });
 }
 function openKioskRooms(){
+  document.body.classList.add('kiosk-rooms-open');
   renderKioskRoomOverlay();
   const o=el('kiosk-room-overlay'); if(!o) return;
   o.classList.remove('hidden');
@@ -2924,7 +4345,13 @@ function openKioskRooms(){
 }
 
 function selectRoom(id){
-  state.selectedRoom=id;
+  const rid=canonicalRoomId(id);
+  if(!rid || (rid!=='overview' && !ROOM_MAP[rid])){
+    showToast('Комната не найдена: '+String(id||''));
+    return;
+  }
+  state.selectedRoom=rid;
+  state.kioskTileRoomFilter='';
   if(state.ui.mobileMode || state.ui.autoHide){
     state.ui.hideSidebar=true; state.ui.hideDevicePanel=true;
   }
@@ -2971,9 +4398,11 @@ const _mobileAuth = (()=>{
 
 /* ── Per-client ID (stable per browser/device, used for /api/prefs) ── */
 function currentWebClientSlug(){
+  // v4.2.0.26: stored slug is never enough to identify the current web client.
+  // Mobile/failed-pairing/root flows can carry stale allha_web_client_slug from
+  // previous sessions; only an explicit /client/<slug> URL is authoritative.
   const m = location.pathname.match(/\/client\/([a-zA-Z0-9_-]+)/);
-  if(m) return m[1];
-  try{ return localStorage.getItem('allha_web_client_slug') || ''; }catch{ return ''; }
+  return m ? m[1] : '';
 }
 let _clientId = (() => {
   if(_mobileAuth.active) return _mobileAuth.deviceId; // мобилка — device_id уже есть
@@ -2989,9 +4418,19 @@ let _clientId = (() => {
   }catch{ return ''; }
 })();
 async function registerLocalWebClient(){
-  if(_mobileAuth.active) return null;
+  if(_mobileAuth.active){
+    try{ localStorage.removeItem('allha_web_client_slug'); localStorage.removeItem('allha_web_client_url'); }catch{}
+    return null;
+  }
   try{
-    const slug = currentWebClientSlug();
+    // v4.2.0.23: only an explicit /client/<slug> URL can touch a persistent web-client.
+    // Never resurrect a stored slug from localStorage on root/mobile/failed-pairing flows.
+    const pathSlug = (location.pathname.match(/\/client\/([a-zA-Z0-9_-]+)/)||[])[1] || '';
+    const slug = pathSlug;
+    if(!slug){
+      state.webClient = null;
+      return null;
+    }
     const screenInfo = `${window.screen?.width || innerWidth}x${window.screen?.height || innerHeight}@${window.devicePixelRatio || 1}`;
     const res = await apiJson('api/web-clients/touch', { method:'POST', body:JSON.stringify({ slug, clientId:_clientId, alias: localStorage.getItem('allha_web_client_alias') || '', screen:screenInfo }) });
     const c = res.client || {};
@@ -3017,7 +4456,7 @@ function _mobileShowOffline(){
   if(!ov){
     ov = document.createElement('div');
     ov.id = '_mob-offline';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(14,16,19,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:32px;font-family:system-ui,sans-serif';
+    ov.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:9999;background:rgba(14,16,19,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:32px;font-family:system-ui,sans-serif';
     ov.innerHTML = '<div style="font-size:48px">📡</div>'
       + '<div style="font-size:20px;font-weight:700;color:#e8edf4">Нет связи с сервером</div>'
       + '<div id="_mob-status" style="font-size:14px;color:#6f7a8a;text-align:center"></div>'
@@ -3085,12 +4524,14 @@ async function apiJson(url,opt={}){
     headers['X-Device-ID'] = _mobileAuth.deviceId;
   }
   if(_clientId) headers['X-Client-ID'] = _clientId;
+  const explicitSlug = currentWebClientSlug();
+  if(!_mobileAuth.active && explicitSlug) headers['X-Client-Slug'] = explicitSlug;
   const res=await fetch(url,{...opt,headers});
   const data=await res.json().catch(()=>({}));
   if(!res.ok){const err=new Error(data.error||data.message||res.status);err.status=res.status;err.data=data;throw err;}
   return data;
 }
-async function loadLayout(){try{const l=await apiJson('api/layout'); state.layout={version:8,coordinateSpace:'room-content-box',overviewRoomSync:false,roomCoordinateMigrated:{},overviewMarkers:{},roomMarkers:{},overviewMetrics:{},roomMetrics:{},zones:{},customNames:{},...l}; if(!('coordinateSpace' in (l||{}))) state.layout.coordinateSpace='legacy-stage'; if(!('roomCoordinateMigrated' in (l||{}))) state.layout.roomCoordinateMigrated={}; if(!state.layout.overviewMarkers&&state.layout.markers)state.layout.overviewMarkers=state.layout.markers; migrateLayout();}catch(e){console.warn('layout load failed',e)}}
+async function loadLayout(){try{const l=await apiJson('api/layout'); state.layout={version:8,coordinateSpace:'room-content-box',overviewRoomSync:false,roomCoordinateMigrated:{},overviewMarkers:{},roomMarkers:{},overviewMetrics:{},roomMetrics:{},zones:{},customNames:{},...l}; if(!('coordinateSpace' in (l||{}))) state.layout.coordinateSpace='legacy-stage'; if(!('roomCoordinateMigrated' in (l||{}))) state.layout.roomCoordinateMigrated={}; if(!state.layout.overviewMarkers&&state.layout.markers)state.layout.overviewMarkers=state.layout.markers; migrateLayout();}catch(e){console.warn('position load failed',e)}}
 function migrateLayout(){
   if(!state.layout.roomMarkers)state.layout.roomMarkers={};
   if(state.layout.roomMarkers.boiler){
@@ -3109,8 +4550,8 @@ function migrateLayout(){
   // v3.2.3: positions on the overview and inside rooms are independent.
   state.layout.overviewRoomSync=false;
 }
-async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Layout сохранен'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
-async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const pi=el('poll-interval'); if(pi) pi.value=Math.round((cfg.pollIntervalMs||30000)/1000);return cfg}
+async function saveLayout(show=true){try{await apiJson('api/layout',{method:'POST',body:JSON.stringify(state.layout)}); if(show) showToast('Расположение датчиков и маркеров сохранено'); return true;}catch(e){if(show) showToast(e.message); throw e;}}
+async function loadConfig(){const cfg=await apiJson('api/config');state.config=cfg;applyGlobalConfig(cfg);const hu=el('ha-url'); if(hu) hu.value=cfg.haUrl||'';const pi=el('poll-interval'); if(pi) pi.value=String(((cfg.pollIntervalMs||30000)/1000));const sb=el('sse-batch-interval'); if(sb) sb.value=String(((cfg.sseBatchMs ?? 1000)/1000));return cfg}
 
 
 
@@ -3125,7 +4566,7 @@ function renderLevelSwitcher(){
   const active=activeLevelMeta();
   const others=levels.filter(l=>l.id !== active.id);
   const levelHtml = levels.length > 1 ? others.map(l=>`<button type="button" class="level-switch-btn" data-quick-level="${esc(l.id)}">${esc(l.name||l.id)}</button>`).join('') : '';
-  const overviewHtml = (state.ui.kioskMode && state.selectedRoom!=='overview') ? '<button type="button" class="level-switch-btn overview-switch-btn" data-kiosk-overview-home="1">Общий план</button>' : '';
+  const overviewHtml = ''; // v4.1.21.18.43: overview button is kept only in the left kiosk control stack, not centered over the map
   const html = overviewHtml + levelHtml;
   ['level-switcher','kiosk-level-switcher'].forEach(id=>{
     const box=el(id);
@@ -3200,9 +4641,10 @@ function profileCopyButtons(targetId, profiles){
   const disabled = other.length ? '' : 'disabled';
   const options = other.map(x=>`<option value="${esc(x.id)}">${esc(x.name||x.id)} (${esc(x.id)})</option>`).join('');
   const kinds = [
+    ['display','Копировать размеры, масштаб и прозрачность из'],
     ['zones','Копировать зоны из'],
     ['sensors','Копировать датчики из'],
-    ['markers','Копировать расположение маркеров и сенсоров из'],
+    ['markers','Копировать расположение датчиков и маркеров из'],
     ['rooms','Копировать комнаты из'],
     ['overview','Копировать общий план из'],
     ['all','Копировать все настройки из']
@@ -3210,7 +4652,7 @@ function profileCopyButtons(targetId, profiles){
   return kinds.map(([kind,label])=>`<div class="profile-copy-action"><button type="button" data-profile-copy-kind="${kind}" data-profile-copy-target="${esc(targetId)}" ${disabled}>${label}</button><select data-profile-copy-source="${esc(targetId)}:${kind}" ${disabled}>${options}</select></div>`).join('');
 }
 function describeCopyKind(kind){
-  return ({zones:'зоны',sensors:'стандартные датчики комнат',markers:'расположение маркеров и сенсоров',rooms:'комнаты',overview:'общий план',all:'все настройки активного уровня профиля'})[kind] || kind;
+  return ({display:'размеры, масштаб и прозрачность',zones:'зоны',sensors:'стандартные датчики комнат',markers:'расположение датчиков и маркеров',rooms:'комнаты',overview:'общий план',all:'все настройки активного уровня профиля'})[kind] || kind;
 }
 function mismatchWarningText(data){
   const c=data?.comparison || {};
@@ -3277,7 +4719,11 @@ function renderProfilesManager(){
     `<button type="button" id="btn-create-profile" ${canCreate?'':'disabled'}>${canCreate?'Создать профиль':'Максимум 5 профилей'}</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
     `<p class="muted">Security/PIN, dangerous rules и Attention Monitor остаются общими для всех профилей.</p>`;
-  qsa('button,input,select', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
+  qsa('button,input,select', box).forEach(ctrl=>{
+    if(admin) return;
+    const allowed = ctrl.matches('[data-profile-activate-device],[data-level-activate],#client-settings-copy-source,[data-client-settings-copy]');
+    if(!allowed) ctrl.disabled=true;
+  });
 }
 async function createProfileFromSettings(){
   if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
@@ -3285,7 +4731,21 @@ async function createProfileFromSettings(){
   const duplicateZones=!!el('new-profile-copy-zones')?.checked;
   const duplicateMarkers=!!el('new-profile-copy-markers')?.checked;
   try{
+    const before=(state.profiles?.profiles||[]).map(p=>p.id);
     state.profiles=await apiJson('api/profiles',{method:'POST',body:JSON.stringify({name,duplicateZones,duplicateMarkers})});
+    const created=(state.profiles?.profiles||[]).find(p=>!before.includes(p.id)) || (state.profiles?.profiles||[]).slice(-1)[0];
+    if(created?.id){
+      await apiJson(`api/profiles/${encodeURIComponent(created.id)}/activate-for-client`,{method:'POST'}).catch(()=>{});
+      state._clientActiveProfileId = created.id;
+      state._clientActiveLevelId = 'level-1';
+      setLocalUiContext(created.id, 'level-1');
+      removeLocalUiPrefsForContext(created.id, 'level-1');
+      resetProfileScopedUiDefaults();
+      // Do not save full UI prefs while switching context; server create/activation endpoints store active profile/level.
+      showToast('Профиль создан и открыт. Перезагрузка...');
+      setTimeout(()=>location.reload(), 700);
+      return;
+    }
     renderProfilesManager();
     showToast('Профиль создан');
   }catch(e){ showToast('Ошибка создания профиля: '+e.message); }
@@ -3302,20 +4762,28 @@ async function duplicateProfileFromSettings(profileId){
   }catch(e){ showToast('Ошибка дублирования профиля: '+e.message); }
 }
 async function activateProfileFromSettings(profileId){
-  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  if(!canEditLayout()){ showToast('Глобальное переключение профиля доступно только в admin mode'); return; }
   if(!confirm('Переключить глобальный профиль? Все устройства без своего профиля увидят его. После переключения страница будет перезагружена.')) return;
   try{
     await apiJson(`api/profiles/${encodeURIComponent(profileId)}/activate`,{method:'POST'});
-    showToast('Профиль переключён. Перезагрузка...');
+    await apiJson(`api/profiles/${encodeURIComponent(profileId)}/activate-for-client`,{method:'POST'}).catch(()=>{});
+    state._clientActiveProfileId = profileId;
+    // v4.2.0.15: Do not call saveClientPrefs() from profile activation.
+    // Activation endpoints save only activeProfileId/activeLevelId/navigation.
+    // Sending the whole current state.ui here can overwrite another profile's
+    // scoped display sliders while the frontend is between contexts.
+    showToast('Профиль переключён для всех и для этого устройства. Перезагрузка...');
     setTimeout(()=>location.reload(), 700);
   }catch(e){ showToast('Ошибка переключения профиля: '+e.message); }
 }
 async function activateProfileForDevice(profileId){
-  if(!canEditLayout()){ showToast('Профили доступны только в admin mode'); return; }
+  if(!canManageProfileLevel()){ showToast('Профили доступны только в режиме control/admin'); return; }
   try{
     await apiJson(`api/profiles/${encodeURIComponent(profileId)}/activate-for-client`,{method:'POST'});
     state._clientActiveProfileId = profileId;
-    await saveClientPrefs().catch(()=>{});
+    // v4.2.0.15: Do not save full client prefs from activation.
+    // The server endpoint already stores the active context; UI sliders must only
+    // be saved by explicit UI-settings flows after the new profile is loaded.
     showToast('Профиль переключён для этого устройства. Перезагрузка...');
     setTimeout(()=>location.reload(), 700);
   }catch(e){ showToast('Ошибка переключения профиля: '+e.message); }
@@ -3410,7 +4878,11 @@ function renderLevelsManager(){
     `<button type="button" id="btn-create-level">Создать уровень</button></div>`+
     `<div class="profiles-list">${rows}</div>`+
     `<p class="muted">Переключение для использования выполняется на главной карте и в kiosk mode. Настройки нужны для создания/редактирования уровней и их источников.</p>`;
-  qsa('button,input,textarea', box).forEach(ctrl=>{ if(!admin) ctrl.disabled=true; });
+  qsa('button,input,textarea', box).forEach(ctrl=>{
+    if(admin) return;
+    const allowed = ctrl.matches('[data-level-activate]');
+    if(!allowed) ctrl.disabled=true;
+  });
 }
 async function createLevelFromSettings(){
   if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
@@ -3421,7 +4893,7 @@ async function createLevelFromSettings(){
     duplicateImages: !!el('new-level-copy-images')?.checked,
     duplicateSources: !!el('new-level-copy-sources')?.checked
   };
-  try{ state.levels=await apiJson('api/levels',{method:'POST',body:JSON.stringify(body)}); renderLevelsManager(); showToast('Уровень создан'); }
+  try{ const res=await apiJson('api/levels',{method:'POST',body:JSON.stringify(body)}); state.levels=res; if(res.activeLevelId) state._clientActiveLevelId=res.activeLevelId; renderLevelsManager(); showToast('Уровень создан'); if(res.reloadRecommended) setTimeout(()=>location.reload(), 350); }
   catch(e){ showToast('Ошибка создания уровня: '+e.message); }
 }
 async function duplicateLevelFromSettings(levelId){
@@ -3429,11 +4901,11 @@ async function duplicateLevelFromSettings(levelId){
   const current=state.levels?.levels?.find(l=>l.id===levelId);
   const name=window.prompt('Название копии уровня', current ? `Копия ${current.name}` : 'Копия уровня');
   if(name===null) return;
-  try{ state.levels=await apiJson(`api/levels/${encodeURIComponent(levelId)}/duplicate`,{method:'POST',body:JSON.stringify({name})}); renderLevelsManager(); showToast('Уровень продублирован'); }
+  try{ const res=await apiJson(`api/levels/${encodeURIComponent(levelId)}/duplicate`,{method:'POST',body:JSON.stringify({name})}); state.levels=res; if(res.activeLevelId) state._clientActiveLevelId=res.activeLevelId; renderLevelsManager(); showToast('Уровень продублирован'); if(res.reloadRecommended) setTimeout(()=>location.reload(), 350); }
   catch(e){ showToast('Ошибка дублирования уровня: '+e.message); }
 }
 async function activateLevelFromSettings(levelId){
-  if(!canEditLayout()){ showToast('Уровни доступны только в admin mode'); return; }
+  if(!canManageProfileLevel()){ showToast('Уровни доступны только в режиме control/admin'); return; }
   await activateLevelSmooth(levelId, {fromSettings:true});
 }
 async function saveLevelSources(levelId){
@@ -3447,20 +4919,33 @@ async function saveLevelSources(levelId){
     showToast('Источники уровня сохранены');
   }catch(e){ showToast('Ошибка сохранения источников уровня: '+e.message); }
 }
+let _levelImportInProgress = false;
 async function importLevelSources(levelId){
   if(!canEditLayout()){ showToast('Импорт уровня доступен только в admin mode'); return; }
   const ta=document.querySelector(`[data-level-source-paths="${CSS.escape(levelId)}"]`);
-  const dashboardPathText=(ta?.value||'').trim();
-  if(!dashboardPathText && !confirm('Источники уровня пустые. Перечитать уровень без адресов?')) return;
+  const levelsList = Array.isArray(state.levels?.levels) ? state.levels.levels : [];
+  const levelInfo = levelsList.find(l=>l.id===levelId) || null;
+  const sourceConfig = levelInfo?.sourceConfig || {};
+  const storedDashboardPathText = String(sourceConfig.dashboardPathText || (Array.isArray(sourceConfig.dashboardPaths) ? sourceConfig.dashboardPaths.join('\n') : '') || '').trim();
+  const dashboardPathText = ta ? String(ta.value || '').trim() : storedDashboardPathText;
+  if(!dashboardPathText){ showToast('Источники уровня пустые. Укажите Lovelace-источники уровня и сохраните их.'); return; }
+  if(_levelImportInProgress){ showToast('Перечитывание уровня уже выполняется...'); return; }
+  _levelImportInProgress = true;
   try{
     showToast('Перечитываю уровень...');
-    const res=await apiJson(`api/levels/${encodeURIComponent(levelId)}/lovelace/import`,{method:'POST',body:JSON.stringify({dashboardPathText})});
+    const payload = ta ? {dashboardPathText} : {};
+    const res=await apiJson(`api/levels/${encodeURIComponent(levelId)}/lovelace/import`,{method:'POST',body:JSON.stringify(payload)});
     if(res.levels) state.levels=res.levels;
     renderLevelsManager();
     if(levelId === (state.levels?.activeLevelId || 'level-1')) await reloadActiveLevelRuntime();
     const imp=res.import||{};
     showToast(`Уровень перечитан. Устройств: ${imp.devices ?? 0}`);
-  }catch(e){ showToast('Ошибка перечитывания уровня: '+e.message); }
+  }catch(e){
+    const rid = e.data?.requestId ? ` · requestId: ${e.data.requestId}` : '';
+    showToast('Ошибка перечитывания уровня: '+e.message+rid);
+  }finally{
+    _levelImportInProgress = false;
+  }
 }
 
 
@@ -3492,7 +4977,7 @@ function renderProjectSetupWizard(){
   const stepsHead=`<div class="project-wizard-progress">${[1,2,3,4].map(n=>`<span class="${n===step?'active':''}${n<step?' done':''}">${n}</span>`).join('')}</div>`;
   let html='';
   if(step===1){
-    html=`<div class="level-wizard-summary"><strong>Шаг 1 — профиль</strong><br><span class="muted">Создайте новый профиль проекта. Профиль хранит свои уровни, карты, layout, зоны, комнаты, устройства и Lovelace-источники.</span></div>`+
+    html=`<div class="level-wizard-summary"><strong>Шаг 1 — профиль</strong><br><span class="muted">Создайте новый профиль проекта. Профиль хранит свои уровни, карты, расположение датчиков и маркеров, зоны, комнаты, устройства и Lovelace-источники.</span></div>`+
       `<label class="wizard-field"><span>Название профиля</span><input id="setup-profile-name" type="text" value="${esc(w.profileName)}" placeholder="Дом / Квартира / Дача / Офис"></label>`+
       `<p class="muted">Security/PIN, dangerous rules, Attention Monitor и command log остаются глобальными, как и раньше.</p>`;
   }else if(step===2){
@@ -3549,6 +5034,15 @@ async function createProjectFromSetupWizard(){
     let newProfile=profiles.find(p=>!before.includes(p.id)) || profiles.slice(-1)[0];
     if(!newProfile) throw new Error('Новый профиль не найден после создания');
     await apiJson(`api/profiles/${encodeURIComponent(newProfile.id)}/activate`,{method:'POST'});
+    // This browser/panel may have an individual activeProfileId override. Point it to the new empty profile too,
+    // otherwise the UI continues reading the previous profile and it looks like the new profile copied old data.
+    await apiJson(`api/profiles/${encodeURIComponent(newProfile.id)}/activate-for-client`,{method:'POST'}).catch(()=>{});
+    state._clientActiveProfileId = newProfile.id;
+    state._clientActiveLevelId = 'level-1';
+    setLocalUiContext(newProfile.id, 'level-1');
+    removeLocalUiPrefsForContext(newProfile.id, 'level-1');
+    resetProfileScopedUiDefaults();
+    await saveClientPrefs().catch(()=>{});
     state.profiles=await apiJson('api/profiles');
     state.levels=await apiJson('api/levels');
     const firstLevelId=state.levels?.activeLevelId || state.levels?.levels?.[0]?.id || 'level-1';
@@ -3708,18 +5202,49 @@ async function loadImagesInfo(){
 
 async function loadRoomsSettings(){
   try{
+    state.roomsHydrated = false;
+    state.roomsReady = false;
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson('api/rooms'));
     clientTrace('loadRoomsSettings api/rooms hydrated', {rooms:Object.keys(state.roomsSettings?.rooms||{}).length, bindingRooms:Object.keys(state.roomsSettings?.standardSensorBindings||{}).length, cacheRooms:Object.keys(state.standardSensorBindingsCache||{}).length, standardSensorBindings:state.roomsSettings?.standardSensorBindings, cache:state.standardSensorBindingsCache});
     refreshRuntimeRooms();
-    renderRooms();
+    // v4.3.0.8: server/DB may already contain virtual:true; make the current client
+    // state deterministic before the first render after reload.
+    const selectedRid = normalizedRoomId(state.selectedRoom);
+    if(selectedRid && selectedRid !== 'overview'){
+      const rs = roomSettingsFor(selectedRid);
+      if(rs && (rs.virtual === true || Array.isArray(rs.hiddenDevices))){
+        state.roomsSettings.rooms = state.roomsSettings.rooms || {};
+        state.roomsSettings.rooms[selectedRid] = { ...rs, ...(state.roomsSettings.rooms[selectedRid]||{}) };
+      }
+    }
+    state.roomsHydrated = true;
+    state.roomsReady = true;
+    renderNav();
+    forceRefreshCurrentRoomMode('after-loadRoomsSettings');
+    stabilizeSelectedVirtualRoom('after-loadRoomsSettings');
     renderRoomsZonesManager();
     renderLayoutMaintenanceTools();
     return state.roomsSettings;
   }catch(e){
+    state.roomsHydrated = true;
+    state.roomsReady = true;
     state.roomsSettings = {version:1, rooms:{}};
     const box=el('rooms-zones-manager');
     if(box) box.innerHTML='<p class="muted">Ошибка чтения rooms.json: '+esc(e.message)+'</p>';
     return state.roomsSettings;
+  }
+}
+
+async function ensureRoomsHydrated(options={}){
+  const force = !!options.force;
+  const roomsCount = layoutEditableRooms().length;
+  if(!force && state.roomsHydrated && roomsCount) return true;
+  try{
+    await loadRoomsSettings();
+    return true;
+  }catch(e){
+    console.warn('[ALLHA-2D][rooms] ensureRoomsHydrated failed', e);
+    return false;
   }
 }
 
@@ -3756,15 +5281,43 @@ function mergeStandardSensorBindingsIntoCache(bindings){
   for(const [ridRaw, sensorsRaw] of Object.entries(src)){
     const rid = normalizedRoomId(ridRaw);
     const clean = canonicalStandardSensorsForCompare(sensorsRaw || {});
+    // Authoritative bindings may be empty after Clear/Clear all. In that case the
+    // local frontend cache must also be cleared, otherwise the old sensor is merged
+    // back into the UI and it looks like the Clear button did nothing.
     if(Object.keys(clean).length) state.standardSensorBindingsCache[rid] = { ...(state.standardSensorBindingsCache[rid]||{}), ...clean };
+    else delete state.standardSensorBindingsCache[rid];
   }
   clientTrace('standardSensorBindings cache updated', {bindingRooms:Object.keys(state.standardSensorBindingsCache||{}), cache:state.standardSensorBindingsCache});
+}
+
+function clearStandardSensorBindingsCache(roomId, key){
+  const rid = normalizedRoomId(roomId);
+  if(!state.standardSensorBindingsCache || typeof state.standardSensorBindingsCache!=='object') state.standardSensorBindingsCache = {};
+  if(!key){
+    delete state.standardSensorBindingsCache[rid];
+    return;
+  }
+  if(state.standardSensorBindingsCache[rid] && typeof state.standardSensorBindingsCache[rid]==='object'){
+    delete state.standardSensorBindingsCache[rid][key];
+    if(!Object.keys(canonicalStandardSensorsForCompare(state.standardSensorBindingsCache[rid])).length) delete state.standardSensorBindingsCache[rid];
+  }
 }
 
 
 function hydrateRoomsSettingsFromStandardSensorBindings(settings){
   const out = settings && typeof settings==='object' ? settings : {version:1, rooms:{}};
   out.rooms = out.rooms && typeof out.rooms==='object' ? out.rooms : {};
+  // v4.3.0.7: make room settings canonical on the client.
+  // Some server responses include room-level settings inside knownRooms[].settings.
+  // Merge them into rooms[roomId] so virtual/hiddenDevices are read consistently after reload.
+  if(Array.isArray(out.knownRooms)){
+    out.knownRooms.forEach(item=>{
+      const rid=normalizedRoomId(item?.id || item?.room_id);
+      const settings=item?.settings && typeof item.settings==='object' ? item.settings : null;
+      if(!rid || !settings) return;
+      out.rooms[rid] = { ...settings, ...(out.rooms[rid] && typeof out.rooms[rid]==='object' ? out.rooms[rid] : {}) };
+    });
+  }
   const bindings = out.standardSensorBindings && typeof out.standardSensorBindings==='object' ? out.standardSensorBindings : {};
   mergeStandardSensorBindingsIntoCache(bindings);
   for(const [ridRaw, sensorsRaw] of Object.entries(bindings)){
@@ -3877,33 +5430,84 @@ function suggestionForStandardSensor(roomId, key){
   const list = Array.isArray(pack[key]) ? pack[key] : [];
   return list[0] || null;
 }
+
+function standardSensorSourceInfo(roomId, key, currentValue){
+  const rid=normalizedRoomId(roomId);
+  const value=String(currentValue||'').trim();
+  if(!value) return {source:'empty', label:'не выбран', detail:''};
+  const draftKey=standardSensorDraftKey(rid,key);
+  const fromRoom=String(state.roomsSettings?.rooms?.[rid]?.standardSensors?.[key]||'').trim();
+  const fromBindings=String(state.roomsSettings?.standardSensorBindings?.[rid]?.[key]||'').trim();
+  const fromCache=String(state.standardSensorBindingsCache?.[rid]?.[key]||'').trim();
+  const fromDraft=String(ensureStandardSensorDrafts()?.[draftKey]||'').trim();
+  const suggestion=suggestionForStandardSensor(rid,key);
+  if(fromBindings && fromBindings===value) return {source:'db', label:'сохранён в БД', detail:'standard_sensor_bindings'};
+  if(fromRoom && fromRoom===value) return {source:'room', label:'из настроек комнаты', detail:'rooms.json / mirror'};
+  if(fromCache && fromCache===value) return {source:'cache', label:'из локального кэша', detail:'последнее подтверждённое значение'};
+  if(fromDraft && fromDraft===value) return {source:'draft', label:'черновик', detail:'ещё не сохранён'};
+  if(suggestion?.entity_id && String(suggestion.entity_id).trim()===value) return {source:'suggestion', label:'из предложения', detail:suggestion.reason||''};
+  return {source:'manual', label:'введён вручную', detail:''};
+}
+function standardSensorSourceHtml(roomId, key, currentValue){
+  const info=standardSensorSourceInfo(roomId,key,currentValue);
+  const detail=info.detail ? ` · ${esc(info.detail)}` : '';
+  return `<small class="standard-sensor-source standard-sensor-source-${esc(info.source)}">Источник: ${esc(info.label)}${detail}</small>`;
+}
+
+function standardSensorBusyKey(roomId, key=''){
+  return `${normalizedRoomId(roomId)}::${key||'_all'}`;
+}
+function setStandardSensorBusy(roomId, key, message, type='info'){
+  state.standardSensorBusy = state.standardSensorBusy || {};
+  const k=standardSensorBusyKey(roomId,key);
+  if(message) state.standardSensorBusy[k]={message,type,ts:Date.now()}; else delete state.standardSensorBusy[k];
+  const rid=normalizedRoomId(roomId);
+  const card=[...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
+  const target = key ? card?.querySelector(`[data-standard-sensor-field="${CSS.escape(key)}"] .standard-sensor-status`) : card?.querySelector('.standard-sensors-details .standard-sensor-status-all');
+  if(target){
+    target.textContent = message || '';
+    target.className = `standard-sensor-status${type?' '+type:''}`;
+  }
+}
+function standardSensorBusyMessage(roomId, key=''){
+  const b=state.standardSensorBusy?.[standardSensorBusyKey(roomId,key)];
+  return b?.message || '';
+}
 function renderStandardSensorSuggestion(roomId, def, currentValue){
+  const busy = standardSensorBusyMessage(roomId, def.key) || standardSensorBusyMessage(roomId, '');
+  const status = `<span class="standard-sensor-status">${busy?esc(busy):''}</span>`;
   const s = suggestionForStandardSensor(roomId, def.key);
-  if(!s){ return `<button type="button" class="small-secondary" data-suggest-standard-sensors="${esc(roomId)}">Предложить</button>`; }
+  if(!s){ return `${currentValue?standardSensorSourceHtml(roomId, def.key, currentValue):''}<button type="button" class="small-secondary" data-room-id="${esc(roomId)}" data-suggest-standard-sensors="${esc(roomId)}">Предложить</button>${status}`; }
   const same = String(currentValue||'').trim() === String(s.entity_id||'').trim();
   const current = String(currentValue||'').trim() || 'не выбран';
-  const reason = s.reason ? `<small class="standard-sensor-reason">${esc(s.reason)}</small>` : '';
+  const reason = s.reason ? `<small class="standard-sensor-reason">Почему предложено: ${esc(s.reason)}</small>` : '';
   return `<span class="standard-sensor-current">Текущий: <code>${esc(current)}</code></span>`+
+    `${currentValue?standardSensorSourceHtml(roomId, def.key, currentValue):''}`+
     `<span class="standard-sensor-suggestion" title="${esc(s.name||s.entity_id)}">Предложено: <code>${esc(s.entity_id)}</code></span>${reason}`+
-    `<button type="button" class="small-secondary" data-room-id="${esc(roomId)}" data-accept-standard-sensor="${esc(def.key)}" ${same?'disabled':''}>Принять</button>`;
+    `<button type="button" class="small-secondary" data-room-id="${esc(roomId)}" data-accept-standard-sensor="${esc(def.key)}" ${same?'disabled':''}>Принять</button>${status}`;
 }
 async function loadStandardSensorSuggestions(roomId){
   const rid=normalizedRoomId(roomId);
+  setStandardSensorBusy(rid, '', 'Поиск подходящих устройств…', 'pending');
   try{
     const data = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensor-suggestions`);
     state.standardSensorSuggestions = state.standardSensorSuggestions || {};
     state.standardSensorSuggestions[rid] = data;
+    const count = Object.values(data?.suggestions||{}).reduce((n,v)=>n+(Array.isArray(v)?v.filter(x=>x&&x.entity_id).length:0),0);
+    setStandardSensorBusy(rid, '', count ? 'Предложения обновлены' : 'Подходящие устройства не найдены', count?'ok':'warn');
     // Force re-render here: on mobile/touch browsers the last focused input may keep focus
     // while the Suggest button is tapped, and the normal render guard would skip
     // updating the suggestion rows, making the button look broken.
     renderRoomsZonesManager(true);
-    showToast('Предложения датчиков обновлены');
-  }catch(e){ showToast('Не удалось подобрать датчики: '+e.message); }
+    showToast(count ? 'Предложения датчиков обновлены' : 'Подходящие устройства не найдены');
+  }catch(e){ setStandardSensorBusy(rid, '', 'Ошибка поиска. Повторить.', 'error'); showToast('Не удалось подобрать датчики: '+e.message); }
+  finally{ setTimeout(()=>{ setStandardSensorBusy(rid, '', ''); }, 2500); }
 }
 async function acceptStandardSensorSuggestion(roomId, key){
   const rid=normalizedRoomId(roomId);
   const s=suggestionForStandardSensor(rid, key);
   if(!s?.entity_id){ showToast('Нет предложенного датчика для принятия'); return false; }
+  setStandardSensorBusy(rid, key, 'Принято, сохраняю…', 'pending');
   const cards=qsa('[data-room-manager]');
   const card=cards.find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
   const inputs=card ? qsa('[data-standard-sensor-input]', card) : [];
@@ -3922,8 +5526,10 @@ async function acceptStandardSensorSuggestion(roomId, key){
   if(btn) btn.disabled=true;
   clientTrace('acceptStandardSensorSuggestion', {roomId:rid, key, entityId:s.entity_id});
   showToast('Датчик принят. Сохраняю в БД...');
-  await saveOneStandardSensor(rid, key, s.entity_id);
-  return true;
+  const ok = await saveOneStandardSensor(rid, key, s.entity_id);
+  setStandardSensorBusy(rid, key, ok ? 'Сохранено' : 'Ошибка сохранения', ok?'ok':'error');
+  setTimeout(()=>setStandardSensorBusy(rid, key, ''), 2500);
+  return ok;
 }
 
 
@@ -3958,19 +5564,30 @@ function handleStandardSensorControlClick(e){
   const roomId=btn.dataset.suggestStandardSensors || btn.dataset.saveStandardSensors || btn.dataset.clearAllStandardSensors || btn.dataset.roomId || card?.dataset.roomManager || '';
   if(btn.matches('[data-suggest-standard-sensors]')){
     if(!beginStandardSensorAction('suggest', roomId, '', 1200)) return true;
-    Promise.resolve(loadStandardSensorSuggestions(roomId)).finally(()=>endStandardSensorAction('suggest', roomId));
+    btn.disabled=true;
+    const oldText=btn.textContent;
+    btn.textContent='Ищу…';
+    setStandardSensorBusy(roomId, '', 'Поиск подходящих устройств…', 'pending');
+    Promise.resolve(loadStandardSensorSuggestions(roomId)).finally(()=>{ btn.disabled=false; btn.textContent=oldText; endStandardSensorAction('suggest', roomId); });
     return true;
   }
   if(btn.matches('[data-accept-standard-sensor]')){
     const key = btn.dataset.acceptStandardSensor || '';
     if(!beginStandardSensorAction('accept', roomId, key, 2500)) return true;
-    Promise.resolve(acceptStandardSensorSuggestion(roomId, key)).finally(()=>endStandardSensorAction('accept', roomId, key));
+    btn.disabled=true;
+    const oldText=btn.textContent;
+    btn.textContent='Сохраняю…';
+    setStandardSensorBusy(roomId, key, 'Принято, сохраняю…', 'pending');
+    Promise.resolve(acceptStandardSensorSuggestion(roomId, key)).finally(()=>{ btn.disabled=false; btn.textContent=oldText; endStandardSensorAction('accept', roomId, key); });
     return true;
   }
   if(btn.matches('[data-save-standard-sensors]')){
     if(!beginStandardSensorAction('save', roomId, '', 2500)) return true;
     btn.disabled = true;
-    Promise.resolve(saveRoomStandardSensors(roomId)).finally(()=>{ btn.disabled=false; endStandardSensorAction('save', roomId); });
+    const oldText=btn.textContent;
+    btn.textContent='Сохраняю…';
+    setStandardSensorBusy(roomId, '', 'Сохраняю датчики…', 'pending');
+    Promise.resolve(saveRoomStandardSensors(roomId)).finally(()=>{ btn.disabled=false; btn.textContent=oldText; endStandardSensorAction('save', roomId); });
     return true;
   }
   if(btn.matches('[data-clear-all-standard-sensors]')){
@@ -3988,6 +5605,30 @@ function handleStandardSensorControlClick(e){
 }
 document.addEventListener('click', handleStandardSensorControlClick, true);
 
+
+function renderVirtualHiddenDeviceSettings(rid){
+  const hidden=roomVirtualHiddenSet(rid);
+  const list=roomDevices(rid).filter(d=>IMPORTANT_DOMAINS.has(d.domain)).sort((a,b)=>displayName(a).localeCompare(displayName(b),'ru'));
+  if(!list.length) return '<p class="muted">В этой комнате пока нет устройств, которые можно скрыть в виртуальной комнате.</p>';
+  const open = state.openVirtualHiddenSettingsRooms instanceof Set && state.openVirtualHiddenSettingsRooms.has(normalizedRoomId(rid));
+  return `<details class="virtual-room-settings" data-virtual-room-settings="${esc(rid)}" ${open?'open':''}><summary>Скрытые устройства виртуальной комнаты · ${hidden.size}</summary><p class="muted">Галочка означает: скрыть устройство только в этой виртуальной комнате. Обычные комнаты, Home Assistant, источники и маркеры не меняются.</p><div class="virtual-hidden-device-list">${list.map(d=>`<label class="virtual-hidden-device-row ${hidden.has(d.entity_id)?'hidden-device-selected':''}"><input type="checkbox" data-virtual-hidden-device="${esc(d.entity_id)}" data-room-id="${esc(rid)}" ${hidden.has(d.entity_id)?'checked':''}> <span class="dev-icon mini">${iconMarkup(d)}</span><span>${esc(displayName(d))}</span><b>${esc(markerValueLabel(d)||stateText(d))}</b></label>`).join('')}</div></details>`;
+}
+async function saveVirtualHiddenDevicesFromSettings(roomId){
+  if(!canEditLayout()){ showToast('Настройка виртуальной комнаты доступна только в admin mode'); return; }
+  const rid=normalizedRoomId(roomId);
+  const card=document.querySelector(`[data-room-manager="${CSS.escape(rid)}"]`);
+  if(!state.openVirtualHiddenSettingsRooms) state.openVirtualHiddenSettingsRooms=new Set();
+  state.openVirtualHiddenSettingsRooms.add(rid);
+  const hidden=[...qsa('[data-virtual-hidden-device]', card||document)].filter(cb=>cb.checked && normalizedRoomId(cb.dataset.roomId)===rid).map(cb=>cb.dataset.virtualHiddenDevice).filter(Boolean);
+  try{
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson(`api/rooms/${encodeURIComponent(rid)}/hidden-devices`, {method:'PATCH', body:JSON.stringify({hiddenDevices:hidden})}));
+    renderRoomsZonesManager(true);
+    render();
+    if(normalizedRoomId(rid)===normalizedRoomId(state.selectedRoom)) forceRefreshCurrentRoomMode('hidden-devices');
+    showToast('Список скрытых устройств виртуальной комнаты сохранён');
+  }catch(e){ showToast('Ошибка сохранения скрытых устройств: '+e.message); renderRoomsZonesManager(true); }
+}
+
 function renderRoomsZonesManager(force=false){
   const box=el('rooms-zones-manager');
   if(!box) return;
@@ -4004,6 +5645,7 @@ function renderRoomsZonesManager(force=false){
   box.innerHTML=rooms.map(r=>{
     const rid=normalizedRoomId(r.id);
     const hasZone=!!state.layout?.zones?.[rid];
+    const isVirtual=!!roomSettingsFor(rid).virtual;
     const sensors=standardSensorsForSettings(rid);
     const active=STANDARD_SENSOR_DEFS.filter(def=>String(sensors[def.key]||'').trim()).map(def=>def.label).join(', ') || 'не заданы';
     clientTrace('room manager summary sensors', {roomId:rid, label:r.label||rid, sensors, active});
@@ -4014,8 +5656,9 @@ function renderRoomsZonesManager(force=false){
     const open = state.openStandardSensorRooms instanceof Set && state.openStandardSensorRooms.has(rid);
     return `<div class="room-manager-card${admin?'':' room-manager-disabled'}" data-room-manager="${esc(rid)}">`+
       `<div class="room-manager-head"><div><strong>${esc(r.label||rid)}</strong><br><span class="muted">room_id: ${esc(rid)} · зона: ${hasZone?'есть':'нет'} · датчики: ${esc(active)}</span></div>`+
-      `<div class="room-manager-actions"><button type="button" data-room-zone-create="${esc(rid)}">${hasZone?'Редактировать зону':'Назначить / пересоздать зону'}</button>${hasZone?`<button type="button" data-room-zone-delete="${esc(rid)}" class="danger-button small-danger">Удалить зону</button>`:''}</div></div>`+
-      `<details class="standard-sensors-details" data-standard-details="${esc(rid)}" ${open?'open':''}><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную или принять предложенный датчик.</p><button type="button" data-suggest-standard-sensors="${esc(rid)}">Предложить все</button> <button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button> <button type="button" class="danger-button small-danger" data-clear-all-standard-sensors="${esc(rid)}">Очистить все датчики комнаты</button></details>`+
+      `<div class="room-manager-actions"><label class="settings-check virtual-room-check" title="Виртуальная комната всегда показывает устройства карточками. При снятии галочки маркеры возвращаются на прежние места."><input type="checkbox" data-room-virtual-toggle="${esc(rid)}" ${isVirtual?'checked':''}> Виртуальная</label><button type="button" data-room-zone-create="${esc(rid)}">${hasZone?'Редактировать зону':'Назначить / пересоздать зону'}</button>${hasZone?`<button type="button" data-room-zone-delete="${esc(rid)}" class="danger-button small-danger">Удалить зону</button>`:''}</div></div>`+
+      `${isVirtual ? renderVirtualHiddenDeviceSettings(rid) : '<p class="muted virtual-room-settings-hint">Включите “Виртуальная”, чтобы настроить скрытые устройства этой комнаты.</p>'}`+
+      `<details class="standard-sensors-details" data-standard-details="${esc(rid)}" ${open?'open':''}><summary>Стандартные датчики комнаты</summary><div class="standard-sensors-grid">${fields}</div><p class="muted">Пустые entity не отображаются. Если очистить все entity, строка/поле стандартных датчиков этой комнаты на карте не показывается. Entity можно отредактировать вручную или принять предложенный датчик.</p><p class="muted standard-sensor-diagnostics-line">Диагностика: сохранено ${Object.keys(canonicalStandardSensorsForCompare(sensors)).length}/${STANDARD_SENSOR_DEFS.length}; предложения ${Object.values(state.standardSensorSuggestions?.[rid]?.suggestions||{}).reduce((n,v)=>n+(Array.isArray(v)?v.length:0),0)}.</p><button type="button" data-suggest-standard-sensors="${esc(rid)}">Предложить все</button> <button type="button" data-save-standard-sensors="${esc(rid)}">Сохранить датчики</button> <button type="button" class="danger-button small-danger" data-clear-all-standard-sensors="${esc(rid)}">Очистить все датчики комнаты</button> <span class="standard-sensor-status standard-sensor-status-all">${esc(standardSensorBusyMessage(rid,''))}</span></details>`+
       `</div>`;
   }).join('');
   qsa('button,input', box).forEach(ctrl=>{
@@ -4025,13 +5668,45 @@ function renderRoomsZonesManager(force=false){
   qsa('[data-standard-details]', box).forEach(d=>d.addEventListener('toggle',()=>{
     if(!(state.openStandardSensorRooms instanceof Set)) state.openStandardSensorRooms=new Set();
     const rid=d.dataset.standardDetails;
-    if(d.open) state.openStandardSensorRooms.add(rid); else state.openStandardSensorRooms.delete(rid);
+    if(d.open){
+      state.openStandardSensorRooms.add(rid);
+      if(!state.standardSensorSuggestions?.[normalizedRoomId(rid)]) setTimeout(()=>loadStandardSensorSuggestions(rid), 0);
+    } else {
+      state.openStandardSensorRooms.delete(rid);
+    }
   }));
+  qsa('[data-virtual-room-settings]', box).forEach(d=>d.addEventListener('toggle',()=>{
+    if(!(state.openVirtualHiddenSettingsRooms instanceof Set)) state.openVirtualHiddenSettingsRooms=new Set();
+    const rid=normalizedRoomId(d.dataset.virtualRoomSettings);
+    if(d.open) state.openVirtualHiddenSettingsRooms.add(rid); else state.openVirtualHiddenSettingsRooms.delete(rid);
+  }));
+  qsa('[data-room-virtual-toggle]', box).forEach(input=>{
+    input.addEventListener('change',()=>setRoomVirtualFlag(input.dataset.roomVirtualToggle, input.checked));
+  });
+  qsa('[data-virtual-hidden-device]', box).forEach(input=>{
+    input.addEventListener('change',()=>saveVirtualHiddenDevicesFromSettings(input.dataset.roomId));
+  });
   qsa('[data-standard-sensor-input]', box).forEach(input=>{
     input.addEventListener('input',()=>rememberStandardSensorInput(input));
     input.addEventListener('change',()=>rememberStandardSensorInput(input));
     input.addEventListener('focus',()=>rememberStandardSensorInput(input));
   });
+}
+async function setRoomVirtualFlag(roomId, virtual){
+  if(!canEditLayout()){ showToast('Изменение комнаты доступно только в admin mode'); return; }
+  const rid=normalizedRoomId(roomId);
+  try{
+    state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson(`api/rooms/${encodeURIComponent(rid)}/virtual`, {method:'PATCH', body:JSON.stringify({virtual:!!virtual})}));
+    refreshRuntimeRooms();
+    renderNav();
+    renderRoomsZonesManager(true);
+    render();
+    if(normalizedRoomId(rid)===normalizedRoomId(state.selectedRoom)) forceRefreshCurrentRoomMode('virtual-toggle');
+    showToast(virtual ? 'Комната переведена в виртуальный режим. Маркеры сохранены.' : 'Комната возвращена в обычный режим. Маркеры на прежних местах.');
+  }catch(e){
+    showToast('Ошибка сохранения режима комнаты: '+e.message);
+    renderRoomsZonesManager(true);
+  }
 }
 function readStandardSensorInputs(roomId){
   const rid=normalizedRoomId(roomId);
@@ -4048,7 +5723,7 @@ function readStandardSensorInputs(roomId){
     const v=domValue || draftValue || stateValue;
     if(v) standardSensors[def.key]=v;
   });
-  console.debug('[ALLHA-2D][standardSensors] read inputs', {roomId:rid, keys:Object.keys(standardSensors), fromDom:!!card});
+  if(window.ALLHA_DIAGNOSTIC_BUILD || state.ui.debugMode) console.debug('[ALLHA-2D][standardSensors] read inputs', {roomId:rid, keys:Object.keys(standardSensors), fromDom:!!card});
   return standardSensors;
 }
 
@@ -4062,12 +5737,17 @@ async function saveOneStandardSensor(roomId, key, entityId){
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/${encodeURIComponent(key)}/save`, { method:'POST', body:JSON.stringify({entity_id:value}) });
     clientTrace('saveOneStandardSensor response', {roomId:rid, key, verifiedRoomBinding:response?.verifiedRoomBinding, bindingRooms:Object.keys(response?.standardSensorBindings||{})});
     const verified = response?.verifiedRoomBinding && typeof response.verifiedRoomBinding==='object' ? response.verifiedRoomBinding : {};
-    if(String(verified?.[key]||'').trim() !== value) throw new Error('Сервер не подтвердил сохранение датчика');
-    // Reload canonical server state after confirmed single-field save.
+    const responseRoom = response?.rooms?.[rid]?.standardSensors || response?.apiRooms?.[rid]?.standardSensors || {};
+    const confirmedInResponse = String(verified?.[key]||responseRoom?.[key]||'').trim() === value;
+    // Reload canonical server state after single-field save. The reload is the final source of truth:
+    // earlier builds could show a false “Ошибка сохранения” even though DB/rooms were already saved.
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(await apiJson('api/rooms'));
+    const canonical = standardSensorsForSettings(rid);
+    const confirmedAfterReload = String(canonical?.[key]||'').trim() === value;
+    if(!confirmedInResponse && !confirmedAfterReload) throw new Error('Сервер не подтвердил сохранение датчика');
     clearLocalStandardSensorDrafts(rid);
     renderRoomsZonesManager(true);
-    renderRooms();
+    renderNav();
     render();
     showToast('Датчик сохранён и подтверждён БД');
     return true;
@@ -4082,10 +5762,12 @@ async function saveOneStandardSensor(roomId, key, entityId){
 async function saveRoomStandardSensors(roomId){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
   const rid=normalizedRoomId(roomId);
+  setStandardSensorBusy(rid, '', 'Сохраняю датчики…', 'pending');
   const standardSensors=readStandardSensorInputs(rid);
-  console.debug('[ALLHA-2D][standardSensors] save payload', {roomId:rid, keys:Object.keys(standardSensors), standardSensors});
+  if(window.ALLHA_DIAGNOSTIC_BUILD || state.ui.debugMode) console.debug('[ALLHA-2D][standardSensors] save payload', {roomId:rid, keys:Object.keys(standardSensors), standardSensors});
   clientTrace('saveRoomStandardSensors payload', {roomId:rid, keys:Object.keys(standardSensors), standardSensors});
   try{
+    setStandardSensorBusy(rid, '', 'Сохраняю датчики…', 'pending');
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors`, { method:'PATCH', body:JSON.stringify({standardSensors}) });
     const verified = response?.verifiedRoomBinding && typeof response.verifiedRoomBinding==='object' ? response.verifiedRoomBinding : null;
@@ -4097,8 +5779,11 @@ async function saveRoomStandardSensors(roomId){
     renderRoomsZonesManager(true);
     clearLocalStandardSensorDrafts(rid);
     render();
+    setStandardSensorBusy(rid, '', Object.keys(verified).length ? 'Сохранено' : 'Все датчики очищены', 'ok');
+    setTimeout(()=>setStandardSensorBusy(rid, '', ''), 2500);
     showToast(Object.keys(verified).length ? 'Стандартные датчики сохранены и подтверждены БД' : 'Все стандартные датчики комнаты очищены');
   }catch(e){
+    setStandardSensorBusy(rid, '', 'Ошибка сохранения', 'error');
     showToast('Ошибка сохранения датчиков: '+e.message);
     console.error('[ALLHA-2D][standardSensors] save failed', e);
   }
@@ -4106,20 +5791,29 @@ async function saveRoomStandardSensors(roomId){
 async function clearStandardSensorInput(roomId, key){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
   const rid=normalizedRoomId(roomId);
+  setStandardSensorBusy(rid, key, 'Очищаю…', 'pending');
   try{
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/${encodeURIComponent(key)}/clear`, {method:'POST'});
+    clearStandardSensorBindingsCache(rid, key);
     const current={...standardSensorsForSettings(rid)};
     delete current[key];
+    if(state.roomsSettings?.standardSensorBindings?.[rid]){
+      delete state.roomsSettings.standardSensorBindings[rid][key];
+      if(!Object.keys(canonicalStandardSensorsForCompare(state.roomsSettings.standardSensorBindings[rid])).length) delete state.roomsSettings.standardSensorBindings[rid];
+    }
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, current));
+    clearStandardSensorBindingsCache(rid, key);
     setLocalStandardSensorValue(rid, key, '');
     const card=[...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
     const input=card?.querySelector(`[data-standard-sensor-input="${CSS.escape(key)}"]`);
     if(input){ input.value=''; input.setAttribute('value',''); }
     await loadStandardSensorSuggestions(rid);
     render();
+    setStandardSensorBusy(rid, key, 'Очищено', 'ok');
+    setTimeout(()=>setStandardSensorBusy(rid, key, ''), 2500);
     showToast('Датчик очищен. Предложение снова доступно.');
-  }catch(e){ showToast('Ошибка очистки датчика: '+e.message); }
+  }catch(e){ setStandardSensorBusy(rid, key, 'Ошибка очистки', 'error'); showToast('Ошибка очистки датчика: '+e.message); }
 }
 async function clearAllStandardSensors(roomId){
   if(!canEditLayout()){ showToast('Настройка датчиков доступна только в admin mode'); return; }
@@ -4128,14 +5822,19 @@ async function clearAllStandardSensors(roomId){
   try{
     const prev=state.roomsSettings;
     const response = await apiJson(`api/rooms/${encodeURIComponent(rid)}/standard-sensors/clear`, {method:'POST'});
+    clearStandardSensorBindingsCache(rid);
+    if(state.roomsSettings?.standardSensorBindings) delete state.roomsSettings.standardSensorBindings[rid];
     state.roomsSettings = hydrateRoomsSettingsFromStandardSensorBindings(mergeRoomsSettingsPreserveStandardSensors(prev, response, rid, {}));
+    clearStandardSensorBindingsCache(rid);
     STANDARD_SENSOR_DEFS.forEach(def=>setLocalStandardSensorValue(rid, def.key, ''));
     const card=[...qsa('[data-room-manager]')].find(c=>normalizedRoomId(c.dataset.roomManager)===rid);
     if(card) qsa('[data-standard-sensor-input]', card).forEach(input=>{ input.value=''; input.setAttribute('value',''); });
     await loadStandardSensorSuggestions(rid);
     render();
+    setStandardSensorBusy(rid, '', 'Все датчики очищены', 'ok');
+    setTimeout(()=>setStandardSensorBusy(rid, '', ''), 2500);
     showToast('Все стандартные датчики комнаты очищены. Предложения снова доступны.');
-  }catch(e){ showToast('Ошибка очистки датчиков: '+e.message); }
+  }catch(e){ setStandardSensorBusy(rid, '', 'Ошибка очистки', 'error'); showToast('Ошибка очистки датчиков: '+e.message); }
 }
 function deleteRoomZoneFromSettings(roomId){
   if(!canEditLayout()){ showToast('Удаление зоны доступно только в admin mode'); return; }
@@ -4146,7 +5845,7 @@ function deleteRoomZoneFromSettings(roomId){
   render();
   renderRoomsZonesManager();
   renderLayoutMaintenanceTools();
-  showToast('Зона удалена. Нажмите “Сохранить изменения” в edit mode, чтобы записать layout.');
+  showToast('Зона удалена. Нажмите “Сохранить изменения” в режиме редактирования, чтобы записать расположение датчиков и маркеров.');
 }
 function renderImagesSettings(){
   const box = el('overview-image-status');
@@ -4176,12 +5875,20 @@ function renderRoomImagesSettings(){
   const box = el('room-images-list');
   if(!box) return;
   const rooms = ROOMS.filter(r=>r.id !== 'overview');
-  if(!rooms.length){ box.innerHTML = '<p class="muted">Комнаты пока не найдены.</p>'; return; }
+  if(!state.roomsHydrated && !rooms.length){
+    box.innerHTML = '<p class="muted">Загрузка списка комнат…</p>';
+    return;
+  }
+  if(!rooms.length){
+    box.innerHTML = '<p class="muted">Комнаты пока не найдены. Проверьте источники устройств текущего уровня или выполните сканирование Lovelace / HA Areas / entity names.</p>';
+    return;
+  }
   box.innerHTML = rooms.map(r=>{
-    const info = state.images?.rooms?.[r.id];
-    return `<div class="image-card room-image-card" data-room-image-card="${esc(r.id)}">`+
-      `<div><strong>${esc(r.label||r.id)}</strong><br><span class="muted">room_id: ${esc(r.id)} · ${esc(imageStatusText(info))}</span></div>`+
-      `<div class="image-buttons"><button type="button" data-upload-room-image="${esc(r.id)}">Загрузить / заменить</button><button type="button" data-reset-room-image="${esc(r.id)}">Сбросить к fallback</button></div>`+
+    const rid=normalizedRoomId(r.id);
+    const info = state.images?.rooms?.[rid] || state.images?.rooms?.[r.id];
+    return `<div class="image-card room-image-card" data-room-image-card="${esc(rid)}">`+
+      `<div><strong>${esc(r.label||rid)}</strong><br><span class="muted">room_id: ${esc(rid)} · ${esc(imageStatusText(info))}</span></div>`+
+      `<div class="image-buttons"><button type="button" data-upload-room-image="${esc(rid)}">Загрузить / заменить</button><button type="button" data-reset-room-image="${esc(rid)}">Сбросить к fallback</button></div>`+
       `</div>`;
   }).join('');
 }
@@ -4236,7 +5943,9 @@ async function uploadOverviewImage(file){
   const status = el('overview-image-status');
   if(status) status.textContent = 'Загрузка общего плана...';
   try{
-    const res = await fetch('api/images/overview'+(decision.backup?'?backup=1':''), { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || 'overview') }, body:file });
+    const uploadHeaders = { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || 'overview') };
+    if(_clientId) uploadHeaders['X-Client-ID'] = _clientId;
+    const res = await fetch('api/images/overview'+(decision.backup?'?backup=1':''), { method:'POST', headers:uploadHeaders, body:file });
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.error || res.status);
     state.images = { ...(state.images||{}), ...data };
@@ -4252,7 +5961,7 @@ async function uploadOverviewImage(file){
   }
 }
 async function resetOverviewImage(){
-  if(!confirm('Сбросить пользовательскую картинку общего плана к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-планом. Backup автоматически не создаётся.')) return;
+  if(!confirm('Сбросить пользовательскую картинку общего плана к fallback? Расположение датчиков и маркеров сохранится, но могут визуально не совпадать с fallback-планом. Backup автоматически не создаётся.')) return;
   const status = el('overview-image-status');
   if(status) status.textContent = 'Сброс картинки общего плана...';
   try{
@@ -4307,7 +6016,9 @@ async function uploadRoomImage(roomId, file){
   const card = document.querySelector(`[data-room-image-card="${CSS.escape(roomId)}"] .muted`);
   if(card) card.textContent = `room_id: ${roomId} · загрузка...`;
   try{
-    const res = await fetch(`api/images/rooms/${encodeURIComponent(roomId)}${decision.backup?'?backup=1':''}`, { method:'POST', headers:{ 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || roomId) }, body:file });
+    const uploadHeaders = { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name || roomId) };
+    if(_clientId) uploadHeaders['X-Client-ID'] = _clientId;
+    const res = await fetch(`api/images/rooms/${encodeURIComponent(roomId)}${decision.backup?'?backup=1':''}`, { method:'POST', headers:uploadHeaders, body:file });
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.error || res.status);
     await loadImagesInfo();
@@ -4320,7 +6031,7 @@ async function uploadRoomImage(roomId, file){
 }
 async function resetRoomImage(roomId){
   const r = room(roomId);
-  if(!confirm(`Сбросить пользовательскую картинку комнаты "${r?.label||roomId}" к fallback? Layout и маркеры сохранятся, но могут визуально не совпадать с fallback-картинкой. Backup автоматически не создаётся.`)) return;
+  if(!confirm(`Сбросить пользовательскую картинку комнаты "${r?.label||roomId}" к fallback? Расположение датчиков и маркеров сохранится, но могут визуально не совпадать с fallback-картинкой. Backup автоматически не создаётся.`)) return;
   try{
     await apiJson(`api/images/rooms/${encodeURIComponent(roomId)}`, { method:'DELETE' });
     await loadImagesInfo();
@@ -4340,9 +6051,11 @@ function renderBackupManager(){
   const box=el('backup-manager'); if(!box) return;
   const data=state.backups?.backups || state.diagnostics?.backups || {items:[]};
   const items=Array.isArray(data.items)?data.items:[];
-  box.innerHTML=`<div class="backup-summary"><strong>Backup-файлов:</strong> ${data.count||items.length} · <strong>Размер:</strong> ${formatBytes(data.totalSize||0)}<br><span class="muted">Старый: ${data.oldest?esc(new Date(data.oldest).toLocaleString()):'—'} · Новый: ${data.newest?esc(new Date(data.newest).toLocaleString()):'—'}</span></div>`+
+  box.innerHTML=`<div class="backup-summary"><strong>Backup-файлов:</strong> ${data.count||items.length} · <strong>Размер:</strong> ${formatBytes(data.totalSize||0)}<br><span class="muted">Старый: ${data.oldest?esc(new Date(data.oldest).toLocaleString()):'—'} · Новый: ${data.newest?esc(new Date(data.newest).toLocaleString()):'—'} · Размеры: ${esc(data.sizeMode||'manifest')}</span></div>`+
     `<div class="backup-actions"><button type="button" id="btn-create-manual-backup">Создать backup сейчас</button><button type="button" id="btn-delete-old-backups">Очистить старые backup-и</button><button type="button" id="btn-delete-all-backups" class="danger-button">Удалить все backup-и</button></div>`+
-    `<div class="backup-list">${items.slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div><button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('') || '<p class="muted">Backup пока нет.</p>'}</div>`;
+    `<div class="backup-list">${items.slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}${b.manifest?' · manifest':''}</span></div><div>${b.type==='directory'?`<button data-restore-full-backup="${esc(b.name)}">Восстановить</button>`:''}${b.type==='file'?`<a class="button-link" href="api/backups/download/${encodeURIComponent(b.name)}" download>Скачать</a>`:''}<button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('') || '<p class="muted">Backup пока нет.</p>'}</div>`;
+  qsa('[data-restore-full-backup]',box).forEach(btn=>btn.onclick=()=>restoreFullBackup(btn.dataset.restoreFullBackup));
+  qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=()=>deleteBackup(btn.dataset.deleteBackup));
 }
 async function createManualBackup(){
   try{ state.backups=await apiJson('api/backups/create',{method:'POST',body:JSON.stringify({reason:'manual'})}); renderBackupManager(); showToast('Ручной backup создан'); }
@@ -4355,7 +6068,7 @@ async function deleteBackup(name){
 }
 
 async function restoreFullBackup(name){
-  if(!confirm('Восстановить backup '+name+'? Текущие данные будут сохранены в предоперационный backup, затем заменены содержимым выбранного backup.')) return;
+  if(!confirm('Восстановить backup '+name+'? Текущие данные будут заменены содержимым выбранного backup. Перед восстановлением рекомендуется вручную создать отдельный backup.')) return;
   const word=window.prompt('Для восстановления введите RESTORE BACKUP');
   if(word!=='RESTORE BACKUP'){ showToast('Восстановление отменено'); return; }
   try{
@@ -4380,7 +6093,7 @@ async function deleteAllBackups(){
 
 async function clearLayoutMarkers(){
   if(!canEditLayout()){ showToast('Очистка маркеров доступна только в admin mode'); return; }
-  if(!confirm('Очистить все маркеры устройств и датчиков? Перед очисткой будет создан backup layout.json. Зоны, комнаты, картинки, PIN, dangerous и Attention не будут затронуты.')) return;
+  if(!confirm('Очистить все маркеры устройств и датчиков? Перед очисткой будет создан backup расположения датчиков и маркеров. Зоны, комнаты, картинки, PIN, dangerous и Attention не будут затронуты.')) return;
   try{
     const r=await apiJson('api/layout/clear-markers', { method:'POST' });
     state.layout = { ...state.layout, ...(r.layout||{}) };
@@ -4391,7 +6104,7 @@ async function clearLayoutMarkers(){
 }
 async function clearLayoutZones(){
   if(!canEditLayout()){ showToast('Очистка зон доступна только в admin mode'); return; }
-  if(!confirm('Очистить все зоны комнат на общем плане? Перед очисткой будет создан backup layout.json. Маркеры, комнаты, картинки, PIN, dangerous и Attention не будут затронуты.')) return;
+  if(!confirm('Очистить все зоны комнат на общем плане? Перед очисткой будет создан backup расположения датчиков и маркеров. Маркеры, комнаты, картинки, PIN, dangerous и Attention не будут затронуты.')) return;
   try{
     const r=await apiJson('api/layout/clear-zones', { method:'POST' });
     state.layout = { ...state.layout, ...(r.layout||{}) };
@@ -4445,7 +6158,7 @@ function renderLayoutMaintenanceTools(){
   renderRoomsZonesManager();
   qsa('button,select', box).forEach(ctrl=>ctrl.disabled=!admin);
   const status=el('layout-maintenance-status');
-  if(status) status.textContent = admin ? 'Admin mode. Перед очисткой создаётся backup layout.json. Создание зон и маркеров открывает SVG Layout Editor.' : 'Доступно только в admin mode.';
+  if(status) status.textContent = admin ? 'Admin mode. Перед очисткой создаётся backup расположения датчиков и маркеров. Создание зон и маркеров открывает редактор расположения.' : 'Доступно только в admin mode.';
 }
 
 async function saveConfig(){
@@ -4455,7 +6168,7 @@ async function saveConfig(){
     saveUiPrefs();
     const sec = buildSecurityConfigPayload();
     if(sec.security) delete sec.security.panelMode; // per-client
-    const payload={pollIntervalMs:Math.max(10000,Number(el('poll-interval')?.value||30)*1000),...buildGlobalConfigPayload(),...sec};
+    const payload={pollIntervalMs:Math.max(10000,Math.min(60000,Number(el('poll-interval')?.value||30)*1000)),sseBatchMs:Math.max(0,Math.min(60000,Number(el('sse-batch-interval')?.value||1)*1000)),...buildGlobalConfigPayload(),...sec};
     const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
     saveClientPrefs().catch(()=>{});
@@ -4503,7 +6216,7 @@ async function clearConfig(){
     const res=await apiJson('api/factory-reset',{method:'POST',body:JSON.stringify({confirm:'RESET'})});
     applyFactoryResetClientState(res);
     status.textContent='Полный сброс выполнен. Backup: '+(res.backup||'создан/не требовался')+'. Перезагрузка страницы...';
-    showToast('Проект полностью сброшен к дефолту');
+    showToast('Проект полностью сброшен к настройкам по умолчанию');
     setTimeout(()=>{ location.href = location.pathname + '?reset=' + Date.now(); }, 900);
   }catch(e){
     status.textContent='Ошибка полного сброса: '+e.message;
@@ -4522,31 +6235,79 @@ function deviceListScrollGuardActive(){
   const list=el('device-list');
   return !!(list && Date.now() < Number(state.deviceListUserScrollUntil || 0));
 }
-function updateVisibleDeviceStatesOnly(){
-  const list=el('device-list');
-  if(!list) return;
-  qsa('.device-card[data-entity]', list).forEach(card=>{
-    const d=devices().find(x=>x.entity_id===card.dataset.entity);
-    if(!d) return;
+function patchInteractiveCard(card,d,kind='list'){
+  if(!card || !d) return false;
+  if(kind==='list'){
     const outRoom = card.classList.contains('out-room');
     card.className = `device-card ${visualClass(d)}${outRoom?' out-room':''}`;
     card.setAttribute('style', visualStyle(d));
-    const btn=card.querySelector('[data-toggle]');
-    if(btn) btn.textContent=stateText(d);
-    const readonly=card.querySelector('.state.readonly');
-    if(readonly) readonly.textContent=stateText(d);
-  });
+    const icon=card.querySelector('.dev-icon'); if(icon) icon.innerHTML=`${iconMarkup(d)}${markerValueHtml(d,'quick')}`;
+    const name=card.querySelector('.name'); if(name) name.textContent=displayName(d);
+    const btn=card.querySelector('[data-toggle]'); if(btn) btn.textContent=stateText(d);
+    const readonly=card.querySelector('.state.readonly'); if(readonly) readonly.textContent=stateText(d);
+    return true;
+  }
+  if(kind==='kiosk'){
+    card.className = `kiosk-tile-device device-card ${visualClass(d)}`;
+    card.setAttribute('style', visualStyle(d));
+    const icon=card.querySelector('.kiosk-tile-icon'); if(icon) icon.innerHTML=`${iconMarkup(d)}${markerValueHtml(d,'quick')}`;
+    const name=card.querySelector('.kiosk-tile-name'); if(name) name.textContent=displayName(d);
+    const st=card.querySelector('.kiosk-tile-state'); if(st) st.textContent=markerValueLabel(d)||stateText(d);
+    return true;
+  }
+  if(kind==='virtual'){
+    card.className = `virtual-room-device device-card ${visualClass(d)}`;
+    card.setAttribute('style', visualStyle(d));
+    card.title=`${displayName(d)}\n${d.entity_id}`;
+    const icon=card.querySelector('.virtual-room-icon'); if(icon) icon.innerHTML=`${iconMarkup(d)}${markerValueHtml(d,'quick')}`;
+    const name=card.querySelector('.virtual-room-name'); if(name) name.textContent=displayName(d);
+    const st=card.querySelector('.virtual-room-state'); if(st) st.textContent=markerValueLabel(d)||stateText(d);
+    return true;
+  }
+  return false;
 }
+
+function updateVisibleDeviceStatesOnly(){
+  const list=el('device-list');
+  if(list){
+    qsa('.device-card[data-entity]', list).forEach(card=>{
+      const d=devices().find(x=>x.entity_id===card.dataset.entity);
+      if(d) patchInteractiveCard(card,d,'list');
+    });
+  }
+  const kioskPages=el('kiosk-tile-pages');
+  if(kioskPages){
+    qsa('[data-kiosk-tile-device]', kioskPages).forEach(card=>{
+      const d=devices().find(x=>x.entity_id===card.dataset.kioskTileDevice);
+      if(d) patchInteractiveCard(card,d,'kiosk');
+    });
+  }
+  const virtualLayer=el('room-virtual-cards');
+  if(virtualLayer){
+    qsa('[data-virtual-room-device]', virtualLayer).forEach(card=>{
+      const d=devices().find(x=>x.entity_id===card.dataset.virtualRoomDevice);
+      if(d) patchInteractiveCard(card,d,'virtual');
+    });
+  }
+}
+
 function renderPreservingDeviceScroll(){
   const list=el('device-list');
   const scrollTop=list ? list.scrollTop : 0;
   const openGroup=state.openDeviceRoomGroup;
-  render();
+  if(!safeFullRender('preserve-scroll')) render();
   state.openDeviceRoomGroup=openGroup;
   const next=el('device-list');
   if(next) requestAnimationFrame(()=>{ next.scrollTop=scrollTop; setTimeout(()=>{ next.scrollTop=scrollTop; }, 0); });
 }
-async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused && !settingsInputActive()){ if(deviceListScrollGuardActive()) updateVisibleDeviceStatesOnly(); else renderPreservingDeviceScroll(); }const sseOpen=state._sseSource&&state._sseSource.readyState===1;if(_mobileAuth.active) _mobileHideOffline();if(state.edit)setConnection(true,'Редактор · live paused');else if(sseOpen)setConnection(true,'Live ●','live');else setConnection(true,'Поллинг ↺','polling')}catch(e){setConnection(false,'Нет связи ✗');console.error(e);if(_mobileAuth.active){_mobileOfflineCount++;if(_mobileOfflineCount>=2)_mobileShowOffline();}}}
+async function loadStates(){try{const data=await apiJson('api/ha/states');state.states=Object.fromEntries(data.states.map(s=>[s.entity_id,s]));applySourceConfig();refreshRuntimeRooms();updateAttentionFromStates();if(!state.edit && !state.livePaused && !settingsInputActive()){
+  // v4.1.21.18.43: fallback polling must not rebuild the whole UI on every tick.
+  // Full render after /api/ha/states made mobile/kiosk taps feel delayed, especially with many HA state_changed events.
+  bumpRenderMetric('patch');
+  updateStandardSensorMetricsOnly();
+  updateVisibleDeviceStatesOnly();
+  updateAttentionFromStates();
+}const sseOpen=state._sseSource&&state._sseSource.readyState===1;if(_mobileAuth.active) _mobileHideOffline();if(state.edit)setConnection(true,'Редактор · live paused');else if(sseOpen)setConnection(true,'Live ●','live');else setConnection(true,'Поллинг ↺','polling')}catch(e){setConnection(false,'Нет связи ✗');console.error(e);if(_mobileAuth.active){_mobileOfflineCount++;if(_mobileOfflineCount>=2)_mobileShowOffline();}}}
 function startPolling(){
   if(state.pollTimer)clearInterval(state.pollTimer);
   if(state.edit || state.livePaused) return;
@@ -4569,8 +6330,23 @@ function startPolling(){
       if(!pendingRender) return;
       pendingRender=false;
       applySourceConfig(); refreshRuntimeRooms(); updateAttentionFromStates();
-      if(!state.edit && !state.livePaused) render();
-    }, 80);
+      if(!state.edit && !state.livePaused) safeFullRender('sse');
+    }, 180);
+  }
+  const pendingEntityPatches = new Set();
+  let patchTimer = null;
+  function scheduleEntityPatch(entityId){
+    if(entityId) pendingEntityPatches.add(entityId);
+    clearTimeout(patchTimer);
+    patchTimer=setTimeout(()=>{
+      const ids=[...pendingEntityPatches];
+      pendingEntityPatches.clear();
+      if(ids.length) bumpRenderMetric('patch');
+      for(const id of ids) patchMarkerForEntity(id);
+      updateStandardSensorMetricsOnly();
+      updateVisibleDeviceStatesOnly();
+      updateAttentionFromStates();
+    }, 150);
   }
 
   function connectSse(){
@@ -4579,13 +6355,15 @@ function startPolling(){
     const es=new EventSource('api/ha/events');
     state._sseSource=es;
 
+    es.onopen=()=>{ state.renderMetrics.sseConnected=true; state.renderMetrics.sseConnectedAt=new Date().toISOString(); };
+
     es.addEventListener('initial_states', e=>{
       try{
         const states=JSON.parse(e.data);
         if(!Array.isArray(states)||!states.length) return;
         states.forEach(s=>{ state.states[s.entity_id]=s; });
         applySourceConfig(); refreshRuntimeRooms(); updateAttentionFromStates();
-        if(!state.edit && !state.livePaused) render();
+        if(!state.edit && !state.livePaused) safeFullRender('initial_states');
         if(_mobileAuth.active) _mobileHideOffline();
         setConnection(true, state.edit?'Редактор · live paused':'Live ●', state.edit?'':'live');
         // Перезапускаем поллинг с длинным интервалом (fallback)
@@ -4597,20 +6375,49 @@ function startPolling(){
       try{
         const s=JSON.parse(e.data);
         if(!s?.entity_id) return;
+        bumpRenderMetric('state_changed');
         const wasKnown=!!state.states[s.entity_id];
         state.states[s.entity_id]=s;
         if(state.livePaused) return;
         if(wasKnown && !state.edit){
-          // Точечный патч: обновляем только маркер изменившейся entity
-          const patched=patchMarkerForEntity(s.entity_id);
-          updateAttentionFromStates();
-          // Entity не на плане (не patched) — достаточно обновить панель устройств
-          if(!patched) scheduleRender();
+          // v4.3.0.7: virtual/card views must be patched, not full-rendered,
+          // otherwise frequent sensor events recreate card DOM between pointerdown/pointerup.
+          scheduleEntityPatch(s.entity_id);
         } else {
           // Новая entity или режим редактирования → полный ре-рендер
           scheduleRender();
         }
       }catch(err){ console.error('SSE state_changed',err); }
+    });
+    es.addEventListener('states_batch', e=>{
+      try{
+        const payload=JSON.parse(e.data)||{};
+        const changed=Array.isArray(payload.changed)?payload.changed:[];
+        const removed=Array.isArray(payload.removed)?payload.removed:[];
+        if(!changed.length && !removed.length) return;
+        bumpRenderMetric('states_batch');
+        let needsRender = removed.length > 0;
+        for(const s of changed){
+          if(!s?.entity_id) continue;
+          const wasKnown=!!state.states[s.entity_id];
+          state.states[s.entity_id]=s;
+          if(wasKnown && !state.edit && !needsRender){
+            pendingEntityPatches.add(s.entity_id);
+          } else {
+            needsRender = true;
+          }
+        }
+        for(const entity_id of removed){
+          if(entity_id) delete state.states[entity_id];
+        }
+        if(state.livePaused) return;
+        if(needsRender || state.edit){
+          scheduleRender();
+        } else {
+          // v4.3.0.7: update known virtual/kiosk/card entities in place.
+          scheduleEntityPatch();
+        }
+      }catch(err){ console.error('SSE states_batch',err); }
     });
     es.addEventListener('state_removed', e=>{
       try{
@@ -4620,6 +6427,7 @@ function startPolling(){
     });
 
     es.onerror=()=>{
+      state.renderMetrics.sseConnected=false; state.renderMetrics.sseDisconnectedAt=new Date().toISOString();
       state._sseSource=null; es.close();
       setConnection(true,'Поллинг ↺','polling');
       startPolling();
@@ -4767,7 +6575,7 @@ function renderInfoModal(){
       infoRow('room max long side',d.images?.uploadLimits?.roomMaxLongSide||'—'),
       infoRow('max upload',d.images?.uploadLimits?.maxBytes?Math.round(d.images.uploadLimits.maxBytes/1024/1024)+' MB':'—'),
       infoSection('Layout'),
-      infoRow('Layout координаты',ld.ok?'OK':'есть проблемы'),
+      infoRow('Координаты расположения',ld.ok?'OK':'есть проблемы'),
       infoRow('Pixel-like координаты',ld.problems?.pixelLike?.length||0),
       infoRow('Координаты вне 0–100',ld.problems?.outOfRange?.length||0),
       infoSection('Devices'),
@@ -4777,9 +6585,16 @@ function renderInfoModal(){
       infoRow('Дубли entity_id',d.counts?.duplicates),
       infoRow('Без комнаты',d.counts?.noRoom),
       infoRow('Без координат',d.counts?.noCoordinates),
-      infoRow('Backup layout',d.counts?.backups),
+      infoRow('Backup расположения датчиков и маркеров',d.counts?.backups),
+      ...(state.ui.debugMode ? [
+        infoSection('Virtual room debug'),
+        infoRow('selectedRoom', state.selectedRoom, true),
+        infoRow('isVirtualRoom(selected)', String(isVirtualRoom(state.selectedRoom))),
+        infoRow('virtual snapshots', String((window.__ALLHA_VIRTUAL_DEBUG__||[]).length))
+      ] : []),
       infoRow('Сформировано',d.generatedAt)
-    ].join('')}</table>`;
+    ].join('')}</table>` + (state.ui.debugMode ? '<p><button type="button" id="btn-copy-virtual-debug">Скопировать диагностику виртуальной комнаты</button></p>' : '');
+    const vdbg=el('btn-copy-virtual-debug'); if(vdbg) vdbg.onclick=copyVirtualRoomDiagnostics;
   } else if(state.infoTab==='entities'){
     box.innerHTML=`<h3>Проблемы entity_id</h3><p class="muted">Показаны первые 200 записей каждого типа.</p>`+
       `<h4>Не найдены в HA (${d.counts?.missingInHa||0})</h4><div class="info-list">${(d.missingInHa||[]).map(x=>`<code>${esc(x.entity_id)}</code> <span>${esc(x.name||'')}</span>`).join('<br>')||'—'}</div>`+
@@ -4790,17 +6605,17 @@ function renderInfoModal(){
     const p=ld.problems||{};
     const cnt=ld.counts||{};
     const hasFix=(p.pixelLike?.length||0)||(p.outOfRange?.length||0)||(p.invalidPoints?.length||0);
-    box.innerHTML=`<h3>Диагностика layout</h3><p class="muted">Layout должен хранить координаты только в процентах 0–100. Zoom, pan и hardware scale хранятся отдельно и не должны менять координаты.</p>`+
+    box.innerHTML=`<h3>Диагностика расположения датчиков и маркеров</h3><p class="muted">Расположение датчиков и маркеров должно хранить координаты только в процентах 0–100. Zoom, pan и hardware scale хранятся отдельно и не должны менять координаты.</p>`+
       `<table class="info-table">${[
         ['Статус',ld.ok?'OK':'Есть проблемы'],['Overview markers',cnt.overviewMarkers||0],['Room markers',cnt.roomMarkers||0],['Overview metrics',cnt.overviewMetrics||0],['Room metrics',cnt.roomMetrics||0],['Zones',cnt.zones||0],['Pixel-like координаты',p.pixelLike?.length||0],['Вне диапазона 0–100',p.outOfRange?.length||0],['Некорректные точки',p.invalidPoints?.length||0],['Неизвестные top-level поля',(p.unknownTopLevel||[]).join(', ')||'—']
       ].map(x=>infoRow(x[0],x[1])).join('')}</table>`+
       `${hasFix?'<p><button type="button" id="btn-normalize-layout">Нормализовать координаты</button></p>':''}`+
       `<h4>Первые проблемы</h4><div class="info-list">${[...(p.pixelLike||[]),...(p.outOfRange||[]),...(p.invalidPoints||[])].slice(0,80).map(x=>`<code>${esc(x.path||'')}</code> ${esc(JSON.stringify(x))}`).join('<br>')||'—'}</div>`;
     const btn=el('btn-normalize-layout');
-    if(btn) btn.onclick=async()=>{ if(!confirm('Создать backup и нормализовать layout в проценты 0–100?')) return; const r=await apiJson('api/layout/normalize',{method:'POST'}); state.layout=r.diagnostics?.normalizedPreview || state.layout; await loadDiagnostics(); render(); showToast('Layout нормализован'); };
+    if(btn) btn.onclick=async()=>{ if(!confirm('Создать backup и нормализовать расположение датчиков и маркеров в проценты 0–100?')) return; const r=await apiJson('api/layout/normalize',{method:'POST'}); state.layout=r.diagnostics?.normalizedPreview || state.layout; await loadDiagnostics(); render(); showToast('Расположение датчиков и маркеров нормализовано'); };
   } else if(state.infoTab==='backups'){
-    const backups=d.backups||{items:[]}; box.innerHTML=`<h3>Backup / архивы</h3><p class="muted">Показываются все backup-и в /data/backups. Создание и удаление доступно в Настройки → Backup / архивы.</p><div class="backup-summary">Файлов: ${backups.count||0} · Размер: ${formatBytes(backups.totalSize||0)}</div><div class="backup-list">${(backups.items||[]).slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div>${/^layout-.*\.json$/.test(b.name)?`<button data-restore-backup="${esc(b.name)}">Восстановить layout</button>`:''}<button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
-    qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущий layout будет сохранён в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Layout восстановлен'); });
+    const backups=d.backups||{items:[]}; box.innerHTML=`<h3>Backup / архивы</h3><p class="muted">Показываются все backup-и в /data/backups. Создание и удаление доступно в Настройки → Backup / архивы.</p><div class="backup-summary">Файлов: ${backups.count||0} · Размер: ${formatBytes(backups.totalSize||0)}</div><div class="backup-list">${(backups.items||[]).slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div>${/^layout-.*\.json$/.test(b.name)?`<button data-restore-backup="${esc(b.name)}">Восстановить расположение</button>`:''}<button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
+    qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущее расположение датчиков и маркеров будет сохранено в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Расположение датчиков и маркеров восстановлено'); });
     qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=async()=>{ await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name:btn.dataset.deleteBackup})}); await loadDiagnostics(); });
   } else if(state.infoTab==='allowlist'){
     box.innerHTML=`<h3>Команды Home Assistant</h3><p class="muted">viewer — просмотр. control panel — управление, dangerous через подтверждение/PIN. admin — полный доступ.</p><div class="info-list"><b>Режим панели</b>: ${esc(d.security?.panelMode||'admin')}<br><b>PIN установлен</b>: ${d.security?.pinEnabled?'да':'нет'}<br><b>Dangerous через PIN</b>: ${d.security?.dangerousRequirePin?'да':'нет'}<br><b>Подтверждение</b>: ${d.security?.confirmDangerousServices!==false?'включено':'выключено'}</div><h4>Safe</h4><div class="info-list">${Object.entries(d.safeServices||d.allowedServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>')}</div><h4>Dangerous</h4><div class="info-list">${Object.entries(d.dangerousServices||{}).map(([dom,arr])=>`<b>${esc(dom)}</b>: ${arr.map(esc).join(', ')}`).join('<br>') || '—'}</div><h4>Последние команды</h4><div class="info-list">${(d.commandLog||[]).slice(0,30).map(x=>`${esc(x.time)} — <b>${esc(x.domain)}.${esc(x.service)}</b> ${esc(x.entity_id||'')} — ${esc(x.result||'')}`).join('<br>') || '—'}</div>`;
@@ -4866,16 +6681,44 @@ function stopMobileCodePoll(){
 
 async function loadMobileSettings(){
   try{
-    const cfg = await apiJson('api/config');
+    const cfg = await apiJson('api/mobile/settings');
     const m = cfg.mobileAccess || {};
     const chk = el('mobile-access-enabled'); if(chk) chk.checked = !!m.enabled;
     const lu = el('mobile-local-url'); if(lu) lu.value = m.localUrl || '';
     const ru = el('mobile-remote-url'); if(ru) ru.value = m.remoteUrl || '';
+    const ex = el('mobile-external-enabled'); if(ex) ex.checked = !!m.externalEnabled;
+    const eu = el('mobile-external-url'); if(eu) eu.value = m.externalUrl || m.remoteUrl || '';
+    const em = el('mobile-external-mode'); if(em) em.value = m.externalMode || 'keendns_http';
     const pp = el('mobile-pairing-password'); if(pp){ pp.value = ''; pp.placeholder = m.hasPairingPassword ? '••••• (установлен, введите новый чтобы изменить)' : 'Например: МойДом2024'; }
     const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${m.pairedDevices || 0})`;
     await loadMobileDevices();
-    startMobileCodePoll();
+    await loadMobileExternalStatus();
+    if(m.enabled) startMobileCodePoll();
+    else stopMobileCodePoll();
   }catch(e){ console.error('loadMobileSettings', e); }
+}
+
+function renderMobileAudit(events){
+  const box = el('mobile-audit-list');
+  if(!box) return;
+  if(!events || !events.length){ box.innerHTML = '<p class="muted">Журнал пока пуст</p>'; return; }
+  box.innerHTML = `<div class="info-list">${events.slice(0,20).map(ev=>{
+    const req = ev.payload?.request || {};
+    return `${esc((ev.createdAt||'').slice(0,19).replace('T',' '))} — <b>${esc(ev.eventType||'')}</b> ${ev.deviceId?`· ${esc(String(ev.deviceId).slice(0,12))}`:''} ${req.ip?`· IP ${esc(req.ip)}`:''}`;
+  }).join('<br>')}</div>`;
+}
+async function loadMobileExternalStatus(){
+  const box = el('mobile-external-status');
+  try{
+    const st = await apiJson('api/mobile/external-status');
+    const m = st.mobileAccess || {};
+    if(box){
+      box.innerHTML = `Внешний доступ: <b>${m.externalEnabled?'включён':'выключен'}</b> · URL: <code>${esc(m.externalUrl || m.remoteUrl || 'не задан')}</code> · режим: ${esc(m.externalMode || 'keendns_http')}<br>`+
+        `Устройства: ${m.pairedDevices||0} · активный код: ${st.pendingCode?'да':'нет'} · ошибок pairing buckets: ${st.rateLimit?.activePairingFailureBuckets||0}<br>`+
+        `Последний запрос диагностики: ${esc(st.request?.ip || '—')} · ${esc(st.request?.userAgent || '').slice(0,90)}`;
+    }
+    renderMobileAudit(st.recentEvents || []);
+  }catch(e){ if(box) box.textContent = 'Ошибка диагностики внешнего доступа: '+e.message; }
 }
 
 async function loadMobileDevices(force=false){
@@ -4886,25 +6729,24 @@ async function loadMobileDevices(force=false){
   _mobileDevicesLoading = true;
   try{
     const data = await apiJson('api/mobile/devices');
-    let profiles=[];
-    try{ profiles = (await apiJson('api/profiles')).profiles || []; }catch{}
     if(!force && mobileDevicesDraftActive()) return;
     const devs = data.devices || [];
     const cnt = el('mobile-devices-count'); if(cnt) cnt.textContent = `(${devs.length})`;
     if(!devs.length){ list.innerHTML = '<p class="muted">Нет привязанных устройств</p>'; return; }
-    const profileOptions = profiles.map(p=>`<option value="${esc(p.id)}">${esc(p.name||p.id)}</option>`).join('');
     list.innerHTML = devs.map(d=>{
       const details = [d.model, d.manufacturer, d.platform, d.osVersion, d.screen].filter(Boolean).join(' · ');
-      const accessMode = d.accessMode || 'viewer';
+      const accessMode = d.accessMode || 'control';
       const pa = d.profileAccess || {mode:'all', profileIds:[]};
       const selectedIds = new Set(pa.profileIds || []);
       const settings = d.settings || {};
       return `
       <div class="mobile-device-row" data-did="${esc(d.device_id)}">
-        <input type="text" class="mobile-device-name" value="${esc(d.name)}" placeholder="Имя устройства">
-        <span class="muted" style="font-size:11px">${esc(details || 'Информация о модели недоступна')} · ID: ${esc(String(d.device_id||'').slice(0,8))}</span>
-        <span class="muted" style="font-size:11px">Привязано: ${d.paired_at?.slice(0,10)||'—'} · Был: ${d.last_seen?.slice(0,19).replace('T',' ')||'—'}</span>
-        <div class="mobile-device-access-grid">
+        <div class="mobile-device-main">
+          <strong class="mobile-device-title">${esc(d.alias || d.name || 'Мобильное устройство')}</strong>
+          <span class="muted" style="font-size:11px">${esc(details || 'Информация о модели недоступна')} · ID: ${esc(String(d.device_id||'').slice(0,8))}</span>
+          <span class="muted" style="font-size:11px">Привязано: ${d.paired_at?.slice(0,10)||'—'} · Был: ${d.last_seen?.slice(0,19).replace('T',' ')||'—'}</span>
+        </div>
+        <div class="mobile-device-access-grid mobile-device-access-grid-simple">
           <label>Режим доступа
             <select class="mobile-device-access-mode">
               <option value="viewer" ${accessMode==='viewer'?'selected':''}>viewer</option>
@@ -4912,34 +6754,9 @@ async function loadMobileDevices(force=false){
               <option value="admin" ${accessMode==='admin'?'selected':''}>admin</option>
             </select>
           </label>
-          <label>Профили
-            <select class="mobile-device-profile-mode">
-              <option value="all" ${pa.mode!=='selected'?'selected':''}>Все профили</option>
-              <option value="selected" ${pa.mode==='selected'?'selected':''}>Только выбранные</option>
-            </select>
-          </label>
-          <label>Выбранные профили
-            <select class="mobile-device-profile-ids" multiple size="${Math.min(5, Math.max(2, profiles.length || 2))}">
-              ${profiles.map(p=>`<option value="${esc(p.id)}" ${selectedIds.has(p.id)?'selected':''}>${esc(p.name||p.id)}</option>`).join('') || profileOptions}
-            </select>
-          </label>
-          <label>Режим серверов
-            <select class="mobile-device-server-mode">
-              <option value="both" ${settings.serverMode!=='local'&&settings.serverMode!=='web'?'selected':''}>оба сервера</option>
-              <option value="local" ${settings.serverMode==='local'?'selected':''}>только local</option>
-              <option value="web" ${settings.serverMode==='web'?'selected':''}>только web</option>
-            </select>
-          </label>
-          <label>Масштаб
-            <input class="mobile-device-scale" type="number" min="0.7" max="1.5" step="0.05" value="${esc(settings.scale || 1)}">
-          </label>
-          <label class="inline-check"><input class="mobile-device-keep-screen" type="checkbox" ${settings.keepScreenOn?'checked':''}> Держать экран включённым</label>
-          <label class="inline-check"><input class="mobile-device-stay-bg" type="checkbox" ${settings.stayInBackground?'checked':''}> Оставаться в фоне</label>
-          <label class="inline-check"><input class="mobile-device-autostart" type="checkbox" ${settings.autoStart?'checked':''}> Автозагрузка</label>
         </div>
         <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
-          <button type="button" class="btn-mobile-save-device" data-did="${esc(d.device_id)}">Сохранить доступ</button>
-          <button type="button" class="btn-mobile-rename" data-did="${esc(d.device_id)}">Переименовать</button>
+          <button type="button" class="btn-mobile-save-device" data-did="${esc(d.device_id)}">Сохранить режим доступа</button>
           <button type="button" class="btn-mobile-revoke" data-did="${esc(d.device_id)}">Отозвать</button>
         </div>
       </div>`;
@@ -4948,25 +6765,105 @@ async function loadMobileDevices(force=false){
   finally{ _mobileDevicesLoading = false; }
 }
 
+
+async function loadMobileConfigQr(show=true){
+  const box = el('mobile-config-qr-box');
+  const img = el('mobile-config-qr-img');
+  const st = el('mobile-config-qr-status');
+  try{
+    const data = await apiJson('api/mobile/config-qr');
+    if(box && show) box.classList.remove('hidden');
+    if(img){
+      if(data.qrDataUrl){ img.src = data.qrDataUrl; img.style.display = ''; }
+      else { img.removeAttribute('src'); img.style.display = 'none'; }
+    }
+    if(st){
+      st.textContent = data.passwordIncluded
+        ? 'QR готов. Отсканируйте его на первом экране мобильного приложения.'
+        : 'QR готов, но пароль не включён: заново введите пароль мобильного доступа и сохраните настройки.';
+      st.style.color = data.passwordIncluded ? '#f0b34b' : '';
+    }
+    return data;
+  }catch(e){
+    if(st){ st.textContent = 'Ошибка QR: '+e.message; st.style.color = '#ff7b7b'; }
+    throw e;
+  }
+}
+
+function mobileSetStatus(text, isError=false){
+  const st = el('mobile-code-status');
+  if(st){ st.textContent = text || ''; st.style.color = isError ? '#ff7b7b' : ''; }
+}
+
 function bindMobileSettings(){
+  const clearLocal = el('btn-clear-mobile-local-url');
+  if(clearLocal) clearLocal.onclick = ()=>{ const i=el('mobile-local-url'); if(i) i.value=''; mobileSetStatus('Локальный адрес очищен. Нажмите “Сохранить” или “Создать код”, чтобы записать.'); };
+  const clearRemote = el('btn-clear-mobile-remote-url');
+  if(clearRemote) clearRemote.onclick = ()=>{ const i=el('mobile-remote-url'); if(i) i.value=''; mobileSetStatus('Внешний адрес очищен. Нажмите “Сохранить” или “Создать код”, чтобы записать.'); };
+  const useRemoteExternal = el('btn-use-remote-as-external');
+  if(useRemoteExternal) useRemoteExternal.onclick = ()=>{ const ru=el('mobile-remote-url')?.value||''; const eu=el('mobile-external-url'); if(eu) eu.value=ru; const ex=el('mobile-external-enabled'); if(ex) ex.checked=true; mobileSetStatus('Внешний адрес KeenDNS взят из поля внешнего адреса. Нажмите “Сохранить”.'); };
+  const refreshExternal = el('btn-mobile-refresh-external-status');
+  if(refreshExternal) refreshExternal.onclick = ()=>loadMobileExternalStatus();
+  const showQr = el('btn-mobile-config-qr-show');
+  if(showQr) showQr.onclick = ()=>loadMobileConfigQr(true);
   const saveCfg = el('btn-save-mobile-config');
   if(saveCfg) saveCfg.onclick = async()=>{
     const ppVal = (el('mobile-pairing-password')?.value||'').trim();
     const mobilePayload = {
       enabled: !!el('mobile-access-enabled')?.checked,
       localUrl: el('mobile-local-url')?.value||'',
-      remoteUrl: el('mobile-remote-url')?.value||''
+      remoteUrl: el('mobile-remote-url')?.value||'',
+      externalEnabled: !!el('mobile-external-enabled')?.checked,
+      externalUrl: el('mobile-external-url')?.value||'',
+      externalMode: el('mobile-external-mode')?.value || 'keendns_http'
     };
     if(ppVal) mobilePayload.pairingPassword = ppVal;
-    const payload = { mobileAccess: mobilePayload };
-    try{ await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)}); showToast('Настройки мобильного доступа сохранены'); }
-    catch(e){ showToast('Ошибка: '+e.message); }
+    try{
+      const saved = await apiJson('api/mobile/settings',{method:'POST',body:JSON.stringify({ mobileAccess: mobilePayload })});
+      const chk = el('mobile-access-enabled'); if(chk) chk.checked = !!saved?.mobileAccess?.enabled;
+      mobileSetStatus('Настройки мобильного доступа сохранены.');
+      showToast('Настройки мобильного доступа сохранены');
+      await loadMobileExternalStatus();
+      if(saved?.mobileAccess?.enabled) startMobileCodePoll(); else stopMobileCodePoll();
+    }
+    catch(e){ mobileSetStatus('Ошибка сохранения: '+e.message, true); showToast('Ошибка: '+e.message); }
   };
 
   const genCode = el('btn-mobile-gen-code');
   if(genCode) genCode.onclick = async()=>{
-    try{ await apiJson('api/mobile/code/new',{method:'POST'}); startMobileCodePoll(); }
-    catch(e){ showToast('Ошибка генерации кода: '+e.message); }
+    if(genCode.disabled) return;
+    genCode.disabled = true;
+    mobileSetStatus('Создаю код подключения…');
+    try{
+      // v4.1.21.18.13: normal flow, no server bypass.
+      // “Создать код” explicitly enables and persists mobile access first,
+      // verifies that backend confirms it, then requests a pairing code.
+      const enabledEl = el('mobile-access-enabled');
+      if(enabledEl) enabledEl.checked = true;
+      const ppVal = (el('mobile-pairing-password')?.value||'').trim();
+      const mobilePayload = {
+        enabled: true,
+        localUrl: el('mobile-local-url')?.value||'',
+        remoteUrl: el('mobile-remote-url')?.value||'',
+        externalEnabled: !!el('mobile-external-enabled')?.checked,
+        externalUrl: el('mobile-external-url')?.value||'',
+        externalMode: el('mobile-external-mode')?.value || 'keendns_http'
+      };
+      if(ppVal) mobilePayload.pairingPassword = ppVal;
+      const saved = await apiJson('api/mobile/settings',{method:'POST',body:JSON.stringify({ mobileAccess: mobilePayload })});
+      if(!saved?.mobileAccess?.enabled) throw new Error('Сервер не подтвердил включение мобильного доступа');
+      const codeData = await apiJson('api/mobile/code/new',{method:'POST'});
+      const disp = el('mobile-code-display');
+      const timer = el('mobile-code-timer');
+      if(disp && codeData?.code) disp.textContent = codeData.code;
+      if(timer && codeData?.expires_in) timer.textContent = `${codeData.expires_in} с`;
+      mobileSetStatus('Код создан. Введите его в мобильном приложении.');
+      showToast('Код подключения создан');
+      startMobileCodePoll();
+      await loadMobileExternalStatus();
+    }
+    catch(e){ mobileSetStatus('Ошибка генерации кода: '+e.message, true); showToast('Ошибка генерации кода: '+e.message); }
+    finally{ genCode.disabled = false; }
   };
 
   const copyCode = el('btn-mobile-copy-code');
@@ -4991,7 +6888,7 @@ function bindMobileSettings(){
   const revokeAll = el('btn-mobile-revoke-all');
   if(revokeAll) revokeAll.onclick = async()=>{
     if(!confirm('Отозвать токены всех устройств? Им придётся пройти паринг заново.')) return;
-    try{ await apiJson('api/mobile/devices',{method:'DELETE'}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); showToast('Все токены отозваны'); }
+    try{ await apiJson('api/mobile/devices',{method:'DELETE'}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); await loadMobileExternalStatus(); showToast('Все токены отозваны'); }
     catch(e){ showToast('Ошибка: '+e.message); }
   };
 
@@ -5001,50 +6898,43 @@ function bindMobileSettings(){
   }
   if(devList) devList.addEventListener('click', async e=>{
     const saveDeviceBtn = e.target.closest('.btn-mobile-save-device');
-    const renameBtn = e.target.closest('.btn-mobile-rename');
     const revokeBtn = e.target.closest('.btn-mobile-revoke');
     if(saveDeviceBtn){
       const did = saveDeviceBtn.dataset.did;
       const row = devList.querySelector(`[data-did="${did}"]`);
-      const name = row?.querySelector('.mobile-device-name')?.value || '';
-      const profileIds = Array.from(row?.querySelector('.mobile-device-profile-ids')?.selectedOptions || []).map(o=>o.value).filter(Boolean);
       const payload = {
-        name,
-        accessMode: row?.querySelector('.mobile-device-access-mode')?.value || 'viewer',
-        profileAccess: {
-          mode: row?.querySelector('.mobile-device-profile-mode')?.value === 'selected' ? 'selected' : 'all',
-          profileIds
-        },
-        settings: {
-          serverMode: row?.querySelector('.mobile-device-server-mode')?.value || 'both',
-          scale: Number(row?.querySelector('.mobile-device-scale')?.value || 1),
-          keepScreenOn: !!row?.querySelector('.mobile-device-keep-screen')?.checked,
-          stayInBackground: !!row?.querySelector('.mobile-device-stay-bg')?.checked,
-          autoStart: !!row?.querySelector('.mobile-device-autostart')?.checked
-        }
+        accessMode: row?.querySelector('.mobile-device-access-mode')?.value || 'control'
       };
-      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'PATCH',body:JSON.stringify(payload)}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); showToast('Настройки устройства сохранены'); }
-      catch(e){ showToast('Ошибка: '+e.message); }
-    }
-    if(renameBtn){
-      const did = renameBtn.dataset.did;
-      const row = devList.querySelector(`[data-did="${did}"]`);
-      const name = row?.querySelector('.mobile-device-name')?.value || '';
-      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'PATCH',body:JSON.stringify({name})}); showToast('Имя сохранено'); }
+      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'PATCH',body:JSON.stringify(payload)}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); showToast('Режим доступа сохранён'); }
       catch(e){ showToast('Ошибка: '+e.message); }
     }
     if(revokeBtn){
       const did = revokeBtn.dataset.did;
       if(!confirm('Отозвать токен этого устройства?')) return;
-      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'DELETE'}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); showToast('Токен отозван'); }
+      try{ await apiJson(`api/mobile/devices/${encodeURIComponent(did)}`,{method:'DELETE'}); state.mobileDeviceSettingsDraftUntil=0; await loadMobileDevices(true); await loadMobileExternalStatus(); showToast('Токен отозван'); }
       catch(e){ showToast('Ошибка: '+e.message); }
     }
   });
 }
 
-function openSettingsPanel(name){
-  if(isMobileAccessLocked() && panelMode()!=='admin' && ['images','layout','rooms','sources','profiles','levels','backups','mobile'].includes(name)){ showToast('Этот раздел доступен только admin-устройствам. Базовые настройки и PIN доступны в основном окне.'); return; }
-  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels', backups:'settings-panel-backups', mobile:'settings-panel-mobile'};
+
+function updateControlModeSettingPermissions(){
+  const mode = panelMode();
+  const controlOrAdmin = mode==='admin' || mode==='control';
+  qsa('#settings-panel-extra-interface input, #settings-panel-extra-interface select, #settings-panel-extra-map input, #settings-panel-extra-map select, #settings-panel-extra-cards input, #settings-panel-extra-cards select, #settings-panel-extra-kiosk input, #settings-panel-extra-kiosk select').forEach(ctrl=>{
+    ctrl.disabled = !controlOrAdmin;
+  });
+  const weather=el('pref-weather-entity');
+  if(weather) weather.disabled = mode!=='admin';
+}
+
+async function openSettingsPanel(name){
+  const viewerAllowed = ['extra-interface','extra-map','extra-cards','extra-kiosk','extra-live'];
+  const controlAllowed = ['profiles','levels','client-defaults'];
+  const adminOnly = ['images','layout','rooms','sources','backups','mobile','web-clients','maintenance'];
+  if(panelMode()==='viewer' && (controlAllowed.includes(name) || adminOnly.includes(name))){ showToast('Этот раздел доступен только в режиме control/admin.'); return; }
+  if(panelMode()!=='admin' && adminOnly.includes(name)){ showToast('Этот раздел доступен только admin-устройствам. Профили, уровни и индивидуальные настройки доступны в режиме control.'); return; }
+  const map={images:'settings-panel-images', layout:'layout-maintenance-tools', rooms:'settings-panel-rooms', sources:'settings-panel-sources', profiles:'settings-panel-profiles', levels:'settings-panel-levels', backups:'settings-panel-backups', mobile:'settings-panel-mobile', 'web-clients':'settings-panel-web-clients', maintenance:'settings-panel-maintenance', 'client-defaults':'settings-panel-client-defaults', 'extra-interface':'settings-panel-extra-interface', 'extra-map':'settings-panel-extra-map', 'extra-cards':'settings-panel-extra-cards', 'extra-kiosk':'settings-panel-extra-kiosk', 'extra-security':'settings-panel-extra-security', 'extra-live':'settings-panel-extra-live'};
   const id=map[name]||name;
   qsa('#settings-modal .settings-section-panel').forEach(panel=>panel.classList.add('hidden'));
   qsa('#settings-modal [data-settings-panel]').forEach(btn=>btn.classList.toggle('active', btn.dataset.settingsPanel===name));
@@ -5053,24 +6943,60 @@ function openSettingsPanel(name){
     panel.classList.remove('hidden');
     if(name==='backups') loadBackupsInfo();
     if(name==='mobile') loadMobileSettings();
+    if(name==='web-clients') loadWebClientsManager();
+    if(name==='maintenance') loadMaintenanceManager();
+    if(name==='client-defaults') renderClientSettingsCopySources();
+    if(name==='images'){
+      const box=el('room-images-list');
+      if(box && (!state.roomsHydrated || !layoutEditableRooms().length)) box.innerHTML='<p class="muted">Загрузка списка комнат…</p>';
+      await ensureRoomsHydrated({force:!layoutEditableRooms().length});
+      renderRoomImagesSettings();
+    }
     const scroll=el('settings-modal')?.querySelector('.settings-scroll');
     setTimeout(()=>panel.scrollIntoView({block:'start', behavior:'smooth'}), 0);
     if(scroll) setTimeout(()=>{ scroll.scrollTop=Math.max(0, panel.offsetTop-10); }, 80);
+    updateControlModeSettingPermissions();
   }
 }
 async function cancelSettingsChanges(){
   try{
+    // Cancel must discard only the current unsaved form draft. It must not reset saved
+    // per-client display preferences (marker/sensor size, opacity, scale, etc.).
+    // Re-load global config first, then per-client prefs so client values win over
+    // legacy global defaults.
     await loadConfig();
-    await loadImagesInfo();
-    await loadRoomsSettings();
+    await loadClientPrefs();
+    await loadAuthoritativeClientSettings();
+    applyUiPrefs();
+    render();
     closeModal('settings-modal');
-    showToast('Несохранённые настройки отменены');
+    showToast('Несохранённые изменения отменены');
   }catch(e){
+    console.warn('[ALLHA-2D][settings] cancel reload failed', e);
     closeModal('settings-modal');
   }
 }
 
 
+
+function collectMapDiagnostics(){
+  try{
+    const activeKind = el('room-view')?.classList.contains('active') ? 'room' : 'overview';
+    const snap = mapDimensionSnapshot(activeKind);
+    const overview = mapDimensionSnapshot('overview');
+    const roomSnap = mapDimensionSnapshot('room');
+    const out={activeKind, active:snap, overview, room:roomSnap, lastStable:window.__allhaLastMapDimensionSnapshot||null, layoutCounts:{overviewMarkers:Object.keys(state.layout?.overviewMarkers||{}).length, roomMarkers:Object.keys(state.layout?.roomMarkers||{}).reduce((a,k)=>a+Object.keys(state.layout.roomMarkers[k]||{}).length,0), zones:Object.keys(state.layout?.zones||{}).length}, selectedRoom:state.selectedRoom||'', selectedEdit:state.selectedEdit||null};
+    window.__allhaLastMapDiagnostics=out;
+    return out;
+  }catch(e){ return {ok:false,error:e.message,stack:e.stack,ts:new Date().toISOString()}; }
+}
+async function copyMapDiagnostics(){
+  const payload=collectMapDiagnostics();
+  const text=JSON.stringify(payload,null,2);
+  await copyTextToClipboard(text);
+  const box=el('client-default-settings-status')||el('maintenance-status')||el('settings-status');
+  if(box){ box.textContent='Диагностика карты скопирована. Если копирование недоступно, откройте window.__allhaLastMapDiagnostics в консоли.'; box.classList.remove('error'); }
+}
 async function copyTextToClipboard(text){
   const value=String(text||'');
   if(!value){ showToast('Нечего копировать'); return; }
@@ -5091,6 +7017,23 @@ function bindGlobal(){
   ['pointerdown','touchstart','keydown'].forEach(evt=>document.addEventListener(evt, registerKioskActivity, {passive:true}));
   el('btn-settings').onclick=()=>openModal('settings-modal');
   el('btn-close-settings').onclick=()=>closeModal('settings-modal');
+
+
+  const wcRefresh=el('btn-refresh-web-clients'); if(wcRefresh) wcRefresh.onclick=()=>loadWebClientsManager();
+  const mRefresh=el('btn-refresh-maintenance'); if(mRefresh) mRefresh.onclick=()=>loadMaintenanceManager();
+  const clearLogs=el('btn-clear-debug-logs'); if(clearLogs) clearLogs.onclick=async()=>{ if(!confirm('Очистить debug log?')) return; try{ await apiJson('api/maintenance/logs/clear',{method:'POST'}); maintenanceStatus('Debug log очищен.'); await loadMaintenanceManager(); }catch(e){ maintenanceStatus('Ошибка очистки логов: '+e.message,true); } };
+  const cleanTmp=el('btn-clean-temp-web-clients'); if(cleanTmp) cleanTmp.onclick=async()=>{ if(!confirm('Удалить старые временные web-клиенты без /client-ссылки?')) return; try{ const r=await apiJson('api/maintenance/web-clients/cleanup-temporary',{method:'POST'}); maintenanceStatus('Удалено временных web-клиентов: '+(r.result?.removed||0)); await loadMaintenanceManager(); await loadWebClientsManager(); }catch(e){ maintenanceStatus('Ошибка очистки web-клиентов: '+e.message,true); } };
+  const cleanOrphans=el('btn-clean-orphan-settings'); if(cleanOrphans) cleanOrphans.onclick=async()=>{ if(!confirm('Очистить orphan-настройки удалённых клиентов?')) return; try{ const r=await apiJson('api/maintenance/orphans/cleanup',{method:'POST'}); maintenanceStatus('Orphan-настройки очищены.'); await loadMaintenanceManager(); }catch(e){ maintenanceStatus('Ошибка очистки orphan-настроек: '+e.message,true); } };
+  const wcStart=el('btn-open-client-start-page'); if(wcStart) wcStart.onclick=()=>window.open(location.origin, '_blank', 'noopener');
+  const csrc=el('client-settings-copy-source'); if(csrc) csrc.onfocus=()=>renderClientSettingsCopySources();
+  const cAll=el('btn-copy-client-all'); if(cAll) cAll.onclick=()=>copyClientSettingsSections(['all'], 'Скопировать все настройки');
+  const cPos=el('btn-copy-client-position'); if(cPos) cPos.onclick=()=>copyClientSettingsSections(['position'], 'Скопировать расположение датчиков и маркеров');
+  const cVis=el('btn-copy-client-visibility'); if(cVis) cVis.onclick=()=>copyClientSettingsSections(['visibility'], 'Скопировать видимость датчиков, маркеров и зон');
+  const cDisp=el('btn-copy-client-display'); if(cDisp) cDisp.onclick=()=>copyClientSettingsSections(['display'], 'Скопировать масштаб, размеры и прозрачность');
+  const cModes=el('btn-copy-client-modes'); if(cModes) cModes.onclick=()=>copyClientSettingsSections(['modes'], 'Скопировать режимы панели, киоска и мобильного вида');
+  const mapDiag=el('btn-copy-map-diagnostics'); if(mapDiag) mapDiag.onclick=()=>copyMapDiagnostics();
+  const crd=el('btn-client-reset-default'); if(crd) crd.onclick=()=>resetCurrentClientToDefaultSettings();
+  const csd=el('btn-client-save-default'); if(csd) csd.onclick=()=>saveCurrentClientAsDefaultSettings();
   const closeLevelWizard=()=>closeModal('level-setup-wizard-modal');
   const bwc=el('btn-close-level-setup-wizard'); if(bwc) bwc.onclick=closeLevelWizard;
   const wrb=el('wizard-return-button'); if(wrb) wrb.onclick=()=>returnToLevelSetupWizard();
@@ -5159,6 +7102,8 @@ function bindGlobal(){
   document.addEventListener('click', e=>{ const home=e.target.closest('[data-kiosk-overview-home]'); if(home){ selectRoom('overview'); return; } const q=e.target.closest('[data-quick-level]'); if(q){ activateLevelQuick(q.dataset.quickLevel); } });
   const levelWizardModal=el('level-setup-wizard-modal');
   if(levelWizardModal) levelWizardModal.addEventListener('click', e=>{
+    const handled = e.target.closest('[data-level-wizard-activate],[data-level-wizard-images],[data-level-wizard-sources],[data-level-wizard-import],[data-level-wizard-rooms],[data-level-wizard-zones],#btn-level-wizard-map');
+    if(handled) e.stopPropagation();
     const wizActivate=e.target.closest('[data-level-wizard-activate]'); if(wizActivate){ (async()=>{ await ensureWizardLevelActive(wizActivate.dataset.levelWizardActivate); openLevelSetupWizard(wizActivate.dataset.levelWizardActivate); })(); return; }
     const wizImages=e.target.closest('[data-level-wizard-images]'); if(wizImages){ openWizardPanel(wizImages.dataset.levelWizardImages,'images'); return; }
     const wizSources=e.target.closest('[data-level-wizard-sources]'); if(wizSources){ focusLevelSources(wizSources.dataset.levelWizardSources); return; }
@@ -5216,7 +7161,7 @@ function bindGlobal(){
     if(clearSensor){ e.preventDefault(); e.stopPropagation(); clearStandardSensorInput(clearSensor.dataset.roomId || roomId, clearSensor.dataset.clearStandardSensor); return; }
   });
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
-  el('btn-save-config').onclick=()=>saveConfig(); const clearConfigBtn=el('btn-clear-config'); if(clearConfigBtn) clearConfigBtn.onclick=()=>clearConfig(); const cancelSettingsBtn=el('btn-cancel-settings'); if(cancelSettingsBtn) cancelSettingsBtn.onclick=()=>cancelSettingsChanges(); qsa('[data-settings-panel]').forEach(b=>b.onclick=()=>openSettingsPanel(b.dataset.settingsPanel)); el('btn-info-settings').onclick=()=>openInfoModal('summary'); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
+  el('btn-save-config').onclick=()=>saveConfig(); const clearConfigBtn=el('btn-clear-config'); if(clearConfigBtn) clearConfigBtn.onclick=()=>clearConfig(); const cancelSettingsBtn=el('btn-cancel-settings'); if(cancelSettingsBtn) cancelSettingsBtn.onclick=()=>cancelSettingsChanges(); qsa('[data-settings-panel]').forEach(b=>b.onclick=()=>openSettingsPanel(b.dataset.settingsPanel)); el('btn-info-settings').onclick=()=>openInfoModal('summary'); const closeStdSensors=el('btn-close-standard-sensors-modal'); if(closeStdSensors) closeStdSensors.onclick=closeStandardSensorsModal; el('standard-sensors-modal')?.addEventListener('click',e=>{ if(e.target?.id==='standard-sensors-modal') closeStandardSensorsModal(); }); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
   el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
   const editBtn=el('btn-edit');
   const startEditHold=()=>{ if(state.edit) return; if(!canEditLayout()){ showToast('Редактирование доступно только в admin mode'); updateEditButtons(); return; } editBtn.classList.add('holding'); showToast('Удерживайте 2 секунды для входа в редактор'); state.editHoldTimer=setTimeout(()=>{ editBtn.classList.remove('holding'); state.editHoldTimer=null; enterEditMode(); },2000); };
@@ -5227,11 +7172,15 @@ function bindGlobal(){
   editBtn.title='Удерживайте 2 секунды, чтобы войти в режим редактирования';
   el('btn-save-edit').onclick=()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message));
   el('btn-cancel-edit').onclick=cancelEditChanges;
+  ensureEditViewportControlsRoot();
   const delSel=el('btn-delete-selected'); if(delSel) delSel.onclick=deleteSelectedEditObject;
   const resetSel=el('btn-reset-selected'); if(resetSel) resetSel.onclick=resetSelectedEditObject;
-  const closeEdit=el('btn-close-edit-sheet'); if(closeEdit) closeEdit.onclick=()=>{state.selectedEdit=null; render();};
+  const closeEdit=el('btn-close-edit-sheet'); if(closeEdit) closeEdit.onclick=()=>{state.selectedEdit=null; state.editActionSheetHidden=false; render();};
   const sheetSave=el('btn-sheet-save-edit'); if(sheetSave) sheetSave.onclick=()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message));
   const sheetCancel=el('btn-sheet-cancel-edit'); if(sheetCancel) sheetCancel.onclick=cancelEditChanges;
+  const hideEditSheet=el('btn-hide-edit-sheet'); if(hideEditSheet) hideEditSheet.onclick=()=>{ state.editActionSheetHidden=true; renderEditSheet(); showToast('Панель скрыта. Выберите объект на карте, затем нажмите “Действие”.'); };
+  const showEditSheet=el('btn-edit-actions-float'); if(showEditSheet) showEditSheet.onclick=()=>{ state.editActionSheetHidden=false; renderEditSheet(); };
+  qsa('[data-edit-pan]').forEach(bindEditMapNudgeButton);
   el('device-search').oninput=renderDevices;
   el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
   const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
@@ -5307,10 +7256,13 @@ function bindGlobal(){
   const bpclr=el('btn-clear-zone-draw'); if(bpclr) bpclr.onclick=clearZoneDraw;
   const bpdelz=el('btn-delete-placement-zone'); if(bpdelz) bpdelz.onclick=deletePlacementEditorZone;
   const bpx=el('btn-close-placement-editor'); if(bpx) bpx.onclick=closePlacementEditor;
+  const bpt=el('btn-toggle-placement-panel'); if(bpt) bpt.onclick=()=>setPlacementEditorPanelHidden(!state.placementEditorPanelHidden);
   const setupEmpty=el('btn-project-setup-empty'); if(setupEmpty) setupEmpty.onclick=openProjectSetupWizard;
   const settingsWizardBtn=el('btn-open-project-setup-wizard-settings'); if(settingsWizardBtn) settingsWizardBtn.onclick=openProjectSetupWizard;
-  const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ state.ui.kioskMode=true; state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); resetKioskAutoLock(); showToast('Режим киоска включён'); };
+  const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ if(state.edit){ showToast('Режим управления отключён, пока идёт редактирование'); return; } state.ui.kioskMode=true; state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); resetKioskAutoLock(); showToast('Режим киоска включён'); };
   el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
+  const mobileOverviewBtn=el('btn-mobile-overview'); if(mobileOverviewBtn) mobileOverviewBtn.onclick=()=>{ selectRoom('overview'); closeMobilePanels(); };
+  const kioskOverviewDirect=el('btn-kiosk-overview-direct'); if(kioskOverviewDirect) kioskOverviewDirect.onclick=()=>{ state.kioskTileRoomFilter=''; state.kioskTilePage=0; selectRoom('overview'); hideKioskRooms(); updateKioskOverviewButton(); };
   const exitKiosk=el('btn-exit-kiosk');
   if(exitKiosk) exitKiosk.onclick=()=>{ hideKioskRooms(); state.ui.kioskMode=false; state.kioskLocked=false; state.kioskTileRoomFilter=''; state.ui.hideToolbar=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; saveUiPrefs(); render(); showToast('Режим киоска выключен'); };
   const kioskMapMode=el('btn-kiosk-map-mode'); if(kioskMapMode) kioskMapMode.onclick=()=>{ state.ui.kioskTileMode=false; state.kioskTileRoomFilter=''; saveUiPrefs(); render(); };
@@ -5324,7 +7276,7 @@ function bindGlobal(){
   const kioskLock=el('btn-kiosk-lock'); if(kioskLock) kioskLock.onclick=()=>setKioskLocked(!state.kioskLocked);
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
   const closeKioskRooms=el('btn-close-kiosk-rooms'); if(closeKioskRooms) closeKioskRooms.onclick=hideKioskRooms;
-  const kioskOverview=el('btn-kiosk-overview'); if(kioskOverview) kioskOverview.onclick=()=>{ selectRoom('overview'); hideKioskRooms(); };
+  const kioskOverview=el('btn-kiosk-overview'); if(kioskOverview) kioskOverview.onclick=()=>{ state.kioskTileRoomFilter=''; state.kioskTilePage=0; selectRoom('overview'); hideKioskRooms(); updateKioskOverviewButton(); };
   el('pref-mobile-mode').onchange=e=>{ state.ui.mobileMode=!!e.target.checked; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; applyUiPrefs(); saveUiPrefs(); };
   el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
   el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
@@ -5347,16 +7299,35 @@ function bindGlobal(){
       const ok=await verifyPinPrompt('Введите PIN для перехода в более высокий режим');
       if(!ok){ pmodeSelect.value=oldMode; showToast('Неверный PIN'); return; }
     }
-    saveGlobalPrefs().then(()=>{ if(!canEditLayout() && state.edit) cancelEditChanges(); updateEditButtons(); applyUiPrefs(); render(); }).catch(()=>{});
+    saveGlobalPrefs().then(async()=>{ 
+      // v4.1.21.18.19: general settings Save must persist per-client display settings too.
+      // Previously it saved only global config, so mobile scale/opacity could be lost after app restart.
+      try{ await saveClientDisplaySettingsNow(); await saveClientPrefs(); }catch(e){ console.warn('[client-settings] save from settings failed', e); showToast('Ошибка сохранения client settings: '+e.message); }
+      if(!canEditLayout() && state.edit) cancelEditChanges(); updateEditButtons(); applyUiPrefs(); render(); 
+    }).catch(()=>{});
   };
   ['pref-confirm-dangerous','pref-dangerous-pin'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>{ saveGlobalPrefs().then(()=>{ updateEditButtons(); applyUiPrefs(); render(); }).catch(()=>{}); }; });
   bindRangePreview('pref-halo-scale','haloScale','pref-halo-scale-value');
   bindRangePreview('pref-hardware-scale','hardwareScale','pref-hardware-scale-value');
+  bindRangePreview('pref-overview-halo-scale','overviewHaloScale','pref-overview-halo-scale-value');
+  bindRangePreview('pref-overview-marker-scale','overviewMarkerScale','pref-overview-marker-scale-value');
+  bindRangePreview('pref-overview-marker-opacity','overviewMarkerOpacity','pref-overview-marker-opacity-value');
+  bindRangePreview('pref-overview-sensor-scale','overviewSensorScale','pref-overview-sensor-scale-value');
+  bindRangePreview('pref-overview-room-label-scale','overviewRoomLabelScale','pref-overview-room-label-scale-value');
+  bindRangePreview('pref-overview-sensor-opacity','overviewSensorOpacity','pref-overview-sensor-opacity-value');
+  bindRangePreview('pref-room-halo-scale','roomHaloScale','pref-room-halo-scale-value');
+  bindRangePreview('pref-room-marker-scale','roomMarkerScale','pref-room-marker-scale-value');
+  bindRangePreview('pref-room-marker-opacity','roomMarkerOpacity','pref-room-marker-opacity-value');
+  bindRangePreview('pref-room-sensor-scale','roomSensorScale','pref-room-sensor-scale-value');
+  bindRangePreview('pref-room-sensor-opacity','roomSensorOpacity','pref-room-sensor-opacity-value');
   bindRangePreview('pref-marker-scale','markerScale','pref-marker-scale-value');
   bindRangePreview('pref-sensor-scale','sensorScale','pref-sensor-scale-value');
   bindRangePreview('pref-room-label-scale','roomLabelScale','pref-room-label-scale-value');
   bindRangePreview('pref-marker-opacity','markerOpacity','pref-marker-opacity-value');
   bindRangePreview('pref-sensor-opacity','sensorOpacity','pref-sensor-opacity-value');
+  bindRangePreview('pref-card-font-scale','cardFontScale','pref-card-font-scale-value', {render:()=>applyVirtualRoomAdaptiveGrid(state.selectedRoom)});
+  bindRangePreview('pref-virtual-card-transparency','virtualCardTransparency','pref-virtual-card-transparency-value', {rawPercent:true, render:()=>applyVirtualRoomAdaptiveGrid(state.selectedRoom)});
+  bindRangePreview('pref-virtual-card-scale','virtualCardScale','pref-virtual-card-scale-value', {render:()=>applyVirtualRoomAdaptiveGrid(state.selectedRoom)});
   const zb=el('btn-zoom-out'); if(zb) zb.onclick=()=>zoomViewport(activeStageKind(), .86);
   const zi=el('btn-zoom-in'); if(zi) zi.onclick=()=>zoomViewport(activeStageKind(), 1.16);
   const zf=el('btn-zoom-fit'); if(zf) zf.onclick=()=>fitViewport(activeStageKind());
@@ -5462,6 +7433,25 @@ async function initialHaSync(){
   }
 }
 
+function setPercentRange(inputId, valueId, value){
+  const input=el(inputId);
+  if(!input) return;
+  const n=Number(value);
+  input.value=String(Math.round((Number.isFinite(n)?n:0)*100));
+  const out=el(valueId);
+  if(out) out.textContent=input.value+'%';
+}
+function applyConfigToInputs(){
+  // v4.3.0.10: config/security input sync helper restored.
+  // This must never abort init; /api/rooms and virtual room server settings are independent.
+  try{
+    applyUiPrefs();
+    updateEditButtons();
+    updateMobileLockedSettingsUI();
+  }catch(e){ console.warn('applyConfigToInputs failed', e); }
+}
+
+
 (async function init(){
   await loadLayout();
   await loadSourceConfig();
@@ -5479,8 +7469,12 @@ async function initialHaSync(){
   try{
     await loadConfig();
     await loadClientPrefs(); // применяем per-device настройки поверх глобальных
+    await loadAuthoritativeClientSettings(); // v4.1.21.18.19: final authoritative client settings pass
+    applyUiPrefs();
+    render(); // first render used defaults; redraw once after per-client settings are loaded
+    stabilizeSelectedVirtualRoom('after-client-settings-render');
     await loadSecurityRules();
-    applyConfigToInputs();
+    try{ applyConfigToInputs(); }catch(e){ console.warn('applyConfigToInputs failed', e); }
     renderProfilesManager();
     renderLevelsManager();
   }catch(e){
@@ -5489,10 +7483,10 @@ async function initialHaSync(){
   await initialHaSync();
 })();
 
-window.addEventListener('resize', ()=>{ syncAutoMobileMode(); applyUiPrefs(); renderKioskTiles(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, {passive:true});
-window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncAutoMobileMode(); applyUiPrefs(); renderKioskTiles(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); }, 250), {passive:true});
+window.addEventListener('resize', ()=>{ syncOldAndroidCompatClass(); syncAutoMobileMode(); applyUiPrefs(); renderKioskTiles(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); if(virtualRoomStatus(state.selectedRoom)==='virtual') requestAnimationFrame(()=>{positionVirtualRoomCardsLayer(); applyVirtualRoomAdaptiveGrid(state.selectedRoom);}); }, {passive:true});
+window.addEventListener('orientationchange', ()=>setTimeout(()=>{ syncOldAndroidCompatClass(); syncAutoMobileMode(); applyUiPrefs(); renderKioskTiles(); applyStageTransform(activeStageKind()); updateZoomControls(); refitPlacementEditorSoon(); if(virtualRoomStatus(state.selectedRoom)==='virtual') requestAnimationFrame(()=>{positionVirtualRoomCardsLayer(); applyVirtualRoomAdaptiveGrid(state.selectedRoom);}); }, 250), {passive:true});
 window.addEventListener('load', ()=>{ lockViewportScroll(); applyStageTransform(activeStageKind()); });
-document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content,.faq-frame,.faq-modal-card')) return; e.preventDefault(); }, {passive:false});
+document.addEventListener('touchmove', e=>{ if(e.target.closest('.modal,.device-list,.sidebar,.device-panel,.source-settings,.info-content,.faq-frame,.faq-modal-card,.quick-overlay,.quick-overlay-list,.kiosk-room-overlay,.kiosk-room-list')) return; e.preventDefault(); }, {passive:false});
 
 
 /* v3.4.12: keep mobile bottom bar and kiosk controls from covering open modals */

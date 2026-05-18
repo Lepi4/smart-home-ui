@@ -4,5 +4,5 @@ window.PLAN_CONFIG = {
   rooms: [
     { id:'overview', label:'Общий план' }
   ],
-  pollIntervalMs: 6000
+  pollIntervalMs: 30000
 };

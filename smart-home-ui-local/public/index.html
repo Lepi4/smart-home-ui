@@ -4,6 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ALLHA-2D</title>
+  <script>
+    (function(){
+      var m = location.pathname.match(/^(\/api\/hassio_ingress\/[^\/?#]+)\/?/);
+      var base = m ? (m[1] + '/') : '/';
+      document.write('<base href="' + base.replace(/"/g, '&quot;') + '">');
+    })();
+  </script>
   <meta name="theme-color" content="#a16a1e">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -12,6 +19,7 @@
 </head>
 <body>
   <button type="button" id="btn-kiosk-rooms" class="kiosk-rooms-btn" title="Открыть список комнат в режиме киоска">☰ Комнаты</button>
+  <button type="button" id="btn-kiosk-overview-direct" class="kiosk-overview-direct-btn hidden" title="Вернуться на общий план">Общий план</button>
   <button type="button" id="btn-kiosk-attention" class="kiosk-attention-btn hidden" title="Открыть окно Внимание">!</button>
   <button type="button" id="btn-kiosk-lock" class="kiosk-lock-btn" title="Заблокировать/разблокировать киоск">🔓 Unlock</button>
   <button type="button" id="btn-exit-kiosk" class="kiosk-exit-btn" title="Выйти из режима киоска">⋮ Выйти</button>
@@ -23,14 +31,14 @@
     <button type="button" id="btn-kiosk-overview" class="kiosk-room-item kiosk-overview-item">Общий план</button>
     <div id="kiosk-room-list" class="kiosk-room-list"></div>
   </div>
-  <div id="mobile-menu-bar" class="mobile-menu-bar"><a class="button-link mobile-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← HA</a><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button></div>
+  <div id="mobile-menu-bar" class="mobile-menu-bar"><a class="button-link mobile-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">Назад</a><button type="button" id="btn-mobile-overview" class="hidden">Общий план</button><button type="button" id="btn-mobile-sidebar">☰ Комнаты</button><button type="button" id="btn-mobile-devices">Устройства</button><button type="button" id="btn-mobile-settings">⚙ Настройки</button></div>
   <button type="button" id="btn-show-sidebar" class="floating-menu-btn left hidden">☰ Комнаты</button>
   <button type="button" id="btn-show-device-panel" class="floating-menu-btn right hidden">Устройства</button>
   <button type="button" id="btn-show-toolbar" class="floating-menu-btn top hidden">Панель</button>
   <aside class="sidebar">
     <div class="brand">ALLHA-2D LOCAL</div>
     <div class="top-actions">
-      <a class="button-link ha-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">← HA</a>
+      <a class="button-link ha-back-link" href="/" target="_top" data-ha-back title="Вернуться в Home Assistant">Назад</a>
       <button type="button" id="btn-settings">Настройки</button>
       <button type="button" id="btn-refresh">Обновить</button>
       <button type="button" id="btn-hide-sidebar" title="Скрыть левое меню">Скрыть</button>
@@ -58,10 +66,10 @@
         <button type="button" id="btn-fullscreen">Полный экран</button>
         <button type="button" id="btn-toolbar-kiosk" class="toolbar-kiosk" title="Включить режим киоска">Киоск</button>
         <button type="button" id="btn-edit">Редактировать</button>
-        <button type="button" id="btn-save-edit" class="hidden">Сохранить изменения</button>
-        <button type="button" id="btn-cancel-edit" class="hidden">Отменить изменения</button>
-        <button type="button" id="btn-undo" class="hidden" title="Отменить (Ctrl+Z)">↩ Отмена</button>
-        <button type="button" id="btn-redo" class="hidden" title="Повторить (Ctrl+Y)">↪ Повтор</button>
+        <button type="button" id="btn-save-edit" class="hidden" title="Сохранить изменения" aria-label="Сохранить изменения">Сохранить</button>
+        <button type="button" id="btn-cancel-edit" class="hidden" title="Отменить изменения" aria-label="Отменить изменения">Сброс</button>
+        <button type="button" id="btn-undo" class="hidden" title="Отмена (Ctrl+Z)" aria-label="Отмена">↩</button>
+        <button type="button" id="btn-redo" class="hidden" title="Повтор (Ctrl+Y)" aria-label="Повтор">↪</button>
         <span id="edit-mode-badge" class="edit-mode-badge">Просмотр</span>
         <label class="range-label">Шрифт устройств <input id="card-font-size" type="range" min="10" max="18" value="13"></label>
       </div>
@@ -108,7 +116,7 @@
               <div class="detail-card">
                 <h2 id="room-title">Комната</h2>
                 <div id="room-climate-line" class="climate-line"></div>
-                <p class="muted">В режиме редактирования используется SVG Layout Editor: выберите устройство или маркер, кликните/тапните точку на сетке и нажмите “Применить”. Перетаскивание отключено.</p>
+                <p class="muted">В режиме редактирования используется редактор расположения: выберите устройство или маркер, кликните/тапните точку на сетке и нажмите “Применить”. Перетаскивание отключено.</p>
               </div>
               <div class="detail-card">
                 <h3>Быстрые действия</h3>
@@ -122,15 +130,25 @@
         <div id="edit-action-sheet" class="edit-action-sheet hidden">
           <div>
             <strong id="edit-sheet-title">Ничего не выбрано</strong>
-            <p id="edit-sheet-hint">Коснитесь маркера, чтобы открыть Layout Editor. Затем кликните/тапните новую точку на сетке и нажмите “Применить”.</p>
+            <p id="edit-sheet-hint">Коснитесь маркера, чтобы открыть редактор расположения. Затем кликните/тапните новую точку на сетке и нажмите “Применить”.</p>
           </div>
           <div class="edit-sheet-actions">
             <button type="button" id="btn-reset-selected">Сбросить/убрать</button>
             <button type="button" id="btn-delete-selected">Удалить маркер</button>
             <button type="button" id="btn-close-edit-sheet">Снять выбор</button>
+            <button type="button" id="btn-hide-edit-sheet" class="sheet-hide">Скрыть панель</button>
             <button type="button" id="btn-sheet-save-edit" class="sheet-save">Сохранить</button>
             <button type="button" id="btn-sheet-cancel-edit" class="sheet-cancel">Отменить</button>
           </div>
+        </div>
+        <button type="button" id="btn-edit-actions-float" class="edit-actions-float hidden">Действие</button>
+        <div id="edit-map-nudge" class="edit-map-nudge" aria-label="Двигать карту">
+          <button type="button" data-edit-pan="up" aria-label="Двигать карту вверх">▲</button>
+          <button type="button" data-edit-pan="center" aria-label="Центровать карту">◎</button>
+          <button type="button" data-edit-pan="down" aria-label="Двигать карту вниз">▼</button>
+          <button type="button" data-edit-pan="left" aria-label="Двигать карту влево">◀</button>
+          <button type="button" data-edit-pan="center" aria-label="Центровать карту">◎</button>
+          <button type="button" data-edit-pan="right" aria-label="Двигать карту вправо">▶</button>
         </div>
 
         <details id="live-coordinate-debug-panel" class="live-coordinate-debug hidden">
@@ -171,60 +189,26 @@
         <button type="button" id="btn-close-settings" class="close-word">× Закрыть</button>
       </div>
       <div class="settings-scroll">
-      <div class="form-grid">
+      <div class="form-grid settings-intro-grid">
         <div class="addon-note">Home Assistant подключается автоматически через Supervisor API. URL и long-lived token вводить не нужно.</div>
         <input id="ha-url" type="hidden">
         <textarea id="ha-token" class="hidden" rows="1"></textarea>
         <div class="addon-note">Адреса Lovelace/карточек теперь задаются отдельно для каждого уровня: Настройки → Уровни / области → Источники Lovelace этого уровня.</div>
-        <label>Резервный опрос при сбое live, сек<input id="poll-interval" type="number" value="30" min="10"></label><p class="hint small">Основной режим обновлений — live через HA WebSocket/SSE. Этот интервал используется как fallback, если live-соединение недоступно.</p>
-        <label class="settings-check"><input type="checkbox" id="pref-mobile-mode"> Мобильная версия</label>
-        <label class="settings-check"><input type="checkbox" id="pref-auto-hide"> Автоскрытие меню в мобильной версии</label>
-        <label class="settings-check"><input type="checkbox" id="pref-compact-mode"> Компактные панели</label>
-        <label class="settings-check"><input type="checkbox" id="pref-dark-theme"> Тёмная тема</label>
-        <label>Тема оформления
-          <select id="pref-theme">
-            <option value="dark">Тёмная (по умолчанию)</option>
-            <option value="light">Светлая</option>
-            <option value="midnight">Midnight (AMOLED)</option>
-            <option value="sepia">Сепия</option>
-          </select>
-        </label>
-        <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
-        <label class="settings-check"><input type="checkbox" id="pref-debug-mode"> Debug mode: показывать координатные окна</label>
-        <label class="settings-check"><input type="checkbox" id="pref-invisible-zones"> Невидимые зоны: кликабельны, но не видны</label>
-        <label class="settings-check"><input type="checkbox" id="pref-kiosk-mode"> Режим киоска: скрыть панели и оставить только план</label>
-        <label>Навигация в kiosk mode
-          <select id="pref-kiosk-navigation-mode">
-            <option value="maps">Карты — комнаты открываются картами</option>
-            <option value="tiles">Плитки — комнаты открываются карточками</option>
-            <option value="switchable">Переключаемый — кнопки Карта / Карточки</option>
-          </select>
-        </label>
-        <label class="settings-check"><input type="checkbox" id="pref-kiosk-autolock"> Автоблокировка киоска</label>
-        <label>Автоблокировка после, сек<input id="pref-kiosk-autolock-seconds" type="number" min="5" max="300" value="15"></label>
-        <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
-        <label>Режим панели
-          <select id="pref-panel-mode">
-            <option value="viewer">viewer — только просмотр</option>
-            <option value="control">control panel — просмотр и управление с подтверждениями</option>
-            <option value="admin">admin — полный функционал</option>
-          </select>
-        </label>
-        <label class="settings-check"><input type="checkbox" id="pref-confirm-dangerous" checked> Подтверждать опасные команды</label>
-        <label class="settings-check"><input type="checkbox" id="pref-dangerous-pin"> Запускать опасные команды через PIN в control panel</label>
-        <div class="pin-settings"><span id="pin-status" class="muted">PIN не установлен</span> <button type="button" id="btn-change-pin">Установить / сменить PIN-код</button> <button type="button" id="btn-reset-pin">Сбросить PIN-код</button><p class="muted">PIN — 4 цифры. Цифры отображаются при вводе. Сохранённый PIN не показывается.</p></div>
-        <label>Размер ореолов <input id="pref-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-halo-scale-value">50%</span></label>
-        <label>Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
-        <label>Масштаб маркеров устройств <input id="pref-marker-scale" type="range" min="10" max="200" value="100"><span id="pref-marker-scale-value">100%</span></label>
-        <label>Прозрачность фона маркеров <input id="pref-marker-opacity" type="range" min="0" max="100" value="0"><span id="pref-marker-opacity-value">0%</span></label>
-        <label>Масштаб датчиков <input id="pref-sensor-scale" type="range" min="10" max="200" value="100"><span id="pref-sensor-scale-value">100%</span></label>
-        <label>Масштаб названий помещений <input id="pref-room-label-scale" type="range" min="10" max="200" value="100"><span id="pref-room-label-scale-value">100%</span></label>
-        <label>Прозрачность фона датчиков <input id="pref-sensor-opacity" type="range" min="0" max="100" value="0"><span id="pref-sensor-opacity-value">0%</span></label>
-        <p class="muted">Масштаб карты меняется двумя пальцами или кнопками +/−. Аппаратный масштаб задаёт базовый размер плана для конкретной панели/экрана. Вид, масштаб, скрытые панели и kiosk mode сохраняются в /data/ui_state.json и восстанавливаются после переустановки add-on, если данные не удалить.</p>
       </div>
+
+      <div class="settings-extra-menu">
+        <p class="muted settings-extra-title">Дополнительные настройки отображения и поведения</p>
+        <button type="button" data-settings-panel="extra-interface">Интерфейс</button>
+        <button type="button" data-settings-panel="extra-map">Карта и маркеры</button>
+        <button type="button" data-settings-panel="extra-cards">Карточки</button>
+        <button type="button" data-settings-panel="extra-kiosk">Kiosk / Mobile</button>
+        <button type="button" data-settings-panel="extra-security">Безопасность</button>
+        <button type="button" data-settings-panel="extra-live">Live / обновления</button>
+      </div>
+
       <div class="settings-service-menu">
         <button type="button" data-settings-panel="images">Настройка картинок / карт</button>
-        <button type="button" data-settings-panel="layout">Layout / обслуживание</button>
+        <button type="button" data-settings-panel="layout">Расположение / обслуживание</button>
         <button type="button" data-settings-panel="rooms">Комнаты / зоны / датчики</button>
         <button type="button" data-settings-panel="sources">Источники устройств</button>
         <button type="button" data-settings-panel="profiles">Профили</button>
@@ -232,6 +216,119 @@
         <button type="button" data-settings-panel="levels">Уровни / области</button>
         <button type="button" data-settings-panel="backups">Backup / архивы</button>
         <button type="button" data-settings-panel="mobile">Мобильный доступ</button>
+        <button type="button" data-settings-panel="web-clients">Web-клиенты / панели</button>
+        <button type="button" data-settings-panel="maintenance">Обслуживание / диагностика</button>
+        <button type="button" data-settings-panel="client-defaults">Индивидуальные настройки</button>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-extra-interface">
+        <h3>Интерфейс</h3>
+        <p class="muted">Настройки внешнего вида текущего клиента. Старые разделы меню не изменены.</p>
+        <div class="form-grid settings-extra-grid">
+          <label class="settings-check"><input type="checkbox" id="pref-compact-mode"> Компактные панели</label>
+          <label class="settings-check"><input type="checkbox" id="pref-dark-theme"> Тёмная тема</label>
+          <label>Тема оформления
+            <select id="pref-theme">
+              <option value="dark">Тёмная (по умолчанию)</option>
+              <option value="light">Светлая</option>
+              <option value="midnight">Midnight (AMOLED)</option>
+              <option value="sepia">Сепия</option>
+            </select>
+          </label>
+          <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
+          <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
+          <label class="settings-check"><input type="checkbox" id="pref-invisible-zones"> Невидимые зоны: кликабельны, но не видны</label>
+        </div>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-extra-map">
+        <h3>Карта и маркеры</h3>
+        <p class="muted">Размеры и прозрачность элементов карты для текущего клиента.</p>
+        <div class="form-grid settings-extra-grid map-marker-settings-grid">
+          <label class="settings-wide">Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
+          <div class="settings-subsection settings-wide">
+            <h4>Общий план</h4>
+            <p class="muted">Эти параметры применяются только на общем плане.</p>
+            <div class="form-grid settings-extra-grid compact-grid">
+              <label>Размер ореолов <input id="pref-overview-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-overview-halo-scale-value">50%</span></label>
+              <label>Масштаб маркеров устройств <input id="pref-overview-marker-scale" type="range" min="10" max="200" value="100"><span id="pref-overview-marker-scale-value">100%</span></label>
+              <label>Прозрачность фона маркеров <input id="pref-overview-marker-opacity" type="range" min="0" max="100" value="0"><span id="pref-overview-marker-opacity-value">0%</span></label>
+              <label>Масштаб датчиков <input id="pref-overview-sensor-scale" type="range" min="10" max="200" value="100"><span id="pref-overview-sensor-scale-value">100%</span></label>
+              <label>Масштаб названий помещений <input id="pref-overview-room-label-scale" type="range" min="10" max="200" value="100"><span id="pref-overview-room-label-scale-value">100%</span></label>
+              <label>Прозрачность фона датчиков <input id="pref-overview-sensor-opacity" type="range" min="0" max="100" value="0"><span id="pref-overview-sensor-opacity-value">0%</span></label>
+            </div>
+          </div>
+          <div class="settings-subsection settings-wide">
+            <h4>Комнаты</h4>
+            <p class="muted">Эти параметры применяются только внутри комнат. Обычные sensor-маркеры используют параметры маркеров, а стандартные плашки — параметры датчиков.</p>
+            <div class="form-grid settings-extra-grid compact-grid">
+              <label>Размер ореолов <input id="pref-room-halo-scale" type="range" min="25" max="125" value="50"><span id="pref-room-halo-scale-value">50%</span></label>
+              <label>Масштаб маркеров устройств <input id="pref-room-marker-scale" type="range" min="10" max="200" value="100"><span id="pref-room-marker-scale-value">100%</span></label>
+              <label>Прозрачность фона маркеров <input id="pref-room-marker-opacity" type="range" min="0" max="100" value="0"><span id="pref-room-marker-opacity-value">0%</span></label>
+              <label>Масштаб датчиков <input id="pref-room-sensor-scale" type="range" min="10" max="200" value="100"><span id="pref-room-sensor-scale-value">100%</span></label>
+              <label>Прозрачность фона датчиков <input id="pref-room-sensor-opacity" type="range" min="0" max="100" value="0"><span id="pref-room-sensor-opacity-value">0%</span></label>
+            </div>
+          </div>
+        </div>
+        <p class="muted">Масштаб карты меняется двумя пальцами или кнопками +/−. Аппаратный масштаб задаёт базовый размер плана для конкретной панели/экрана.</p>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-extra-cards">
+        <h3>Карточки</h3>
+        <p class="muted">Настройки карточек и виртуальных комнат для текущего клиента.</p>
+        <div class="form-grid settings-extra-grid">
+          <label>Размер текста карточек <input id="pref-card-font-scale" type="range" min="60" max="140" value="90"><span id="pref-card-font-scale-value">90%</span></label>
+          <label>Размер карточек виртуальной комнаты <input id="pref-virtual-card-scale" type="range" min="70" max="160" value="100"><span id="pref-virtual-card-scale-value">100%</span></label>
+          <label>Прозрачность карточек на картинке <input id="pref-virtual-card-transparency" type="range" min="0" max="100" value="0"><span id="pref-virtual-card-transparency-value">0%</span></label>
+        </div>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-extra-kiosk">
+        <h3>Kiosk / Mobile</h3>
+        <p class="muted">Поведение текущего клиента в мобильном и kiosk-режиме.</p>
+        <div class="form-grid settings-extra-grid">
+          <label class="settings-check"><input type="checkbox" id="pref-mobile-mode"> Мобильная версия</label>
+          <label class="settings-check"><input type="checkbox" id="pref-auto-hide"> Автоскрытие меню в мобильной версии</label>
+          <label class="settings-check"><input type="checkbox" id="pref-kiosk-mode"> Режим киоска: скрыть панели и оставить только план</label>
+          <label>Навигация в kiosk mode
+            <select id="pref-kiosk-navigation-mode">
+              <option value="maps">Карты — комнаты открываются картами</option>
+              <option value="tiles">Плитки — комнаты открываются карточками</option>
+              <option value="switchable">Переключаемый — кнопки Карта / Карточки</option>
+            </select>
+          </label>
+          <label class="settings-check"><input type="checkbox" id="pref-kiosk-autolock"> Автоблокировка киоска</label>
+          <label>Автоблокировка после, сек<input id="pref-kiosk-autolock-seconds" type="number" min="5" max="300" value="15"></label>
+        </div>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-extra-security">
+        <h3>Безопасность</h3>
+        <p class="muted">Режим панели и подтверждение опасных команд.</p>
+        <div class="form-grid settings-extra-grid">
+          <label>Режим панели
+            <select id="pref-panel-mode">
+              <option value="viewer">viewer — только просмотр</option>
+              <option value="control">control panel — просмотр и управление с подтверждениями</option>
+              <option value="admin">admin — полный функционал</option>
+            </select>
+          </label>
+          <label class="settings-check"><input type="checkbox" id="pref-confirm-dangerous" checked> Подтверждать опасные команды</label>
+          <label class="settings-check"><input type="checkbox" id="pref-dangerous-pin"> Запускать опасные команды через PIN в control panel</label>
+          <div class="pin-settings"><span id="pin-status" class="muted">PIN не установлен</span> <button type="button" id="btn-change-pin">Установить / сменить PIN-код</button> <button type="button" id="btn-reset-pin">Сбросить PIN-код</button><p class="muted">PIN — 4 цифры. Цифры отображаются при вводе. Сохранённый PIN не показывается.</p></div>
+        </div>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-extra-live">
+        <h3>Live / обновления</h3>
+        <p class="muted">Частота обновления состояний и fallback-опрос при недоступном live-соединении.</p>
+        <div class="form-grid settings-extra-grid">
+          <label>Интервал резервного опроса состояний<select id="poll-interval"><option value="15">15 секунд</option><option value="30" selected>30 секунд</option><option value="60">60 секунд</option></select></label>
+          <p class="hint small">Резервный опрос используется как fallback, если live-соединение недоступно.</p>
+          <label>Интервал live-обновления значений<select id="sse-batch-interval"><option value="0">Без батчинга</option><option value="0.5">0,5 секунды</option><option value="1" selected>1 секунда</option><option value="2">2 секунды</option><option value="5">5 секунд</option><option value="10">10 секунд</option><option value="30">30 секунд</option><option value="60">60 секунд</option></select></label>
+          <p class="hint small">Сервер группирует частые изменения сенсоров и устройств и отправляет их одним событием. Чем больше интервал, тем меньше нагрузка на браузер, но выше задержка отображения.</p>
+          <label class="settings-check"><input type="checkbox" id="pref-debug-mode"> Debug mode: показывать координатные окна</label>
+        </div>
       </div>
       <div class="image-tools settings-section-panel hidden" id="settings-panel-images">
         <h3>Картинки / План</h3>
@@ -257,7 +354,7 @@
         </div>
       </div>
       <div class="layout-tools settings-section-panel hidden" id="layout-maintenance-tools">
-        <h3>Layout / Обслуживание</h3>
+        <h3>Расположение / обслуживание</h3>
         <div class="layout-service-card">
           <div>
             <strong>Очистить маркеры</strong>
@@ -295,7 +392,7 @@
         <div class="layout-service-card">
           <div>
             <strong>Экспорт / Импорт планировки</strong>
-            <p class="muted">Экспорт сохраняет текущий layout.json (позиции маркеров, зоны, метрики). Импорт загружает ранее экспортированный файл и перезагружает приложение.</p>
+            <p class="muted">Экспорт сохраняет текущее расположение датчиков и маркеров, зоны и метрики. Импорт загружает ранее экспортированный файл и перезагружает приложение.</p>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" id="btn-export-layout">⬇ Экспортировать</button>
@@ -303,7 +400,7 @@
             <input type="file" id="import-layout-file" accept=".json" class="hidden">
           </div>
         </div>
-        <p id="layout-maintenance-status" class="muted">Доступно только в admin mode. Перед очисткой создаётся backup layout.json.</p>
+        <p id="layout-maintenance-status" class="muted">Доступно только в admin mode. Перед очисткой создаётся backup расположения датчиков и маркеров.</p>
         <div class="layout-service-card factory-reset-card">
           <div>
             <strong>Полный сброс к дефолту</strong>
@@ -320,7 +417,7 @@
 
       <div class="profiles-tools settings-section-panel hidden" id="settings-panel-profiles">
         <h3>Профили</h3>
-        <p class="muted">Профили позволяют иметь до 5 параллельных вариантов проекта: свои картинки, layout, zones, rooms settings, устройства и источники. Security/PIN и Attention остаются общими.</p>
+        <p class="muted">Профили позволяют иметь до 5 параллельных вариантов проекта: свои картинки, расположение датчиков и маркеров, зоны, настройки комнат, устройства и источники. Security/PIN и Attention остаются общими.</p>
         <div id="profiles-manager" class="profiles-manager"><p class="muted">Загрузка профилей...</p></div>
       </div>
 
@@ -352,12 +449,38 @@
         <h3>Мобильный доступ</h3>
         <p class="muted">Мобильное приложение подключается через <strong>порт 32457</strong> — он работает только с токеном. Браузер к этому порту без токена увидит только заглушку Mobile Access. Порт 8099 остаётся для LAN-браузера без пароля.</p>
         <p class="muted" style="color:#f0b34b">В мобильном приложении: Локальный адрес = <code>http://IP_HA:32457</code> · Внешний = <code>http://ваш-ddns:32457</code></p>
-        <label class="settings-check"><input type="checkbox" id="mobile-access-enabled"> Включить ограничение внешнего доступа на порт 8099 (Bearer token для не-LAN запросов)</label>
-        <label>Локальный адрес для мобильного приложения (порт 32457)<input id="mobile-local-url" type="text" placeholder="http://192.168.1.45:32457"></label>
-        <label>Внешний адрес для мобильного приложения (DynDNS / белый IP, порт 32457)<input id="mobile-remote-url" type="text" placeholder="http://allha2d.korobka.netcraze.club:32457"></label>
+        <label class="settings-check"><input type="checkbox" id="mobile-access-enabled"> Включить мобильный доступ для приложения (порт 32457)</label>
+        <label>Локальный адрес для мобильного приложения (порт 32457)<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><input id="mobile-local-url" type="text" placeholder="http://IP_ВАШЕГО_ПК:32457"><button type="button" id="btn-clear-mobile-local-url">Очистить</button></span></label>
+        <label>Внешний адрес для мобильного приложения (DynDNS / белый IP, порт 32457)<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><input id="mobile-remote-url" type="text" placeholder="http://allha2d.example.com"><button type="button" id="btn-clear-mobile-remote-url">Очистить</button></span></label>
+        <div class="settings-card" style="margin-top:10px">
+          <h4>Мобильный доступ извне через KeenDNS HTTP</h4>
+          <p class="muted">Текущий рабочий вариант: внешний HTTP-адрес KeenDNS ведёт на порт 32457. HTTPS/reverse proxy оставлен как optional future.</p>
+          <label class="settings-check"><input type="checkbox" id="mobile-external-enabled"> Использовать внешний адрес для мобильного подключения</label>
+          <label>Внешний адрес KeenDNS / DDNS<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><input id="mobile-external-url" type="text" placeholder="http://allha2d.korobka.netcraze.club"><button type="button" id="btn-use-remote-as-external">Взять из внешнего адреса</button></span></label>
+          <label>Режим внешнего доступа
+            <select id="mobile-external-mode">
+              <option value="keendns_http">KeenDNS HTTP → 32457</option>
+              <option value="manual_http">Другой HTTP/DDNS → 32457</option>
+              <option value="future_https_proxy">HTTPS/reverse proxy позже</option>
+            </select>
+          </label>
+          <div id="mobile-external-status" class="muted">Диагностика внешнего доступа не загружена.</div>
+        </div>
         <label>Пароль паринга (необязательно) — вводится один раз при первом подключении телефона<input id="mobile-pairing-password" type="text" placeholder="Например: МойДом2024" autocomplete="off"></label>
         <p class="muted">Если задан — без этого пароля добавить новое устройство не получится, даже зная 6-значный код.</p>
         <button type="button" id="btn-save-mobile-config">Сохранить</button>
+
+        <div class="settings-card" style="margin-top:10px">
+          <h4>QR для первого экрана мобильного приложения</h4>
+          <p class="muted">QR содержит адреса и пароль мобильного доступа. Показывайте его только доверенным устройствам.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+            <button type="button" id="btn-mobile-config-qr-show">Показать QR</button>
+          </div>
+          <div id="mobile-config-qr-box" class="hidden" style="display:grid;gap:8px;max-width:360px">
+            <img id="mobile-config-qr-img" alt="QR для настройки мобильного приложения" style="width:220px;height:220px;border-radius:14px;background:#fff;padding:8px;display:none">
+            <p id="mobile-config-qr-status" class="muted"></p>
+          </div>
+        </div>
 
         <div class="mobile-pair-block">
           <h4>Добавить устройство</h4>
@@ -366,10 +489,12 @@
             <span id="mobile-code-display" class="mobile-code">——————</span>
             <span id="mobile-code-timer" class="muted"></span>
           </div>
+          <div id="mobile-code-status" class="muted" style="margin-top:6px"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
             <button type="button" id="btn-mobile-gen-code">Создать код</button>
             <button type="button" id="btn-mobile-copy-code">Скопировать код</button>
             <button type="button" id="btn-mobile-cancel-code">Отменить код</button>
+            <button type="button" id="btn-mobile-refresh-external-status">Обновить диагностику</button>
           </div>
         </div>
 
@@ -377,7 +502,74 @@
           <h4>Привязанные устройства <span id="mobile-devices-count" class="muted"></span></h4>
           <div id="mobile-devices-list"><p class="muted">Загрузка...</p></div>
           <button type="button" id="btn-mobile-revoke-all" style="margin-top:8px">Отозвать все токены</button>
+          <h4>Журнал мобильного доступа</h4>
+          <div id="mobile-audit-list" class="muted">Загрузка...</div>
         </div>
+      </div>
+
+
+      <div class="settings-section-panel hidden" id="settings-panel-web-clients">
+        <h3>Web-клиенты / панели</h3>
+        <p class="muted">Постоянные браузеры и панели открываются через индивидуальные ссылки вида <code>/client/xxxxx</code>. Базовый адрес <code>:8099</code> служит только стартовой страницей создания или открытия ссылки.</p>
+        <div class="web-clients-toolbar">
+          <button type="button" id="btn-refresh-web-clients">Обновить список</button>
+          <button type="button" id="btn-open-client-start-page">Открыть стартовую страницу</button>
+        </div>
+        <div id="web-clients-status" class="status"></div>
+        <div id="web-clients-manager" class="web-clients-manager"><p class="muted">Загрузка web-клиентов...</p></div>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-maintenance">
+        <h3>Обслуживание / диагностика</h3>
+        <p class="muted">Проверка SQLite, runtime, live/SSE, логов и старых записей клиентов. Активные данные проекта не удаляются без отдельного подтверждения.</p>
+        <div class="web-clients-toolbar">
+          <button type="button" id="btn-refresh-maintenance">Обновить диагностику</button>
+          <button type="button" id="btn-clear-debug-logs">Очистить debug log</button>
+          <button type="button" id="btn-clean-temp-web-clients" class="danger-button">Удалить старые временные web-клиенты</button>
+          <button type="button" id="btn-clean-orphan-settings" class="danger-button">Очистить orphan-настройки</button>
+        </div>
+        <div id="maintenance-status" class="status"></div>
+        <div id="maintenance-manager" class="maintenance-manager"><p class="muted">Загрузка диагностики...</p></div>
+      </div>
+
+      <div class="settings-section-panel hidden" id="settings-panel-client-defaults">
+        <h3>Индивидуальные настройки</h3>
+        <p class="muted">Эти действия относятся только к текущему клиенту: мобильному устройству, браузеру или серверному UI. Другие устройства не меняются.</p>
+        <div class="layout-service-card">
+          <div>
+            <strong>Сбросить мои настройки к настройкам по умолчанию</strong>
+            <p class="muted">Текущий клиент получит сохранённые настройки по умолчанию: отображение, масштаб, прозрачность, видимость, навигацию и другие UI-параметры. Комнаты, устройства, зоны, картинки и правила безопасности не затрагиваются.</p>
+          </div>
+          <button type="button" id="btn-client-reset-default" class="danger-button">Сбросить мои настройки</button>
+        </div>
+        <div class="layout-service-card">
+          <div>
+            <strong>Сохранить мои настройки как настройки по умолчанию</strong>
+            <p class="muted">Текущие настройки этого клиента станут стартовым шаблоном для новых устройств и для сброса других клиентов к настройкам по умолчанию.</p>
+          </div>
+          <button type="button" id="btn-client-save-default">Сохранить как настройки по умолчанию</button>
+        </div>
+        <div class="client-settings-copy-card">
+          <div class="client-settings-copy-head">
+            <div>
+              <strong>Скопировать настройки из другого устройства</strong>
+              <p class="muted">Выберите источник и тип настроек. Данные дома, комнаты, устройства, зоны, картинки и правила безопасности не меняются.</p>
+            </div>
+            <label class="client-settings-source-label">
+              <span>Источник настроек</span>
+              <select id="client-settings-copy-source"><option value="">Загрузка...</option></select>
+            </label>
+          </div>
+          <div class="client-settings-copy-grid">
+            <button type="button" id="btn-copy-client-all">Все настройки</button>
+            <button type="button" id="btn-copy-client-position">Расположение датчиков и маркеров</button>
+            <button type="button" id="btn-copy-client-visibility">Видимость датчиков, маркеров и зон</button>
+            <button type="button" id="btn-copy-client-display">Масштаб, размеры и прозрачность</button>
+            <button type="button" id="btn-copy-client-modes">Режимы панели, киоска и mobile</button>
+            <button type="button" id="btn-copy-map-diagnostics">Скопировать диагностику карты</button>
+          </div>
+        </div>
+        <div id="client-default-settings-status" class="status"></div>
       </div>
 
       <div id="settings-status" class="status"></div>
@@ -386,7 +578,7 @@
         <button type="button" id="btn-faq-settings">FAQ / Помощь</button>
         <button type="button" id="btn-info-settings">Информация / диагностика</button>
         <button type="button" id="btn-save-config">Сохранить настройки</button>
-        <button type="button" id="btn-cancel-settings">Отменить настройки</button>
+        <button type="button" id="btn-cancel-settings">Отменить изменения</button>
       </div>
     </div>
   </div>
@@ -452,7 +644,7 @@
       <div class="info-tabs">
         <button type="button" data-info-tab="summary" class="active">Система</button>
         <button type="button" data-info-tab="entities">Entity</button>
-        <button type="button" data-info-tab="layout">Layout</button>
+        <button type="button" data-info-tab="layout">Расположение</button>
         <button type="button" data-info-tab="backups">Backups</button>
         <button type="button" data-info-tab="allowlist">Команды</button>
         <button type="button" data-info-tab="about">О приложении</button>
@@ -469,7 +661,7 @@
       <div class="modal-head">
         <div>
           <h2 id="device-picker-title">Выбрать устройство</h2>
-          <p id="device-picker-subtitle" class="muted">Выберите устройство: откроется SVG Layout Editor.</p>
+          <p id="device-picker-subtitle" class="muted">Выберите устройство: откроется редактор расположения.</p>
         </div>
         <button type="button" id="btn-close-device-picker" class="close-word">× Закрыть</button>
       </div>
@@ -490,6 +682,7 @@
           <h2 id="placement-editor-title">Размещение устройства</h2>
           <p id="placement-editor-subtitle" class="muted">Кликните/тапните точку на сетке, затем при необходимости подстройте X/Y или стрелками.</p>
         </div>
+        <button type="button" id="btn-toggle-placement-panel" class="close-word placement-panel-toggle">Скрыть панель</button>
         <button type="button" id="btn-close-placement-editor" class="close-word">× Закрыть</button>
       </div>
       <div class="placement-editor-body">
@@ -544,7 +737,7 @@
               <option value="2">2%</option>
             </select>
           </label>
-          <p class="muted placement-editor-help">Layout Editor использует отдельный SVG-слой изображения. Live-карта, zoom/pan и перетаскивание не участвуют в расчёте координат.</p>
+          <p class="muted placement-editor-help">Редактор расположения использует отдельный SVG-слой изображения. Live-карта, zoom/pan и перетаскивание не участвуют в расчёте координат.</p>
           <details class="placement-editor-debug-wrap">
             <summary>Координаты debug</summary>
             <pre id="placement-editor-debug" class="placement-editor-debug">debug не рассчитан</pre>
@@ -580,6 +773,17 @@
         <button type="button" id="btn-close-device" class="close-word">× Закрыть</button>
       </div>
       <div id="device-modal-body" class="device-modal-body"></div>
+    </div>
+  </div>
+
+
+  <div id="standard-sensors-modal" class="modal hidden standard-sensors-modal">
+    <div class="modal-card standard-sensors-modal-card">
+      <div class="modal-head">
+        <h2 id="standard-sensors-modal-title">Стандартные датчики</h2>
+        <button id="btn-close-standard-sensors-modal" aria-label="Закрыть">×</button>
+      </div>
+      <div id="standard-sensors-modal-body" class="standard-sensors-modal-body"></div>
     </div>
   </div>
 

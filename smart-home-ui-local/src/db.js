@@ -2,21 +2,63 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const Database = require('better-sqlite3');
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const DB_PATH = process.env.ALLHA_DB_PATH || path.join(DATA_DIR, 'allha2d.db');
 const MIGRATION_BACKUP_DIR = path.join(DATA_DIR, 'migration-backups');
 
 let _sqliteAvailable = null;
+let _db = null;
+function getDb() {
+  if (!_db) {
+    ensureDirs();
+    _db = new Database(DB_PATH);
+  }
+  return _db;
+}
+function closeDb() {
+  if (!_db) return false;
+  try {
+    _db.close();
+    return true;
+  } finally {
+    _db = null;
+    _initialized = false;
+    _sqliteAvailable = null;
+  }
+}
 let _initialized = false;
+const _dbPerf = {
+  startedAt: new Date().toISOString(),
+  runCount: 0,
+  allCount: 0,
+  totalMs: 0,
+  maxMs: 0,
+  lastMs: 0,
+  lastOp: '',
+  slowCount: 0
+};
+function recordDbPerf(op, started){
+  const ms = Date.now() - started;
+  _dbPerf.lastMs = ms;
+  _dbPerf.lastOp = op;
+  _dbPerf.totalMs += ms;
+  if(ms > _dbPerf.maxMs) _dbPerf.maxMs = ms;
+  if(ms >= Number(process.env.ALLHA_DB_SLOW_MS || 100)) _dbPerf.slowCount++;
+}
+function getPerformanceStats(){
+  const count = _dbPerf.runCount + _dbPerf.allCount;
+  return { ..._dbPerf, count, avgMs: count ? Math.round((_dbPerf.totalMs / count) * 10) / 10 : 0 };
+}
 
 function sqliteAvailable() {
   if (_sqliteAvailable !== null) return _sqliteAvailable;
   try {
-    execFileSync('sqlite3', ['-version'], { stdio: ['ignore', 'ignore', 'ignore'] });
+    getDb();
     _sqliteAvailable = true;
-  } catch {
+  } catch (e) {
+    console.warn('[db] better-sqlite3 not available:', e.message);
     _sqliteAvailable = false;
   }
   return _sqliteAvailable;
@@ -45,9 +87,31 @@ function parseJson(value, fallback) {
 }
 
 function run(sql) {
-  if (!sqliteAvailable()) throw new Error('sqlite3 CLI is not installed');
-  ensureDirs();
-  execFileSync('sqlite3', [DB_PATH], { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 10 * 1024 * 1024 });
+  if (!sqliteAvailable()) throw new Error('better-sqlite3 is not available');
+  const started = Date.now();
+  try {
+    getDb().exec(sql);
+  } finally {
+    _dbPerf.runCount++;
+    recordDbPerf('run', started);
+  }
+}
+
+function runTransaction(sql) {
+  if (!sqliteAvailable()) throw new Error('better-sqlite3 is not available');
+  const started = Date.now();
+  const db = getDb();
+  try {
+    db.exec('BEGIN;');
+    db.exec(sql);
+    db.exec('COMMIT;');
+  } catch (e) {
+    try { db.exec('ROLLBACK;'); } catch (_) {}
+    throw e;
+  } finally {
+    _dbPerf.runCount++;
+    recordDbPerf('transaction', started);
+  }
 }
 
 function tryRun(sql) {
@@ -55,10 +119,14 @@ function tryRun(sql) {
 }
 
 function all(sql) {
-  if (!sqliteAvailable()) throw new Error('sqlite3 CLI is not installed');
-  ensureDirs();
-  const out = execFileSync('sqlite3', ['-json', DB_PATH, sql], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024 });
-  try { return JSON.parse(out || '[]'); } catch { return []; }
+  if (!sqliteAvailable()) throw new Error('better-sqlite3 is not available');
+  const started = Date.now();
+  try {
+    return getDb().prepare(sql).all();
+  } finally {
+    _dbPerf.allCount++;
+    recordDbPerf('all', started);
+  }
 }
 
 function get(sql) {
@@ -110,7 +178,7 @@ CREATE TABLE IF NOT EXISTS mobile_devices (
   screen TEXT,
   paired_at TEXT NOT NULL,
   last_seen TEXT NOT NULL,
-  access_mode TEXT NOT NULL DEFAULT 'viewer',
+  access_mode TEXT NOT NULL DEFAULT 'control',
   profile_access_json TEXT NOT NULL DEFAULT '{"mode":"all","profileIds":[]}',
   enabled INTEGER NOT NULL DEFAULT 1,
   replaced_by TEXT,
@@ -220,6 +288,8 @@ CREATE INDEX IF NOT EXISTS idx_mobile_devices_last_seen ON mobile_devices(last_s
 CREATE INDEX IF NOT EXISTS idx_web_clients_slug ON web_clients(slug);
 CREATE INDEX IF NOT EXISTS idx_web_clients_last_seen ON web_clients(last_seen);
 CREATE INDEX IF NOT EXISTS idx_sessions_device ON web_sessions(device_id);
+CREATE INDEX IF NOT EXISTS idx_access_events_created ON access_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_access_events_type ON access_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_command_log_created ON command_log(created_at);
 `);
   // v4.1.18: upgrade existing v4.1.16/v4.1.17 DBs without dropping data.
@@ -252,7 +322,15 @@ function normalizeMobileSettings(value) {
   const raw = value && typeof value === 'object' ? value : {};
   const serverMode = ['both', 'local', 'web'].includes(String(raw.serverMode || '')) ? String(raw.serverMode) : 'both';
   const scale = Math.min(1.5, Math.max(0.7, Number(raw.scale || 1)));
-  return {
+
+  // v4.1.21.18.21:
+  // Keep arbitrary per-device client settings sections. The previous normalizer returned
+  // a fixed whitelist and silently dropped nested settings.ui, settings.navigation,
+  // visibility, tiles, kiosk, mobile, layout, etc. That is why debug showed current
+  // state.ui values but server settings.ui was empty after save.
+  const keepObj = (key) => (raw[key] && typeof raw[key] === 'object' && !Array.isArray(raw[key])) ? raw[key] : undefined;
+  const out = {
+    ...raw,
     serverMode,
     keepScreenOn: !!raw.keepScreenOn,
     stayInBackground: !!raw.stayInBackground,
@@ -268,6 +346,12 @@ function normalizeMobileSettings(value) {
     activeLevelId: String(raw.activeLevelId || ''),
     activeRoomId: String(raw.activeRoomId || '')
   };
+
+  for (const key of ['ui','navigation','visibility','tiles','kiosk','mobile','layout','viewport','standardSensorsVisibility']) {
+    const obj = keepObj(key);
+    if (obj !== undefined) out[key] = obj;
+  }
+  return out;
 }
 
 function rowToDevice(r) {
@@ -287,7 +371,7 @@ function rowToDevice(r) {
     paired_at: r.paired_at,
     last_seen: r.last_seen,
     enabled: Number(r.enabled) !== 0,
-    accessMode: r.access_mode || 'viewer',
+    accessMode: r.access_mode || 'control',
     profileAccess: normalizeProfileAccess(parseJson(r.profile_access_json, { mode: 'all', profileIds: [] })),
     settings: normalizeMobileSettings(parseJson(r.settings_json, {})),
     serverBackup: parseJson(r.server_backup_json, {})
@@ -299,7 +383,7 @@ function upsertMobileDevice(device) {
   const now = new Date().toISOString();
   const profileAccess = normalizeProfileAccess(device.profileAccess);
   const settings = normalizeMobileSettings(device.settings);
-  run(`
+  runTransaction(`
 INSERT INTO mobile_devices (
   device_id, token_hash, name, alias, description, platform, model, manufacturer,
   os_version, app_version, user_agent, screen, paired_at, last_seen, access_mode,
@@ -308,7 +392,7 @@ INSERT INTO mobile_devices (
   ${q(device.device_id)}, ${q(device.tokenHash)}, ${q(device.name || device.device_id)}, ${q(device.alias || null)}, ${q(device.description || null)},
   ${q(device.platform || '')}, ${q(device.model || '')}, ${q(device.manufacturer || '')}, ${q(device.osVersion || '')},
   ${q(device.appVersion || '')}, ${q(device.userAgent || '')}, ${q(device.screen || '')}, ${q(device.paired_at || now)},
-  ${q(device.last_seen || now)}, ${q(device.accessMode || 'viewer')}, ${q(json(profileAccess, { mode:'all', profileIds:[] }))},
+  ${q(device.last_seen || now)}, ${q(device.accessMode || 'control')}, ${q(json(profileAccess, { mode:'all', profileIds:[] }))},
   ${device.enabled === false ? 0 : 1}, ${q(now)}
 )
 ON CONFLICT(device_id) DO UPDATE SET
@@ -348,6 +432,13 @@ function getMobileDevice(device_id) {
   return rowToDevice(get(`SELECT d.*, s.settings_json, s.server_backup_json FROM mobile_devices d LEFT JOIN mobile_device_settings s ON s.device_id=d.device_id WHERE d.device_id=${q(device_id)} AND d.enabled=1;`));
 }
 
+function getMobileDeviceByAlias(alias) {
+  if (!hasDb()) return null;
+  const clean = String(alias || '').trim().slice(0, 64);
+  if (!clean) return null;
+  return rowToDevice(get(`SELECT d.*, s.settings_json, s.server_backup_json FROM mobile_devices d LEFT JOIN mobile_device_settings s ON s.device_id=d.device_id WHERE d.alias=${q(clean)} AND d.enabled=1 ORDER BY d.last_seen DESC LIMIT 1;`));
+}
+
 function getMobileDeviceSecret(device_id) {
   if (!hasDb()) return null;
   const r = get(`SELECT token_hash FROM mobile_devices WHERE device_id=${q(device_id)} AND enabled=1;`);
@@ -380,13 +471,26 @@ function updateMobileDevice(device_id, patch = {}) {
 
 function deleteMobileDevice(device_id) {
   if (!hasDb()) return false;
-  run(`DELETE FROM mobile_devices WHERE device_id=${q(device_id)};`);
+  const id = String(device_id || '').trim().slice(0, 128);
+  if (!id) return false;
+  const current = get(`SELECT device_id, alias, name FROM mobile_devices WHERE device_id=${q(id)};`);
+  if (!current) return false;
+  runTransaction(`DELETE FROM mobile_device_settings WHERE device_id=${q(id)};
+DELETE FROM web_sessions WHERE device_id=${q(id)};
+DELETE FROM mobile_devices WHERE device_id=${q(id)};`);
+  rmDirQuiet(clientSettingsDirFor('mobile_device', id));
+  addClientLifecycleAudit('mobile', id, 'delete', { alias: current.alias || current.name || '' });
   return true;
 }
 
 function deleteAllMobileDevices() {
   if (!hasDb()) return false;
-  run(`DELETE FROM mobile_devices; DELETE FROM web_sessions;`);
+  const rows = all(`SELECT device_id FROM mobile_devices;`);
+  runTransaction(`DELETE FROM mobile_device_settings;
+DELETE FROM web_sessions;
+DELETE FROM mobile_devices;`);
+  for (const r of rows) rmDirQuiet(clientSettingsDirFor('mobile_device', r.device_id));
+  addClientLifecycleAudit('mobile', 'bulk', 'delete', { count: rows.length, deviceIds: rows.map(r=>r.device_id) });
   return true;
 }
 
@@ -406,6 +510,16 @@ function validateWebSession(session) {
     return false;
   }
   return true;
+}
+
+function getWebSessionDeviceId(session) {
+  if (!hasDb()) return '';
+  const r = get(`SELECT s.device_id, s.expires_at FROM web_sessions s JOIN mobile_devices d ON d.device_id=s.device_id WHERE s.session_id=${q(session)} AND d.enabled=1;`);
+  if (!r || Number(r.expires_at) < Date.now()) {
+    if (r) run(`DELETE FROM web_sessions WHERE session_id=${q(session)};`);
+    return '';
+  }
+  return String(r.device_id || '');
 }
 
 function migrateLegacyMobileDevices() {
@@ -437,7 +551,7 @@ function migrateLegacyMobileDevices() {
           screen: d.screen || '',
           paired_at: d.paired_at || d.createdAt || new Date().toISOString(),
           last_seen: d.last_seen || d.lastSeen || new Date().toISOString(),
-          accessMode: d.accessMode || 'viewer',
+          accessMode: d.accessMode || 'control',
           profileAccess: d.profileAccess || { mode: 'all', profileIds: [] },
           settings: d.settings || {}
         });
@@ -488,6 +602,27 @@ function randomSlug(len = 10) {
   return out;
 }
 
+function rmDirQuiet(dir) {
+  try { if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true }); }
+  catch (e) { console.warn('[db] rmDirQuiet failed:', dir, e.message); }
+}
+
+function clientSettingsDirFor(type, id) {
+  const clean = safeWebClientId(id);
+  if (!clean) return '';
+  return path.join(DATA_DIR, 'client_settings', type, clean);
+}
+
+function addClientLifecycleAudit(kind, clientId, action, payload = {}) {
+  try {
+    addAccessEvent({
+      deviceId: clientId,
+      eventType: `client.${kind}.${action}`,
+      payload: { id: clientId, kind, action, ...payload }
+    });
+  } catch (_) {}
+}
+
 function webClientDefaultSettings() {
   return {
     version: 1,
@@ -531,7 +666,7 @@ function upsertWebClient(clientId, data = {}) {
   const settings = { ...webClientDefaultSettings(), ...(data.settings || {}) };
   const alias = String(data.alias || data.name || id).trim().slice(0, 80);
   const slug = data.slug ? safeSlug(data.slug) : '';
-  run(`
+  runTransaction(`
 INSERT INTO web_clients(client_id, name, alias, slug, description, type, user_agent, screen, first_seen, last_seen, enabled, created_at, updated_at)
 VALUES(${q(id)}, ${q(data.name || alias || id)}, ${q(alias || null)}, ${q(slug || null)}, ${q(data.description || '')}, ${q(data.type || 'web')}, ${q(data.userAgent || '')}, ${q(data.screen || '')}, ${q(data.firstSeen || now)}, ${q(now)}, 1, ${q(now)}, ${q(now)})
 ON CONFLICT(client_id) DO UPDATE SET
@@ -615,12 +750,47 @@ function updateWebClient(clientId, patch = {}) {
   return getWebClient(current.client_id);
 }
 
-function deleteWebClient(clientId) {
+function deleteWebClient(clientId, options = {}) {
   if (!hasDb()) return false;
   const id = safeWebClientId(clientId);
   if (!id) return false;
-  run(`UPDATE web_clients SET enabled=0, deleted_at=${q(new Date().toISOString())}, updated_at=${q(new Date().toISOString())} WHERE client_id=${q(id)};`);
+  const current = get(`SELECT client_id, alias, name, slug, type FROM web_clients WHERE client_id=${q(id)};`);
+  if (!current) return false;
+  const label = String(current.alias || current.name || '').trim().toLowerCase();
+  if (id === 'server' || label === 'server' || current.type === 'server') return false;
+  const now = new Date().toISOString();
+  if (options.soft === true) {
+    run(`UPDATE web_clients SET enabled=0, deleted_at=${q(now)}, updated_at=${q(now)} WHERE client_id=${q(id)};`);
+    addClientLifecycleAudit('web', id, 'soft-delete', { alias: current.alias || current.name || '', slug: current.slug || '' });
+    return true;
+  }
+  // v4.2.1: real delete by default. Deleted clients must not remain as full rows
+  // forever and must not be resurrected by settings saves.
+  runTransaction(`DELETE FROM web_client_settings WHERE client_id=${q(id)};
+DELETE FROM web_clients WHERE client_id=${q(id)};`);
+  rmDirQuiet(clientSettingsDirFor('web_client', id));
+  addClientLifecycleAudit('web', id, 'delete', { alias: current.alias || current.name || '', slug: current.slug || '' });
   return true;
+}
+
+function deleteAllWebClients(options = {}) {
+  if (!hasDb()) return { deleted:0, clientIds:[] };
+  const keep = new Set((options.keepClientIds || []).map(safeWebClientId).filter(Boolean));
+  const rows = all(`SELECT client_id, alias, name, slug, type FROM web_clients WHERE enabled=1 AND deleted_at IS NULL;`).filter(r => {
+    const id = safeWebClientId(r.client_id);
+    if (!id || keep.has(id)) return false;
+    const label = String(r.alias || r.name || '').trim().toLowerCase();
+    if (id === 'server' || label === 'server' || r.type === 'server') return false;
+    return true;
+  });
+  if (!rows.length) return { deleted:0, clientIds:[] };
+  const ids = rows.map(r => safeWebClientId(r.client_id)).filter(Boolean);
+  const idList = ids.map(q).join(',');
+  runTransaction(`DELETE FROM web_client_settings WHERE client_id IN (${idList});
+DELETE FROM web_clients WHERE client_id IN (${idList});`);
+  for (const id of ids) rmDirQuiet(clientSettingsDirFor('web_client', id));
+  addClientLifecycleAudit('web', 'bulk', 'delete', { count: ids.length, clientIds: ids });
+  return { deleted: ids.length, clientIds: ids };
 }
 
 function getWebClientSettings(clientId) {
@@ -632,8 +802,19 @@ function getWebClientSettings(clientId) {
 function setWebClientSettings(clientId, settings, meta = {}) {
   if (!hasDb()) return false;
   const current = getWebClient(clientId);
-  const merged = { ...webClientDefaultSettings(), ...(current?.settings || {}), ...(settings || {}) };
-  upsertWebClient(clientId, { name: meta.name || current?.name || clientId, alias: meta.alias || current?.alias || meta.name || clientId, slug: meta.slug || current?.slug || '', userAgent: meta.userAgent || current?.userAgent || '', screen: meta.screen || current?.screen || '', settings: merged });
+  // v4.2.0.28: settings writes must never create OR resurrect web clients.
+  // Do not call upsertWebClient() here because upsertWebClient() intentionally
+  // re-enables rows (enabled=1, deleted_at=NULL). Settings saves/copy/restore
+  // must be a pure settings update for an already existing active /client/<slug>.
+  if(!current || !current.client_id || current.enabled === false) return false;
+  const merged = { ...webClientDefaultSettings(), ...(current.settings || {}), ...(settings || {}) };
+  const now = new Date().toISOString();
+  runTransaction(`
+INSERT INTO web_client_settings(client_id, settings_json, server_backup_json, updated_at)
+VALUES(${q(current.client_id)}, ${q(json(merged, webClientDefaultSettings()))}, ${q(json(merged, {}))}, ${q(now)})
+ON CONFLICT(client_id) DO UPDATE SET settings_json=excluded.settings_json, updated_at=excluded.updated_at;
+UPDATE web_clients SET updated_at=${q(now)} WHERE client_id=${q(current.client_id)} AND enabled=1 AND deleted_at IS NULL;
+`);
   return true;
 }
 
@@ -652,7 +833,12 @@ ON CONFLICT(doc_key) DO UPDATE SET doc_type=excluded.doc_type, json_value=exclud
   return true;
 }
 
-function getProjectDocument(key, fallback = null) {
+function getProjectDocument(key, fallback) {
+  // Important: do not default fallback to null.
+  // Callers such as readJsonSafe(file, fallback) intentionally pass undefined
+  // to distinguish DB miss from a stored JSON null. Default parameters would
+  // turn that undefined into null and make missing documents look like valid
+  // null JSON, which later broke /api/ui-state on loaded.viewport.
   if (!hasDb()) return fallback;
   const docKey = normalizeDocKey(key);
   const r = get(`SELECT json_value FROM project_documents WHERE doc_key=${q(docKey)};`);
@@ -674,8 +860,8 @@ function deleteProjectDocument(key) {
 function clearProjectDocuments(prefix = '') {
   if (!hasDb()) return false;
   const p = normalizeDocKey(prefix);
-  if (!prefix) run(`DELETE FROM project_documents; DELETE FROM project_files;`);
-  else run(`DELETE FROM project_documents WHERE doc_key LIKE ${q(p + '%')}; DELETE FROM project_files WHERE file_key LIKE ${q(p + '%')};`);
+  if (!prefix) runTransaction(`DELETE FROM project_documents; DELETE FROM project_files;`);
+  else runTransaction(`DELETE FROM project_documents WHERE doc_key LIKE ${q(p + '%')}; DELETE FROM project_files WHERE file_key LIKE ${q(p + '%')};`);
   return true;
 }
 
@@ -693,6 +879,13 @@ function getProjectFile(key, fallback = null) {
   if (!hasDb()) return fallback;
   const r = get(`SELECT text_value FROM project_files WHERE file_key=${q(normalizeDocKey(key))};`);
   return r ? r.text_value : fallback;
+}
+
+
+function deleteProjectFile(key) {
+  if (!hasDb()) return false;
+  run(`DELETE FROM project_files WHERE file_key=${q(normalizeDocKey(key))};`);
+  return true;
 }
 
 function listProjectDocumentKeys() {
@@ -779,6 +972,101 @@ function syncStandardSensorBindingsFromRooms(profileId, levelId, settings = {}) 
   return true;
 }
 
+
+function integrityCheck() {
+  if (!hasDb()) return { ok:false, available:false, result:'sqlite unavailable' };
+  try {
+    const rows = all(`PRAGMA integrity_check;`);
+    const result = rows.map(r => r.integrity_check || Object.values(r)[0]).join('\n') || 'unknown';
+    return { ok: result === 'ok', available:true, result };
+  } catch (e) { return { ok:false, available:true, result:e.message }; }
+}
+
+function maintenanceReport() {
+  const info = getInfo();
+  const report = { database: info, integrity: integrityCheck(), issues: {}, generatedAt: new Date().toISOString() };
+  if (!hasDb()) return report;
+  try { report.issues.orphanWebSettings = all(`SELECT s.client_id FROM web_client_settings s LEFT JOIN web_clients c ON c.client_id=s.client_id WHERE c.client_id IS NULL OR c.enabled=0 OR c.deleted_at IS NOT NULL ORDER BY s.client_id ASC;`); } catch { report.issues.orphanWebSettings = []; }
+  try { report.issues.orphanMobileSettings = all(`SELECT s.device_id FROM mobile_device_settings s LEFT JOIN mobile_devices d ON d.device_id=s.device_id WHERE d.device_id IS NULL OR d.enabled=0 ORDER BY s.device_id ASC;`); } catch { report.issues.orphanMobileSettings = []; }
+  try { report.issues.temporaryWebClients = all(`SELECT client_id, alias, slug, last_seen FROM web_clients WHERE enabled=1 AND deleted_at IS NULL AND (slug IS NULL OR slug='') ORDER BY last_seen DESC;`); } catch { report.issues.temporaryWebClients = []; }
+  try { report.issues.deletedProfileDocuments = all(`SELECT doc_key, updated_at FROM project_documents WHERE doc_key LIKE 'profiles/profile-%/%' AND doc_key NOT LIKE 'profiles/profile-1/%' ORDER BY doc_key ASC LIMIT 200;`); } catch { report.issues.deletedProfileDocuments = []; }
+  try {
+    const st = fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH) : null;
+    report.database.sizeBytes = st ? st.size : 0;
+    report.database.sizeMb = st ? Math.round((st.size / 1024 / 1024) * 10) / 10 : 0;
+  } catch (_) {}
+  try { report.clients = { webActive: Number(get(`SELECT COUNT(*) AS c FROM web_clients WHERE enabled=1 AND deleted_at IS NULL;`)?.c || 0), mobileActive: Number(get(`SELECT COUNT(*) AS c FROM mobile_devices WHERE enabled=1;`)?.c || 0) }; } catch (_) {}
+  return report;
+}
+
+function clearWebClientSettings(clientId) {
+  if (!hasDb()) return false;
+  const id = safeWebClientId(clientId);
+  if (!id) return false;
+  run(`UPDATE web_client_settings SET settings_json='{}', updated_at=${q(new Date().toISOString())} WHERE client_id=${q(id)};`);
+  return true;
+}
+
+function cleanupTemporaryWebClients() {
+  if (!hasDb()) return { removed:0 };
+  const rows = all(`SELECT client_id FROM web_clients WHERE enabled=1 AND deleted_at IS NULL AND (slug IS NULL OR slug='');`);
+  const ids = rows.map(r => safeWebClientId(r.client_id)).filter(Boolean).filter(id => id !== 'server');
+  if (!ids.length) return { removed:0, clientIds:[] };
+  const idList = ids.map(q).join(',');
+  runTransaction(`DELETE FROM web_client_settings WHERE client_id IN (${idList});
+DELETE FROM web_clients WHERE client_id IN (${idList});`);
+  for (const id of ids) rmDirQuiet(clientSettingsDirFor('web_client', id));
+  addClientLifecycleAudit('web', 'temporary', 'cleanup', { count: ids.length, clientIds: ids });
+  return { removed: ids.length, clientIds: ids };
+}
+
+function cleanupOrphanClientSettings() {
+  if (!hasDb()) return { web:0, mobile:0, sessions:0 };
+  const web = all(`SELECT s.client_id FROM web_client_settings s LEFT JOIN web_clients c ON c.client_id=s.client_id WHERE c.client_id IS NULL OR c.enabled=0 OR c.deleted_at IS NOT NULL;`);
+  const mobile = all(`SELECT s.device_id FROM mobile_device_settings s LEFT JOIN mobile_devices d ON d.device_id=s.device_id WHERE d.device_id IS NULL OR d.enabled=0;`);
+  const sessions = all(`SELECT ws.session_id FROM web_sessions ws LEFT JOIN mobile_devices d ON d.device_id=ws.device_id WHERE d.device_id IS NULL OR d.enabled=0 OR ws.expires_at < ${q(String(Date.now()))};`);
+  runTransaction(`DELETE FROM web_client_settings WHERE client_id IN (SELECT s.client_id FROM web_client_settings s LEFT JOIN web_clients c ON c.client_id=s.client_id WHERE c.client_id IS NULL OR c.enabled=0 OR c.deleted_at IS NOT NULL);
+DELETE FROM mobile_device_settings WHERE device_id IN (SELECT s.device_id FROM mobile_device_settings s LEFT JOIN mobile_devices d ON d.device_id=s.device_id WHERE d.device_id IS NULL OR d.enabled=0);
+DELETE FROM web_sessions WHERE session_id IN (SELECT ws.session_id FROM web_sessions ws LEFT JOIN mobile_devices d ON d.device_id=ws.device_id WHERE d.device_id IS NULL OR d.enabled=0 OR ws.expires_at < ${q(String(Date.now()))});`);
+  for (const r of web) rmDirQuiet(clientSettingsDirFor('web_client', r.client_id));
+  for (const r of mobile) rmDirQuiet(clientSettingsDirFor('mobile_device', r.device_id));
+  addClientLifecycleAudit('clients', 'orphans', 'cleanup', { web:web.length, mobile:mobile.length, sessions:sessions.length });
+  return { web:web.length, mobile:mobile.length, sessions:sessions.length };
+}
+
+
+function addAccessEvent(item = {}) {
+  if (!hasDb()) return false;
+  const eventType = String(item.eventType || item.event_type || '').trim().slice(0, 96);
+  if (!eventType) return false;
+  const deviceId = String(item.deviceId || item.device_id || '').trim().slice(0, 96) || null;
+  run(`INSERT INTO access_events(device_id, event_type, payload_json, created_at) VALUES(${q(deviceId)}, ${q(eventType)}, ${q(json(item.payload || {}, {}))}, ${q(item.createdAt || new Date().toISOString())});`);
+  return true;
+}
+function listAccessEvents(prefix = '', limit = 100) {
+  if (!hasDb()) return [];
+  const lim = Math.min(500, Math.max(1, Number(limit || 100)));
+  const where = prefix ? `WHERE event_type LIKE ${q(String(prefix).replace(/[%_]/g,'') + '%')}` : '';
+  return all(`SELECT id, device_id, event_type, payload_json, created_at FROM access_events ${where} ORDER BY id DESC LIMIT ${lim};`).map(r => ({
+    id: Number(r.id || 0),
+    deviceId: r.device_id || '',
+    eventType: r.event_type || '',
+    payload: parseJson(r.payload_json, {}),
+    createdAt: r.created_at || ''
+  }));
+}
+
+
+function clearStandardSensorBindings(profileId = '', levelId = '') {
+  if (!hasDb()) return false;
+  const pid = String(profileId || '').trim();
+  const lid = String(levelId || '').trim();
+  if (pid && lid) run(`DELETE FROM standard_sensor_bindings WHERE profile_id=${q(pid)} AND level_id=${q(lid)};`);
+  else if (pid) run(`DELETE FROM standard_sensor_bindings WHERE profile_id=${q(pid)};`);
+  else run(`DELETE FROM standard_sensor_bindings;`);
+  return true;
+}
+
 function getInfo() {
   const available = sqliteAvailable();
   if (!available) return { available:false, path:DB_PATH };
@@ -793,13 +1081,13 @@ function getInfo() {
 
 module.exports = {
   DB_PATH, q, json, parseJson,
-  sqliteAvailable, initSchema, hasDb, getInfo,
-  upsertMobileDevice, listMobileDevices, getMobileDevice, getMobileDeviceSecret,
+  sqliteAvailable, initSchema, closeDb, hasDb, getInfo, integrityCheck, maintenanceReport, cleanupTemporaryWebClients, cleanupOrphanClientSettings, getPerformanceStats,
+  upsertMobileDevice, listMobileDevices, getMobileDevice, getMobileDeviceByAlias, getMobileDeviceSecret,
   updateMobileLastSeen, updateMobileDevice, deleteMobileDevice, deleteAllMobileDevices,
-  createWebSession, validateWebSession,
-  upsertWebClient, listWebClients, getWebClient, getWebClientBySlug, createWebClient, touchWebClient, updateWebClient, deleteWebClient, getWebClientSettings, setWebClientSettings,
+  createWebSession, validateWebSession, getWebSessionDeviceId, addAccessEvent, listAccessEvents,
+  upsertWebClient, listWebClients, getWebClient, getWebClientBySlug, createWebClient, touchWebClient, updateWebClient, deleteWebClient, deleteAllWebClients, getWebClientSettings, setWebClientSettings, clearWebClientSettings,
   setProjectDocument, getProjectDocument, hasProjectDocument, deleteProjectDocument, clearProjectDocuments, listProjectDocumentKeys, listProjectFileKeys,
-  setProjectFile, getProjectFile, upsertBackupIndex,
-  getStandardSensorBindingsForLevel, getStandardSensorBindingsForRoom, replaceRoomStandardSensorBindings, clearStandardSensorBinding, clearAllStandardSensorBindingsForRoom, syncStandardSensorBindingsFromRooms,
+  setProjectFile, getProjectFile, deleteProjectFile, upsertBackupIndex,
+  getStandardSensorBindingsForLevel, getStandardSensorBindingsForRoom, replaceRoomStandardSensorBindings, clearStandardSensorBinding, clearAllStandardSensorBindingsForRoom, clearStandardSensorBindings, syncStandardSensorBindingsFromRooms,
   normalizeMobileSettings, normalizeProfileAccess, backupLegacyFile
 };

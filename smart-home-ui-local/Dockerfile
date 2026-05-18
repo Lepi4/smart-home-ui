@@ -1,28 +1,24 @@
-# Stage 1: install deps on the native build platform to avoid QEMU SIGILL crashes.
-# express and ws are pure JS so node_modules are cross-arch safe.
-FROM --platform=$BUILDPLATFORM node:20-alpine AS deps
-WORKDIR /app
-ENV npm_config_audit=false
-ENV npm_config_fund=false
-COPY package.json ./
-RUN npm install --omit=dev --ignore-optional \
-  && npm cache clean --force
-
-# Stage 2: final image for the target arch
 FROM node:20-alpine
 
-RUN apk add --no-cache sqlite
+RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 ENV NODE_ENV=production
-ENV PORT=8080
-ENV DATA_DIR=/data
+ENV ALLHA_MODE=home-assistant-addon
+ENV BUILD_VERSION=5.0.0
+ENV PATH=/app/node_modules/.bin:$PATH
 
-COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+RUN npm install --omit=dev --registry=https://registry.npmjs.org \
+  && node -e "require.resolve('express'); require.resolve('ws'); require.resolve('better-sqlite3'); console.log('Dependencies OK')" \
+  && npm cache clean --force
+
 COPY . .
-RUN chmod +x /app/start.sh \
-  && mkdir -p /data/backups
+RUN chmod +x /app/start.sh /app/start-local.sh 2>/dev/null || true \
+  && mkdir -p /data/backups /app/config
 
 EXPOSE 8080
+EXPOSE 8099
 EXPOSE 32457
-CMD ["/app/start.sh"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://localhost:${PORT:-8080}/api/readyz || exit 1
+CMD ["node", "server.js"]

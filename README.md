@@ -1,8 +1,40 @@
-# ALLHA-2D v4.1.19.2
+# ALLHA-2D
 
-Этот релиз использует рабочую логику мобильного подключения из приложенных пользователем файлов Sonnet. Серверная часть совместима с мобильным доступом v4.1.5+: `/api/health`, `/api/mobile/debug`, `/api/mobile/pair`.
+## v5.0.0 minimal HA add-on / Ingress restore
 
-# ALLHA-2D Local — v3.6.0.5
+This release restores the minimal Home Assistant add-on / Ingress entry flow while preserving the local Docker workflow and mobile direct port. The add-on root opens the main app in HA/Ingress mode; local Docker root continues to open the `/client/<slug>` landing page.
+
+
+> Актуальная сборка: **v5.0.0 — minimal HA add-on / Ingress restore**.
+> Основная рабочая ветка: local Docker на Windows; долгосрочная цель — Home Assistant add-on через HA Ingress/Supervisor.
+
+## v4.3.0.11 — что важно
+
+- Виртуальные комнаты используют правильную checkbox-модель: существующая комната получает галочку `Виртуальная`.
+- При включении галочки устройства этой комнаты отображаются карточками; при снятии галочки значки/маркеры возвращаются на прежние места.
+- Добавлена safe-area правка для kiosk/card mode: карточки не должны залезать под левую колонку и нижние кнопки.
+- Добавлен батчинг live-обновлений HA/SSE: настройка `Интервал live-обновления значений`, по умолчанию 1 секунда.
+- Значение `0` отключает батчинг и возвращает отправку отдельных событий.
+
+## Постоянные ссылки web-клиентов `/client/<slug>`
+
+Начиная с v4.1.21.18.35 базовый адрес:
+
+```text
+http://IP_HOME_ASSISTANT:8099
+```
+
+используется как стартовая страница. На ней можно открыть уже сохранённую ссылку-ID или создать новую индивидуальную ссылку клиента:
+
+```text
+http://IP_HOME_ASSISTANT:8099/client/xxxxx
+```
+
+Именно `/client/<slug>` должен использоваться как постоянный адрес браузера, планшета или панели. Через эту ссылку восстанавливаются индивидуальные настройки клиента: расположение датчиков и маркеров, видимость, масштаб, размеры, прозрачность, выбранная комната/уровень, kiosk/mobile/tiles-предпочтения.
+
+Ссылка-ID не выдаёт права доступа сама по себе. Права, dangerous-команды, PIN и доступ к профилям остаются server-side правилами.
+
+Для обычного запуска Docker без пересборки используйте `start.bat` или `docker compose up`. Для обновления версии используйте `rebuild.bat` или `docker compose up --build`.
 
 ## v3.6.0.5 — Dual Access Mode: локальный direct-доступ + ingress для Home Assistant
 
@@ -970,3 +1002,161 @@ http://IP_HOME_ASSISTANT:8099/client/<slug>
 Эта ссылка не является admin-токеном и не выдаёт права доступа. Она нужна для восстановления индивидуальных UI-настроек конкретной панели: масштаб, видимость маркеров/датчиков, kiosk-настройки, последний профиль/уровень и будущие layout overrides. Порт `8099` предназначен только для локальной сети; не пробрасывайте его напрямую в интернет.
 
 SQLite `/data/allha2d.db` теперь является основным источником runtime-документов. JSON/JS-файлы в `/data` сохраняются как mirror для диагностики, export/debug и безопасного отката. Проверка состояния: `/api/database/info`.
+
+
+## v4.1.21.18.31 — стабильный hotfix сохранения индивидуальных настроек
+
+Эта версия исправляет две критические причины зависаний/нерабочих кнопок:
+
+1. В `public/app.js` был вызов несуществующей функции `clientLogEvent(...)`, из-за чего браузер мог получать `ReferenceError` при сохранении или копировании индивидуальных настроек.
+2. При отсутствии per-client `ui-state` документ из SQLite мог возвращаться как `null`, после чего `/api/ui-state` падал на `loaded.viewport`.
+
+Также:
+
+- debug log и client-event tracing теперь выключены по умолчанию;
+- polling по умолчанию поднят до 30 секунд;
+- SSE state_changed для известных entity обновляет DOM батчем;
+- сохранение client settings продолжается даже если сохранение состояния экрана временно ошиблось.
+
+Проверка:
+
+```powershell
+docker compose down
+docker compose up --build
+```
+
+Открыть:
+
+```text
+http://localhost:8099/api/debug/log/status
+```
+
+Для стабильной сборки ожидаемо:
+
+```json
+{"enabled":false,"httpTrace":false,"clientEvents":false}
+```
+
+Если нужна диагностика, запускать с переменными:
+
+```text
+ALLHA_DEBUG_LOG=1
+ALLHA_DEBUG_CLIENT_EVENTS=1
+ALLHA_DEBUG_HTTP=0
+```
+
+## v4.1.21.18.32 — сообщение о восстановлении индивидуальных настроек
+
+После восстановления/копирования индивидуальных настроек между клиентами ALLHA-2D показывает сообщение с источником и результатом операции.
+
+Пример:
+
+```text
+Настройки восстановлены из: Браузер / панель. Восстановлено: расположение датчиков и маркеров; видимость датчиков, маркеров и зон.
+```
+
+Если источник не содержит сохранённого расположения датчиков и маркеров, интерфейс показывает отдельное предупреждение. Это нужно, чтобы пользователь понимал, какие именно настройки были перенесены на мобильное устройство, браузерную панель или другой клиент.
+
+
+## v4.1.21.18.40 — Web-клиенты / панели
+
+Добавлен admin-раздел **Настройки → Web-клиенты / панели**. Он показывает постоянные браузеры/панели, созданные через `/client/<slug>`. Для каждого клиента отображаются alias, slug, ссылка, дата создания, последняя активность, экран и признак текущего клиента.
+
+Доступные действия:
+
+```text
+- Скопировать ссылку клиента;
+- Открыть ссылку клиента;
+- Переименовать alias/описание;
+- Перегенерировать ссылку;
+- Удалить web-клиент / ссылку с подтверждением.
+```
+
+В списке источников копирования индивидуальных настроек web-клиенты теперь называются понятнее: **Браузер / панель: alias · /client/slug**. Старые дубли с ID мобильных устройств не показываются.
+
+## Mobile external access via KeenDNS HTTP (v4.1.21.18.42)
+
+Current supported external mobile mode is HTTP through KeenDNS to the ALLHA-2D mobile port.
+
+Recommended current scheme:
+
+```text
+Mobile APK -> http://your-keendns-domain -> HAOS host -> ALLHA-2D mobile server :32457
+```
+
+ALLHA-2D mobile server still listens on internal HTTP port `32457`. HTTPS / reverse proxy is optional future work and is not required for the current workflow.
+
+Security for this mode is handled by ALLHA-2D mobile access:
+
+- mobile access must be enabled explicitly;
+- optional pairing password can be configured;
+- newly saved pairing passwords are stored as hash/salt;
+- pairing code is short-lived and one-time;
+- paired devices use device tokens after pairing;
+- tokens can be revoked per device or all at once;
+- pairing attempts are rate-limited and repeated failures are temporarily blocked;
+- mobile pairing/revoke events are recorded in the mobile access audit log;
+- diagnostics show external URL, mode, recent events and request metadata.
+
+In the server UI open:
+
+```text
+Settings -> Mobile access
+```
+
+Set:
+
+```text
+External mobile access: enabled
+External URL: http://allha2d.example.com
+Mode: KeenDNS HTTP -> 32457
+```
+
+Do not put real tokens, PINs or `config/local-config.json` into release archives.
+
+
+### Mobile port 32457 and web-client start page
+
+Порт `32457` предназначен для мобильного приложения. Браузер без токена на этом порту видит защитную страницу Mobile Access. После успешной привязки APK и входа с `_mt/_did` сервер отдаёт основной интерфейс ALLHA-2D. Стартовая страница выбора/создания `/client/<slug>` используется только для web-доступа через порт `8099`.
+
+
+## v4.2.0.2.1 — better-sqlite3 release + safety hardening
+
+- Runtime storage переведён на `better-sqlite3` exact version `9.4.3` с `package-lock.json`.
+- Добавлен `closeDb()` и закрытие SQLite при graceful shutdown.
+- Добавлены WAL/SHM ignore и Docker HEALTHCHECK на `/api/readyz`.
+- Усилен CORS для mobile port, добавлены requestId/safe errors, расширенное masking секретов, write/destructive rate limit и env port validation.
+- Релизный архив не содержит `/data`, runtime DB, backups/logs, local-config, секретов и `node_modules`.
+
+
+## v4.2.0.2 dependency hotfix
+
+If Docker still shows `Cannot find module express`, remove the old container/image and rebuild:
+
+```powershell
+docker compose down --rmi local --volumes --remove-orphans
+docker compose build --no-cache --pull
+docker compose up
+```
+
+The startup log must show `Version: 4.2.0.2` and `Dependencies OK`.
+
+
+## v4.2.19 runtime / Lovelace diagnostics note
+
+This release adds SSE/runtime diagnostics and Lovelace import diagnostics. Use `/api/diagnostics` for live/runtime counters and `/api/ha/lovelace/diagnostics` for current-level Lovelace parser status. Add `?all=1` to include every profile/level. Automatic backups remain disabled by default; use manual backup actions only.
+
+## v4.3.0.1 virtual room checkbox note
+
+Виртуальная комната теперь включается галочкой `Виртуальная` у уже существующей комнаты в настройках комнат. Это не отдельная ручная сущность: устройства берутся из этой же комнаты. В виртуальном режиме комната всегда отображает устройства карточками; переключатель `Карта / Карточки` меняет только подложку/фон. При возврате в обычный режим маркеры/значки комнаты остаются сохранёнными и возвращаются на прежние места.
+
+
+## v4.3.2
+
+Cleanup release after virtual rooms and StandardSensors stabilization. Docker archive contains only minimal project documentation.
+
+
+## v4.3.3
+
+Cleanup release after v4.3.2. Keeps the working virtual rooms, StandardSensors, Attention mode, and control/viewer/admin access fixes. Diagnostics now include a consistent one-minute client-side view of SSE/render load: batch/min, state_changed/min, patch/min and render/min.
+
