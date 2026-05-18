@@ -4030,3 +4030,8 @@ body.kiosk-mode.kiosk-rooms-open .kiosk-rooms-btn{
 .attention-row-actions button.danger{background:#3a1b1b;border-color:rgba(255,120,120,.36);}
 .attention-row-actions button:disabled{opacity:.45;cursor:not-allowed;}
 @media(max-width:760px){.attention-row{grid-template-columns:1fr!important}.attention-row-actions button{flex:1 1 150px}}
+
+
+/* v5.0.1: FAQ/Diagnostics opened from Settings must appear above Settings. */
+.modal.modal-top{z-index:2600!important;}
+.modal.modal-top .modal-card{box-shadow:0 28px 100px rgba(0,0,0,.58)!important;}

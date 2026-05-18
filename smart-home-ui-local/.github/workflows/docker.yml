@@ -1,0 +1,131 @@
+name: Build, publish and release ALLHA-2D add-on
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+      - "v*.*.*.*"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  meta:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(awk -F':' '/^version:/ {gsub(/[ "]/ , "", $2); print $2; exit}' smart-home-ui-local/config.yaml)
+          fi
+
+          if [[ -z "$VERSION" ]]; then
+            echo "Version not found" >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    needs: meta
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./smart-home-ui-local
+          file: ./smart-home-ui-local/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            ghcr.io/lepi4/smart-home-ui-${{ matrix.arch }}:${{ needs.meta.outputs.version }}
+            ghcr.io/lepi4/smart-home-ui-${{ matrix.arch }}:latest
+          build-args: |
+            BUILD_VERSION=${{ needs.meta.outputs.version }}
+            BUILD_ARCH=${{ matrix.arch }}
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - meta
+      - build
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package release zip
+        shell: bash
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          PKG_DIR="${VERSION}"
+          ZIP_NAME="smart-home-ui-ha-addon-ghcr-lepi4-v${VERSION}.zip"
+
+          rm -rf "$PKG_DIR" "$ZIP_NAME"
+          mkdir -p "$PKG_DIR"
+
+          rsync -a \
+            --exclude='.git' \
+            --exclude="$PKG_DIR" \
+            --exclude="$ZIP_NAME" \
+            ./ "$PKG_DIR/"
+
+          zip -r "$ZIP_NAME" "$PKG_DIR"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ALLHA-2D v${{ needs.meta.outputs.version }}
+          tag_name: v${{ needs.meta.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: smart-home-ui-ha-addon-ghcr-lepi4-v${{ needs.meta.outputs.version }}.zip

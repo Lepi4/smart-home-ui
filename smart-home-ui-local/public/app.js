@@ -6053,8 +6053,19 @@ function renderBackupManager(){
   const items=Array.isArray(data.items)?data.items:[];
   box.innerHTML=`<div class="backup-summary"><strong>Backup-файлов:</strong> ${data.count||items.length} · <strong>Размер:</strong> ${formatBytes(data.totalSize||0)}<br><span class="muted">Старый: ${data.oldest?esc(new Date(data.oldest).toLocaleString()):'—'} · Новый: ${data.newest?esc(new Date(data.newest).toLocaleString()):'—'} · Размеры: ${esc(data.sizeMode||'manifest')}</span></div>`+
     `<div class="backup-actions"><button type="button" id="btn-create-manual-backup">Создать backup сейчас</button><button type="button" id="btn-delete-old-backups">Очистить старые backup-и</button><button type="button" id="btn-delete-all-backups" class="danger-button">Удалить все backup-и</button></div>`+
-    `<div class="backup-list">${items.slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}${b.manifest?' · manifest':''}</span></div><div>${b.type==='directory'?`<button data-restore-full-backup="${esc(b.name)}">Восстановить</button>`:''}${b.type==='file'?`<a class="button-link" href="api/backups/download/${encodeURIComponent(b.name)}" download>Скачать</a>`:''}<button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('') || '<p class="muted">Backup пока нет.</p>'}</div>`;
+    `<div class="backup-list">${items.slice(0,50).map(b=>{
+      const isFull = b.type==='directory';
+      const isLayoutFile = b.type==='file' && /^layout-.*\.json$/.test(String(b.name||''));
+      const restoreBtn = isFull ? `<button type="button" data-restore-full-backup="${esc(b.name)}">Восстановить</button>` : (isLayoutFile ? `<button type="button" data-restore-layout-backup="${esc(b.name)}">Восстановить расположение</button>` : '');
+      const downloadBtn = b.type==='file' ? `<a class="button-link" href="api/backups/download/${encodeURIComponent(b.name)}" download>Скачать</a>` : `<a class="button-link" href="api/backups/download/${encodeURIComponent(b.name)}" download>Скачать</a>`;
+      return `<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}${b.manifest?' · manifest':''}</span></div><div>${restoreBtn}${downloadBtn}<button type="button" data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`;
+    }).join('') || '<p class="muted">Backup пока нет.</p>'}</div>`;
   qsa('[data-restore-full-backup]',box).forEach(btn=>btn.onclick=()=>restoreFullBackup(btn.dataset.restoreFullBackup));
+  qsa('[data-restore-layout-backup]',box).forEach(btn=>btn.onclick=async()=>{
+    if(!confirm('Восстановить '+btn.dataset.restoreLayoutBackup+'? Текущее расположение датчиков и маркеров будет сохранено в backup.')) return;
+    try{ const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreLayoutBackup})}); state.layout={...state.layout,...r.layout}; render(); showToast('Расположение датчиков и маркеров восстановлено'); }
+    catch(e){ showToast('Ошибка восстановления расположения: '+e.message); }
+  });
   qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=()=>deleteBackup(btn.dataset.deleteBackup));
 }
 async function createManualBackup(){
@@ -6636,7 +6647,15 @@ function renderInfoModal(){
 
 
 /* v3.4.12: settings modal performance helpers */
-function openModal(id){ const m=el(id); if(m){ m.classList.remove('hidden'); syncModalOpenClass(); } }
+function openModal(id){
+  const m=el(id);
+  if(m){
+    // v5.0.1: child/help modals opened from Settings must be above the Settings modal.
+    if(id==='faq-modal' || id==='info-modal') m.classList.add('modal-top');
+    m.classList.remove('hidden');
+    syncModalOpenClass();
+  }
+}
 function closeModal(id){ const m=el(id); if(m){ m.classList.add('hidden'); syncModalOpenClass(); } }
 
 

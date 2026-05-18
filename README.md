@@ -1,11 +1,11 @@
 # ALLHA-2D
 
-## v5.0.0 minimal HA add-on / Ingress restore
+## v5.0.1 minimal HA add-on / Ingress restore
 
 This release restores the minimal Home Assistant add-on / Ingress entry flow while preserving the local Docker workflow and mobile direct port. The add-on root opens the main app in HA/Ingress mode; local Docker root continues to open the `/client/<slug>` landing page.
 
 
-> Актуальная сборка: **v5.0.0 — minimal HA add-on / Ingress restore**.
+> Актуальная сборка: **v5.0.1 — minimal HA add-on / Ingress restore**.
 > Основная рабочая ветка: local Docker на Windows; долгосрочная цель — Home Assistant add-on через HA Ingress/Supervisor.
 
 ## v4.3.0.11 — что важно

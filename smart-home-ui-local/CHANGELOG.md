@@ -1,3 +1,11 @@
+# v5.0.1 — root routing + profile/backup/modal hotfix
+
+- LAN/local root `:8099/` again opens web-client registration/selection instead of anonymous app UI.
+- HA Ingress root still opens the app UI; mobile port `32457` still opens the mobile entry.
+- Fixed per-device profile activation so `Для этого устройства` no longer changes the global profile.
+- FAQ and diagnostics modals now open above the settings modal.
+- Backup manager shows restore/download actions more consistently for admin.
+
 ## v5.0.0 — minimal HA add-on / Ingress restore
 
 - Restored minimal Home Assistant add-on entry flow on top of stable v4.3.3.

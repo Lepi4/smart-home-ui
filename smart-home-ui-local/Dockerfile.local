@@ -1,0 +1,27 @@
+FROM node:20-alpine
+
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+ENV NODE_ENV=development
+ENV ALLHA_MODE=local-dev
+ENV ALLHA_CONFIG=/app/config/local-config.json
+ENV DATA_DIR=/data
+ENV PORT=8099
+ENV DIRECT_DASHBOARD_PORT=8099
+ENV MOBILE_PORT=32457
+ENV PATH=/app/node_modules/.bin:$PATH
+
+COPY package.json ./
+RUN npm install --omit=dev --registry=https://registry.npmjs.org \
+  && node -e "require.resolve('express'); require.resolve('ws'); require.resolve('better-sqlite3'); console.log('Dependencies OK')" \
+  && npm cache clean --force
+
+COPY . .
+RUN chmod +x /app/start-local.sh \
+  && mkdir -p /data/backups /app/config
+
+EXPOSE 8099
+EXPOSE 32457
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://localhost:8099/api/readyz || exit 1
+CMD ["/app/start-local.sh"]

@@ -1,0 +1,23 @@
+services:
+  allha2d-local:
+    image: allha-2d-local-dev:5.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+      no_cache: true
+    container_name: allha2d-local-dev
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+      - "32457:32457"
+    volumes:
+      - ./data:/data
+      - ./config:/app/config:ro
+    environment:
+      ALLHA_MODE: local-dev
+      ALLHA_CONFIG: /app/config/local-config.json
+      DATA_DIR: /data
+      PORT: 8099
+      DIRECT_DASHBOARD_PORT: 8099
+      MOBILE_PORT: 32457
+      ALLHA_SSE_BATCH_MS: 1000

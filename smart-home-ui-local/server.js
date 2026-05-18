@@ -3627,7 +3627,10 @@ app.get('/', (req,res)=>{
     || !!req.query?._mt
     || !!req.query?._did
     || String(req.query?._mobile || req.query?.mobile || '') === '1';
-  const addonEntry = isHomeAssistantAddonMode() || isIngressRequest(req) || String(req.query?.ingress || req.query?.ha_addon || '') === '1';
+  // v5.0.1: LAN/local root must keep the web-client registration/start page.
+  // Only real Home Assistant Ingress (headers/path) or explicit ingress flags open the app on root.
+  // This prevents http://IP:8099/ from becoming an anonymous server UI without /client/<slug>.
+  const addonEntry = isIngressRequest(req) || String(req.query?.ingress || req.query?.ha_addon || '') === '1';
   res.sendFile(path.join(__dirname, 'public', (mobileEntry || addonEntry) ? 'index.html' : 'client-start.html'));
 });
 app.get('/client/:slug', (req,res)=>{
@@ -4159,7 +4162,9 @@ app.post('/api/profiles/:id/activate-for-client', express.json(), (req,res)=>{
     existing.activeLevelId = levelId;
     existing.navigation = { ...(existing.navigation || {}), profileId, levelId };
     saveClientPrefs(cid, existing, req);
-    activateProfileLevelForCurrentServer(profileId, levelId);
+    // v5.0.1: per-client activation must not change the global/server active profile.
+    // It only stores the active profile/level for the requesting web/mobile client.
+    ensureLevelDirs(profileId, levelId);
     res.json({ ok:true, activeProfileId: profileId, activeLevelId: levelId, profiles: profilesDiagnostics(), levels: levelsDiagnostics(profileId) });
   }catch(e){ safeErrorResponse(req,res,e); }
 });
