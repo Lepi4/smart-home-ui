@@ -5,7 +5,7 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /app
 ENV NODE_ENV=production
 ENV ALLHA_MODE=home-assistant-addon
-ENV BUILD_VERSION=5.1.0-beta.1
+ENV BUILD_VERSION=5.1.0-beta.2
 ENV PATH=/app/node_modules/.bin:$PATH
 
 COPY package.json package-lock.json ./

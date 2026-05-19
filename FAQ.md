@@ -1,4 +1,4 @@
-# ALLHA-2D FAQ — v5.1.0-beta.1
+# ALLHA-2D FAQ — v5.1.0-beta.2
 
 ## Как установить как Home Assistant add-on?
 Добавьте репозиторий в Home Assistant Add-on Store, установите add-on `smart-home-ui-local`, запустите его и откройте через Ingress.

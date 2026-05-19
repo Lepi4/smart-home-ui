@@ -1,6 +1,6 @@
 services:
   allha2d-local:
-    image: allha-2d-local-dev:5.1.0-beta.1
+    image: allha-2d-local-dev:5.1.0-beta.2
     build:
       context: .
       dockerfile: Dockerfile.local
