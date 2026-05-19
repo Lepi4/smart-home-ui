@@ -857,11 +857,18 @@ function deleteProjectDocument(key) {
   return true;
 }
 
+function escapeLikePattern(str) {
+  return String(str ?? '').replace(/\\/g, '\\\\').replace(/_/g, '\\_').replace(/%/g, '\\%');
+}
+
 function clearProjectDocuments(prefix = '') {
   if (!hasDb()) return false;
   const p = normalizeDocKey(prefix);
   if (!prefix) runTransaction(`DELETE FROM project_documents; DELETE FROM project_files;`);
-  else runTransaction(`DELETE FROM project_documents WHERE doc_key LIKE ${q(p + '%')}; DELETE FROM project_files WHERE file_key LIKE ${q(p + '%')};`);
+  else {
+    const esc = escapeLikePattern(p);
+    runTransaction(`DELETE FROM project_documents WHERE doc_key LIKE ${q(esc + '%')} ESCAPE '\\'; DELETE FROM project_files WHERE file_key LIKE ${q(esc + '%')} ESCAPE '\\';`);
+  }
   return true;
 }
 

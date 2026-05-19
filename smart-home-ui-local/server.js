@@ -1851,8 +1851,10 @@ function pruneLayoutBackups(max=20){
   for(const item of items.slice(max)){ try{fs.unlinkSync(path.join(LAYOUT_BACKUP_DIR,item.name));}catch(e){} }
 }
 function restoreLayoutBackup(name){
-  if(!/^layout-.*\.json$/.test(String(name||''))) throw new Error('Некорректное имя backup');
-  const src=path.join(LAYOUT_BACKUP_DIR,name);
+  const n = String(name||'');
+  if(!/^layout-[^/\\]+\.json$/.test(n)) throw new Error('Некорректное имя backup');
+  const src=path.join(LAYOUT_BACKUP_DIR,n);
+  if(!pathInside(LAYOUT_BACKUP_DIR, src)) throw new Error('Некорректный путь backup');
   if(!fs.existsSync(src)) throw new Error('Backup не найден');
   fs.mkdirSync(DATA_DIR,{recursive:true});
   if(runtimeDocumentExists(LAYOUT_PATH)) backupLayout();
@@ -1861,8 +1863,10 @@ function restoreLayoutBackup(name){
   return loadLayout();
 }
 function deleteLayoutBackup(name){
-  if(!/^layout-.*\.json$/.test(String(name||''))) throw new Error('Некорректное имя backup');
-  const file=path.join(LAYOUT_BACKUP_DIR,name);
+  const n = String(name||'');
+  if(!/^layout-[^/\\]+\.json$/.test(n)) throw new Error('Некорректное имя backup');
+  const file=path.join(LAYOUT_BACKUP_DIR,n);
+  if(!pathInside(LAYOUT_BACKUP_DIR, file)) throw new Error('Некорректный путь backup');
   if(fs.existsSync(file)) fs.unlinkSync(file);
 }
 
@@ -2257,6 +2261,82 @@ function createTarGzBuffer(srcDir, rootName){
   addFile(root);
   chunks.push(Buffer.alloc(1024, 0));
   return zlib.gzipSync(Buffer.concat(chunks));
+}
+
+
+function safeBackupUploadName(name){
+  const raw = decodeURIComponent(String(name || 'uploaded-backup.tgz')).replace(/\\/g,'/').split('/').pop();
+  return raw.replace(/[^a-z0-9_.-]/gi,'-').slice(0,80) || 'uploaded-backup.tgz';
+}
+function parseTarOctal(buf, start, len){
+  const txt = buf.slice(start, start+len).toString('ascii').replace(/\0/g,'').trim();
+  return txt ? parseInt(txt, 8) || 0 : 0;
+}
+const MAX_BACKUP_UPLOAD_BYTES = 350 * 1024 * 1024;
+const MAX_BACKUP_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024;
+async function gunzipBackupBufferLimited(buffer){
+  return new Promise((resolve, reject)=>{
+    const chunks = [];
+    let total = 0;
+    const gunzip = zlib.createGunzip();
+    gunzip.on('data', chunk=>{
+      total += chunk.length;
+      if(total > MAX_BACKUP_UNCOMPRESSED_BYTES){
+        gunzip.destroy(new Error('Распакованный backup слишком большой'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    gunzip.on('error', err=>reject(err));
+    gunzip.on('end', ()=>resolve(Buffer.concat(chunks, total)));
+    Readable.from(buffer).pipe(gunzip);
+  });
+}
+async function importBackupTarGz(buffer, originalName='uploaded-backup.tgz'){
+  if(!Buffer.isBuffer(buffer) || buffer.length < 128) throw new Error('Пустой или некорректный файл backup');
+  if(buffer.length > MAX_BACKUP_UPLOAD_BYTES) throw new Error('Backup слишком большой: максимум 350 MB');
+  ensureDataStore();
+  let tar;
+  try{ tar = await gunzipBackupBufferLimited(buffer); }catch(e){
+    if(e && /слишком большой/i.test(String(e.message||''))) throw e;
+    throw new Error('Поддерживается загрузка .tar.gz/.tgz backup, скачанного из ALLHA-2D');
+  }
+  const stamp = timestampForFile();
+  const dst = path.join(LAYOUT_BACKUP_DIR, `uploaded-backup-${stamp}`);
+  fs.mkdirSync(dst, {recursive:true});
+  const extracted=[];
+  let offset=0, rootPrefix='';
+  while(offset + 512 <= tar.length){
+    const header = tar.slice(offset, offset+512);
+    if(header.every(b=>b===0)) break;
+    const rawName = header.slice(0,100).toString('utf8').replace(/\0.*$/,'').replace(/\\/g,'/');
+    const size = parseTarOctal(header, 124, 12);
+    const type = header.slice(156,157).toString('ascii') || '0';
+    offset += 512;
+    const fileData = tar.slice(offset, offset+size);
+    offset += size + ((512 - (size % 512)) % 512);
+    if(!rawName || rawName.includes('..') || rawName.startsWith('/')) continue;
+    const parts = rawName.split('/').filter(Boolean);
+    if(parts.length < 2) continue;
+    if(!rootPrefix) rootPrefix = parts[0];
+    const relParts = parts[0] === rootPrefix ? parts.slice(1) : parts;
+    if(!relParts.length) continue;
+    const rel = relParts.join('/');
+    if(rel.includes('..') || rel.startsWith('/')) continue;
+    if(rel.startsWith('logs/') || rel.startsWith('sessions/') || rel === 'config/local-config.json' || /(^|\/)allha2d\.db(-wal|-shm)?$/i.test(rel)) continue;
+    const target = path.join(dst, rel);
+    if(!pathInside(dst, target)) continue;
+    if(type === '5') { fs.mkdirSync(target, {recursive:true}); continue; }
+    if(type !== '0' && type !== '\0') continue;
+    fs.mkdirSync(path.dirname(target), {recursive:true});
+    fs.writeFileSync(target, fileData);
+    extracted.push(rel);
+  }
+  if(!extracted.length){ fs.rmSync(dst,{recursive:true,force:true}); throw new Error('В backup не найдено файлов'); }
+  const manifest = readBackupManifest(dst) || writeBackupManifest(dst, {reason:'uploaded', backupType:'uploaded', copied:extracted, sizeBytes:dirSizeBytes(dst)});
+  const originalInfo = { uploadedFrom:safeBackupUploadName(originalName), uploadedAt:new Date().toISOString(), extracted:extracted.length, note:'uploaded backup, restore requires explicit confirmation' };
+  try{ fs.writeFileSync(path.join(dst,'upload-info.json'), JSON.stringify(originalInfo,null,2), 'utf8'); }catch(e){}
+  return { name:path.basename(dst), type:'directory', copied:extracted, path:dst, size:dirSizeBytes(dst), manifest:!!manifest, uploaded:true, originalName:safeBackupUploadName(originalName) };
 }
 
 function createManualBackup(reason='manual'){
@@ -4620,6 +4700,7 @@ app.post('/api/maintenance/stale-client-settings/cleanup', (req,res)=> { try { r
 app.get('/api/backups', (req,res)=> { try { res.json({ok:true, backups:backupSummary()}); } catch(e){ safeErrorResponse(req,res,e); } });
 app.get('/api/backups/download/:name', (req,res)=> { try { const rel=String(req.params.name||'').replace(/\\/g,'/'); if(!rel || rel.includes('..') || path.isAbsolute(rel)) throw new Error('Некорректное имя backup'); const target=path.join(LAYOUT_BACKUP_DIR, rel); if(!pathInside(LAYOUT_BACKUP_DIR,target) || !fs.existsSync(target)) throw new Error('Backup не найден'); if(fs.statSync(target).isDirectory()){ const tgz=createTarGzBuffer(target, path.basename(rel)); res.setHeader('Content-Type','application/gzip'); res.setHeader('Content-Disposition', `attachment; filename="${path.basename(rel)}.tar.gz"`); return res.send(tgz); } res.download(target); } catch(e){ safeErrorResponse(req,res,e); } });
 app.post('/api/backups/create', (req,res)=> { try { const item=createManualBackup(req.body?.reason||'manual'); res.json({ok:true, backup:item, backups:backupSummary()}); } catch(e){ safeErrorResponse(req,res,e); } });
+app.post('/api/backups/upload', express.raw({type:['application/octet-stream','application/gzip','application/x-gzip'], limit:'350mb'}), async (req,res)=> { try { const item=await importBackupTarGz(req.body, req.headers['x-backup-filename'] || 'uploaded-backup.tgz'); res.json({ok:true, backup:item, backups:backupSummary()}); } catch(e){ validationErrorResponse(req,res,e); } });
 app.post('/api/backups/restore', (req,res)=> { try { const layout=restoreLayoutBackup(req.body?.name); res.json({ok:true, layout}); } catch(e){ safeErrorResponse(req,res,e); } });
 app.post('/api/backups/delete', (req,res)=> { try { deleteBackupItem(req.body?.name); res.json({ok:true, backups:backupSummary()}); } catch(e){ safeErrorResponse(req,res,e); } });
 app.post('/api/backups/delete-old', (req,res)=> { try { res.json({ok:true, backups:deleteOldBackups(req.body?.keep||10)}); } catch(e){ safeErrorResponse(req,res,e); } });

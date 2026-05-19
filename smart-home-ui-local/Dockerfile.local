@@ -12,8 +12,8 @@ ENV DIRECT_DASHBOARD_PORT=8099
 ENV MOBILE_PORT=32457
 ENV PATH=/app/node_modules/.bin:$PATH
 
-COPY package.json ./
-RUN npm install --omit=dev --registry=https://registry.npmjs.org \
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --registry=https://registry.npmjs.org \
   && node -e "require.resolve('express'); require.resolve('ws'); require.resolve('better-sqlite3'); console.log('Dependencies OK')" \
   && npm cache clean --force
 

@@ -324,6 +324,11 @@ async function saveClientPrefs(){
 
 function el(id){return document.getElementById(id)}
 function qsa(s,p=document){return [...p.querySelectorAll(s)]}
+function setText(id, value){ const node=el(id); if(node) node.textContent=value; return node; }
+function setHtml(id, value){ const node=el(id); if(node) node.innerHTML=value; return node; }
+function onEl(id, event, handler, opts){ const node=el(id); if(node) node.addEventListener(event, handler, opts); return node; }
+function clickEl(id, handler){ const node=el(id); if(node) node.onclick=handler; return node; }
+function safeNumber(...values){ for(const v of values){ const n=Number(v); if(Number.isFinite(n)) return n; } return 0; }
 let editZoomControlsPlaceholder = null;
 function ensureEditViewportControlsRoot(){
   /* v4.2.17.4: keep mobile edit viewport controls outside .canvas-card.
@@ -689,12 +694,6 @@ function captureDisplayPrefsFromInputs(){
     ['pref-room-marker-opacity','roomMarkerOpacity'],
     ['pref-room-sensor-scale','roomSensorScale'],
     ['pref-room-sensor-opacity','roomSensorOpacity'],
-    ['pref-halo-scale','haloScale'],
-    ['pref-marker-scale','markerScale'],
-    ['pref-sensor-scale','sensorScale'],
-    ['pref-room-label-scale','roomLabelScale'],
-    ['pref-marker-opacity','markerOpacity'],
-    ['pref-sensor-opacity','sensorOpacity'],
     ['pref-card-font-scale','cardFontScale'],
     ['pref-virtual-card-transparency','virtualCardTransparency'],
     ['pref-virtual-card-scale','virtualCardScale']
@@ -1974,8 +1973,8 @@ function openCameraStream(d){
   const title=el('camera-modal-title');
   const entityLabel=el('camera-modal-entity');
   if(!modal||!img) return;
-  title.textContent=displayName(d);
-  entityLabel.textContent=d.entity_id;
+  if(title) title.textContent=displayName(d);
+  if(entityLabel) entityLabel.textContent=d.entity_id;
   img.dataset.entity=d.entity_id;
   img.alt='';
   img.src='';
@@ -2343,10 +2342,10 @@ function render(){
   const qbtn=el('btn-quick-overlay'); if(qbtn) qbtn.classList.toggle('hidden', isOverview);
   const mobileOverviewBtn=el('btn-mobile-overview'); if(mobileOverviewBtn) mobileOverviewBtn.classList.toggle('hidden', isOverview);
   updateKioskOverviewButton();
-  el('overview-view').classList.toggle('active', isOverview);
-  el('room-view').classList.toggle('active', !isOverview);
-  el('page-title').textContent = isOverview ? 'Общий план' : room(state.selectedRoom).label;
-  el('page-subtitle').textContent = state.edit ? 'Лёгкий редактор: живые состояния, меню и анимации временно отключены' : (isOverview ? 'Тап по комнате открывает отдельный вид помещения' : 'Тап по устройству — действие, удержание — функции');
+  el('overview-view')?.classList.toggle('active', isOverview);
+  el('room-view')?.classList.toggle('active', !isOverview);
+  setText('page-title', isOverview ? 'Общий план' : (room(state.selectedRoom)?.label || state.selectedRoom || ''));
+  setText('page-subtitle', state.edit ? 'Лёгкий редактор: живые состояния, меню и анимации временно отключены' : (isOverview ? 'Тап по комнате открывает отдельный вид помещения' : 'Тап по устройству — действие, удержание — функции'));
   renderNav();
   if(isOverview){ renderOverview(); } else { renderRoom(); }
   renderDevices();
@@ -2383,7 +2382,8 @@ function renderOverview(){
   renderOverviewMarkers();
 }
 function renderOverviewZones(){
-  const layer=el('overview-zones'); layer.innerHTML='';
+  const layer=el('overview-zones'); if(!layer) return;
+  layer.innerHTML='';
   if(state.ui.showZones===false)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id);
@@ -2502,7 +2502,7 @@ function safeMetricPoint(stored, fallback){
   return {x:clamp(x,0,100), y:clamp(y,0,100)};
 }
 function renderOverviewMetrics(){
-  const layer=el('overview-metrics'); layer.innerHTML=''; if(state.ui.showSensors===false)return;
+  const layer=el('overview-metrics'); if(!layer) return; layer.innerHTML=''; if(state.ui.showSensors===false)return;
   ROOMS.filter(r=>r.id!=='overview').forEach(r0=>{
     const r=roomWithLayout(r0.id); const html=metricContent(r); if(!html)return;
     const fallback=defaultMetricPos(r); if(!fallback) return;
@@ -2513,7 +2513,7 @@ function renderOverviewMetrics(){
   })
 }
 function renderOverviewMarkers(){
-  const layer=el('overview-markers'); layer.innerHTML=''; if(state.ui.showMarkers===false)return;
+  const layer=el('overview-markers'); if(!layer) return; layer.innerHTML=''; if(state.ui.showMarkers===false)return;
   Object.entries(state.layout.overviewMarkers||{}).forEach(([id,p])=>{
     const d=devices().find(x=>x.entity_id===id); if(!d)return;
     layer.appendChild(markerEl(d,p,'overview'));
@@ -2533,9 +2533,12 @@ function renderRoom(){
     return;
   }
   const img=el('room-image');
+  if(!img) return;
   ensureVirtualRoomCardsLayer();
   const virtual = status==='virtual';
+  const src = roomImageSrc(r.id);
   const afterRoomImageReady = ()=>{
+    if(img.dataset.src && img.dataset.src !== src) return;
     fitStage('room');
     if(migrateCurrentRoomCoordinateSpace()) return;
     renderRoomMetrics();
@@ -2557,12 +2560,14 @@ function renderRoom(){
     }
     renderQuickActions();
   };
-  img.onload=afterRoomImageReady;
-  img.onerror=afterRoomImageReady;
-  const src = roomImageSrc(r.id);
-  if(img.src !== new URL(src, location.href).href) img.src = src;
-  else if(img.complete) afterRoomImageReady();
-  el('room-title').textContent=(virtual?'★ ':'')+r.label;
+  const absSrc = new URL(src, location.href).href;
+  if(img.dataset.src !== src || img.src !== absSrc){
+    img.dataset.src = src;
+    img.onload = afterRoomImageReady;
+    img.onerror = afterRoomImageReady;
+    img.src = src;
+  } else if(img.complete) afterRoomImageReady();
+  setText('room-title', (virtual?'★ ':'')+r.label);
   { const mline=el('room-climate-line'); if(mline){ mline.innerHTML=metricContent(r)||'<span class="muted">Нет назначенных стандартных датчиков комнаты</span>'; bindMetricItems(mline); } }
 }
 function clearRoomMarkersLayer(){ const layer=el('room-markers'); if(layer) layer.innerHTML=''; }
@@ -2724,14 +2729,14 @@ function renderVirtualRoomCards(roomId){
   qsa('[data-virtual-room-device]', layer).forEach(btn=>{ const d=devices().find(x=>x.entity_id===btn.dataset.virtualRoomDevice); if(d) attachVirtualRoomCardActions(btn,d,rid); });
 }
 function renderRoomMetrics(){
-  const layer=el('room-metrics'); layer.innerHTML=''; if(state.ui.showSensors===false)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
+  const layer=el('room-metrics'); if(!layer) return; layer.innerHTML=''; if(state.ui.showSensors===false)return; const r=room(state.selectedRoom); const html=metricContent(r); if(!html)return;
   const stored=safeMetricPoint(state.layout.roomMetrics?.[r.id], {x:16,y:16});
   const p=roomStoredToImagePos(r.id, stored);
   const b=document.createElement('div'); b.className='badge standard-sensors-badge '+(standardSensorOrientation(r.id,'room')==='vertical'?'standard-sensors-vertical':'standard-sensors-horizontal')+(isSelectedEdit('roomMetric', r.id, 'room')?' edit-selected':''); b.dataset.kind='roomMetric'; b.dataset.room=r.id; b.dataset.scope='room'; b.style.left=p.x+'%'; b.style.top=p.y+'%'; b.innerHTML=html;
   b.addEventListener('pointerdown', metricDown); layer.appendChild(b);
 }
 function renderRoomMarkers(){
-  const layer=el('room-markers'); layer.innerHTML=''; if(isVirtualRoom(state.selectedRoom)) return; if(state.ui.showMarkers===false)return;
+  const layer=el('room-markers'); if(!layer) return; layer.innerHTML=''; if(isVirtualRoom(state.selectedRoom)) return; if(state.ui.showMarkers===false)return;
   Object.entries(state.layout.roomMarkers?.[state.selectedRoom]||{}).forEach(([id,p])=>{
     const d=devices().find(x=>x.entity_id===id); if(!d)return;
     layer.appendChild(markerEl(d,p,'room'));
@@ -2891,7 +2896,7 @@ function deviceCardHtml(d, showAllInRoom=false){
   const title = canPlace ? `${d.entity_id}
 Редактирование через редактор расположения` : `${d.entity_id}
 Устройство из другой комнаты. Перенос между комнатами отключён.`;
-  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}">${automationBadgeHtml(d)}<div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div>${panelMode()==='viewer'?`<span class="state readonly" title="Режим просмотра: управление недоступно">${esc(stateText(d))}</span>`:`<button class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button>`}</div>`;
+  return `<div class="device-card ${visualClass(d)} ${sameRoom?'':'out-room'}" style="${visualStyle(d)}" data-entity="${esc(d.entity_id)}" title="${esc(title)}">${automationBadgeHtml(d)}<div class="dev-icon">${iconMarkup(d)}${markerValueHtml(d,'quick')}</div><div><div class="name">${esc(displayName(d))}</div><div class="meta">${esc(d.category||roomLabel||'')} · ${esc(d.domain)}${extra}</div></div>${panelMode()==='viewer'?`<span class="state readonly" title="Режим просмотра: управление недоступно">${esc(stateText(d))}</span>`:`<button type="button" class="state" data-toggle="${esc(d.entity_id)}">${esc(stateText(d))}</button>`}</div>`;
 }
 function bindDeviceCards(list){
   qsa('.device-card',list).forEach(card=>{
@@ -3085,7 +3090,7 @@ function renderEditDeviceGroups(list, filtered, q, current){
   if(!ordered.length){
     const msg = showAll ? 'Нет устройств по текущему фильтру' : 'Все устройства по текущему фильтру уже размещены. Включите “показывать все устройства”, чтобы увидеть размещённые.';
     list.innerHTML=`<p class="muted device-empty">${esc(msg)}</p>`;
-    el('device-count').textContent=q ? `0 групп · ${filtered.length} найдено` : `0 к размещению · ${totalMissing} без маркера`;
+    setText('device-count', q ? `0 групп · ${filtered.length} найдено` : `0 к размещению · ${totalMissing} без маркера`);
     return;
   }
 
@@ -3095,10 +3100,10 @@ function renderEditDeviceGroups(list, filtered, q, current){
     if(!state.openDeviceRoomGroup && selectedGroup) state.openDeviceRoomGroup = selectedRid;
   }
 
-  el('devices-title').textContent=state.selectedRoom==='overview' ? 'Добавить на общий план' : `Добавить в комнату: ${room(state.selectedRoom)?.label || state.selectedRoom}`;
-  el('device-count').textContent=q
+  setText('devices-title', state.selectedRoom==='overview' ? 'Добавить на общий план' : `Добавить в комнату: ${room(state.selectedRoom)?.label || state.selectedRoom}`);
+  setText('device-count', q
     ? `${ordered.length} групп · ${visible.length} показано · ${filtered.length} найдено`
-    : `${ordered.length} групп · ${visible.length} показано · ${totalMissing} без маркера`;
+    : `${ordered.length} групп · ${visible.length} показано · ${totalMissing} без маркера`);
 
   list.innerHTML = `<div class="device-groups edit-accordion">${ordered.map(g=>{
     const open = g.id===state.openDeviceRoomGroup;
@@ -3119,8 +3124,9 @@ function renderEditDeviceGroups(list, filtered, q, current){
 }
 function renderDevices(){
   const list=el('device-list');
-  bindDeviceListScrollGuard();
-  const q=(el('device-search').value||'').toLowerCase();
+  if(!list) return;
+  const search=el('device-search');
+  const q=(search?.value||'').toLowerCase();
   const editGrouped = !!state.edit;
   const showAllInRoom = state.selectedRoom!=='overview' && state.edit && !!state.ui.showAllDevicesInRoom;
   const current=editGrouped ? devices() : (state.selectedRoom==='overview'||showAllInRoom?devices():roomDevices(state.selectedRoom));
@@ -3129,15 +3135,16 @@ function renderDevices(){
     .filter(d=>(displayName(d)+' '+d.entity_id+' '+(d.category||'')+' '+(ROOM_MAP[effectiveDeviceRoomId(d)]?.label||'')+' '+(ROOM_MAP[normalizedRoomId(d.room)]?.label||'')).toLowerCase().includes(q));
   if(editGrouped){
     if(list){
-      el('devices-title').textContent='Выбор устройства';
-      el('device-count').textContent='открывается отдельным окном';
+      setText('devices-title','Выбор устройства');
+      setText('device-count','открывается отдельным окном');
       list.innerHTML='<button type="button" class="open-picker-inline" onclick="openDevicePicker()">Выбрать устройство</button><p class="muted device-empty">В режиме редактирования список устройств открывается отдельным лёгким окном, чтобы карта и скролл не мерцали.</p>';
     }
     return;
   }
   let countSuffix = `${filtered.length} из ${current.length}`;
-  el('devices-title').textContent=state.selectedRoom==='overview'?'Все устройства':(showAllInRoom?`Все устройства · ${room(state.selectedRoom).label}`:`Устройства: ${room(state.selectedRoom).label}`);
-  el('device-count').textContent=countSuffix;
+  const currentRoomLabel = room(state.selectedRoom)?.label || state.selectedRoom || '';
+  setText('devices-title', state.selectedRoom==='overview'?'Все устройства':(showAllInRoom?`Все устройства · ${currentRoomLabel}`:`Устройства: ${currentRoomLabel}`));
+  setText('device-count', countSuffix);
   const scrollTop=list.scrollTop;
   list.innerHTML=filtered.map(d=>deviceCardHtml(d, showAllInRoom)).join('');
   bindDeviceCards(list);
@@ -3189,30 +3196,33 @@ function domainControls(d){
     rows.push('<p class="muted viewer-mode-note">Режим просмотра: управление устройством и изменение параметров недоступны.</p>');
     return rows.join('');
   }
-  if(canPrimaryAction(d)) rows.push(`<div class="device-modal-actions"><button data-action="toggle">${primaryActionLabel(d,s)}</button></div>`);
+  if(canPrimaryAction(d)) rows.push(`<div class="device-modal-actions"><button type="button" data-action="toggle">${primaryActionLabel(d,s)}</button></div>`);
   if(d.domain==='light'){
     if(isDimmableLight(d)) rows.push(`<label class="slider-row">Яркость <input type="range" min="1" max="100" value="${currentBrightnessPct(d)}" data-action="brightness"><span id="brightness-value">${currentBrightnessPct(d)}%</span></label>`);
   } else if(d.domain==='climate'){
     const modes=Array.isArray(a.hvac_modes)?a.hvac_modes:['off','heat','cool','fan_only'];
-    rows.push(`<div class="device-modal-actions mode-grid">${modes.map(m=>`<button class="${String(s?.state)===m?'selected':''}" data-action="hvac" data-mode="${esc(m)}">${esc(modeLabel(m))}</button>`).join('')}</div>`);
+    rows.push(`<div class="device-modal-actions mode-grid">${modes.map(m=>`<button type="button" class="${String(s?.state)===m?'selected':''}" data-action="hvac" data-mode="${esc(m)}">${esc(modeLabel(m))}</button>`).join('')}</div>`);
     if(a.temperature!==undefined || a.current_temperature!==undefined){
-      const min=Number(a.min_temp||16), max=Number(a.max_temp||30), val=Number(a.temperature||a.current_temperature||22);
+      const minRaw=Number(a.min_temp), maxRaw=Number(a.max_temp);
+      const min=Number.isFinite(minRaw)?minRaw:16, max=Number.isFinite(maxRaw)?maxRaw:30;
+      const targetRaw=Number(a.temperature), currentRaw=Number(a.current_temperature);
+      const val=Number.isFinite(targetRaw)?targetRaw:(Number.isFinite(currentRaw)?currentRaw:22);
       rows.push(`<label class="slider-row">Целевая температура <input type="range" min="${min}" max="${max}" step="0.5" value="${val}" data-action="target-temp"><span id="target-temp-value">${String(val).replace('.',',')}°</span></label>`);
     }
   } else if(d.domain==='cover'){
-    rows.push(`<div class="device-modal-actions mode-grid"><button data-action="cover" data-service="open_cover">Открыть</button><button data-action="cover" data-service="stop_cover">Стоп</button><button data-action="cover" data-service="close_cover">Закрыть</button></div>`);
+    rows.push(`<div class="device-modal-actions mode-grid"><button type="button" data-action="cover" data-service="open_cover">Открыть</button><button type="button" data-action="cover" data-service="stop_cover">Стоп</button><button type="button" data-action="cover" data-service="close_cover">Закрыть</button></div>`);
     if(a.current_position!==undefined) rows.push(`<label class="slider-row">Позиция <input type="range" min="0" max="100" value="${Number(a.current_position)||0}" data-action="cover-position"><span id="cover-position-value">${Number(a.current_position)||0}%</span></label>`);
   } else if(d.domain==='media_player'){
-    rows.push(`<div class="device-modal-actions mode-grid"><button data-action="media" data-service="media_play_pause">Play/Pause</button><button data-action="media" data-service="volume_down">Тише</button><button data-action="media" data-service="volume_up">Громче</button></div>`);
+    rows.push(`<div class="device-modal-actions mode-grid"><button type="button" data-action="media" data-service="media_play_pause">Play/Pause</button><button type="button" data-action="media" data-service="volume_down">Тише</button><button type="button" data-action="media" data-service="volume_up">Громче</button></div>`);
   } else if(d.domain==='valve'){
-    rows.push(`<div class="device-modal-actions mode-grid"><button data-action="valve" data-service="open_valve">Открыть</button><button data-action="valve" data-service="close_valve">Закрыть</button></div>`);
+    rows.push(`<div class="device-modal-actions mode-grid"><button type="button" data-action="valve" data-service="open_valve">Открыть</button><button type="button" data-action="valve" data-service="close_valve">Закрыть</button></div>`);
   } else if(d.domain==='button'){
     rows.push(`<p class="muted">Кнопка выполняет одноразовое действие через Home Assistant service <b>button.press</b>.</p>`);
   } else if(d.domain==='script'){
     rows.push(`<p class="muted">Скрипт запускается через <b>script.turn_on</b>.</p>`);
   } else if(d.domain==='automation'){
     rows.push(`<p class="muted">Карточка управляет состоянием самой автоматизации: включить или отключить правило Home Assistant.</p>`);
-    rows.push(`<div class="device-modal-actions mode-grid"><button data-action="automation" data-service="turn_on">Включить автоматизацию</button><button data-action="automation" data-service="turn_off">Выключить автоматизацию</button></div>`);
+    rows.push(`<div class="device-modal-actions mode-grid"><button type="button" data-action="automation" data-service="turn_on">Включить автоматизацию</button><button type="button" data-action="automation" data-service="turn_off">Выключить автоматизацию</button></div>`);
   } else if(d.domain==='input_number'){
     const min=Number(a.min ?? 0), max=Number(a.max ?? 100), step=Number(a.step ?? 1), val=Number(s?.state ?? min);
     const unit=esc(a.unit_of_measurement||'');
@@ -3231,7 +3241,7 @@ function modeLabel(m){return ({off:'Выкл',heat:'Обогрев',cool:'Охл
 function openDeviceModal(d){
   const s=getState(d.entity_id); const a=s?.attributes||{};
   const modal=el('device-modal'); const body=el('device-modal-body');
-  el('device-modal-title').textContent=displayName(d);
+  setText('device-modal-title',displayName(d));
   body.innerHTML=`
     <div class="device-modal-top"><div class="device-modal-icon ${visualClass(d)}" style="${visualStyle(d)}">${iconMarkup(d)}</div><div><div class="device-modal-name">${esc(displayName(d))}</div><div class="muted">${esc(d.entity_id)}</div></div></div>
     ${modalRow('Состояние', stateText(d))}
@@ -3242,7 +3252,7 @@ function openDeviceModal(d){
     <div class="device-controls">${domainControls(d)}${dangerousSectionHtml(d)}${attentionSectionHtml(d)}</div>`;
   modal.classList.remove('hidden'); bindDeviceModalActions(d);
 }
-function closeDeviceModal(){el('device-modal').classList.add('hidden')}
+function closeDeviceModal(){ el('device-modal')?.classList.add('hidden'); syncModalOpenClass(); }
 async function requestPin(message='Введите PIN-код'){
   const pin=window.prompt(message+'\n4 цифры.','');
   if(pin===null) return null;
@@ -4285,8 +4295,8 @@ function renderAttentionModal(){
     row.querySelector('[data-attention-action="remove-rule"]')?.addEventListener('click', async e=>{ e.preventDefault(); e.stopPropagation(); if(confirm('Больше не следить за этим устройством?')) await removeAttentionRule(eid, 'Правило Внимание удалено'); });
   });
 }
-function openAttentionModal(){ renderAttentionModal(); el('attention-modal')?.classList.remove('hidden'); document.body.classList.add('modal-open'); }
-function closeAttentionModal(){ el('attention-modal')?.classList.add('hidden'); document.body.classList.remove('modal-open'); }
+function openAttentionModal(){ renderAttentionModal(); const modal=el('attention-modal'); if(!modal) return; modal.classList.remove('hidden'); modal.classList.add('modal-top'); syncModalOpenClass(); }
+function closeAttentionModal(){ el('attention-modal')?.classList.add('hidden'); syncModalOpenClass(); }
 function bindHold(node, fn, ms=3000){
   let t=null, done=false;
   const clear=()=>{ if(t){ clearTimeout(t); t=null; } node.classList.remove('holding'); };
@@ -4358,7 +4368,7 @@ function selectRoom(id){
   saveUiPrefs();
   render();
 }
-function setConnection(ok,text,mode){const cls=mode==='live'?'connected':mode==='polling'?'polling':ok?'connected':'disconnected';el('connection-dot').className='dot '+cls;el('connection-text').textContent=text}
+function setConnection(ok,text,mode){const cls=mode==='live'?'connected':mode==='polling'?'polling':ok?'connected':'disconnected';const dot=el('connection-dot'); if(dot) dot.className='dot '+cls; setText('connection-text',text)}
 /* ── Mobile auth token (set by Capacitor app via URL hash) ─────────── */
 const _mobileAuth = (()=>{
   try{
@@ -4460,9 +4470,9 @@ function _mobileShowOffline(){
     ov.innerHTML = '<div style="font-size:48px">📡</div>'
       + '<div style="font-size:20px;font-weight:700;color:#e8edf4">Нет связи с сервером</div>'
       + '<div id="_mob-status" style="font-size:14px;color:#6f7a8a;text-align:center"></div>'
-      + '<button id="_mob-retry" style="background:#f0b34b;color:#1a1000;border:none;border-radius:12px;padding:14px 28px;font-size:16px;font-weight:700;min-width:200px;cursor:pointer">Попробовать снова</button>';
+      + '<button type="button" id="_mob-retry" style="background:#f0b34b;color:#1a1000;border:none;border-radius:12px;padding:14px 28px;font-size:16px;font-weight:700;min-width:200px;cursor:pointer">Попробовать снова</button>';
     document.body.appendChild(ov);
-    document.getElementById('_mob-retry').onclick = _mobileReconnect;
+    const retryBtn=document.getElementById('_mob-retry'); if(retryBtn) retryBtn.onclick = _mobileReconnect;
   }
   ov.style.display = 'flex';
   _mobileAutoRetry();
@@ -4578,9 +4588,10 @@ function renderLevelSwitcher(){
 }
 async function loadRuntimeScripts(){
   const token=Date.now();
+  const headers=_mobileAuth.active?{'Authorization':`Bearer ${_mobileAuth.token}`,'X-Device-ID':_mobileAuth.deviceId}:{};
   const [devicesJs, lovelaceJs] = await Promise.all([
-    fetch(`devices.js?t=${token}`, {cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('devices.js '+r.status); return r.text(); }),
-    fetch(`lovelace-source.js?t=${token}`, {cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('lovelace-source.js '+r.status); return r.text(); })
+    fetch(`devices.js?t=${token}`, {cache:'no-store',headers}).then(r=>{ if(!r.ok) throw new Error('devices.js '+r.status); return r.text(); }),
+    fetch(`lovelace-source.js?t=${token}`, {cache:'no-store',headers}).then(r=>{ if(!r.ok) throw new Error('lovelace-source.js '+r.status); return r.text(); })
   ]);
   Function(devicesJs)();
   Function(lovelaceJs)();
@@ -6052,7 +6063,7 @@ function renderBackupManager(){
   const data=state.backups?.backups || state.diagnostics?.backups || {items:[]};
   const items=Array.isArray(data.items)?data.items:[];
   box.innerHTML=`<div class="backup-summary"><strong>Backup-файлов:</strong> ${data.count||items.length} · <strong>Размер:</strong> ${formatBytes(data.totalSize||0)}<br><span class="muted">Старый: ${data.oldest?esc(new Date(data.oldest).toLocaleString()):'—'} · Новый: ${data.newest?esc(new Date(data.newest).toLocaleString()):'—'} · Размеры: ${esc(data.sizeMode||'manifest')}</span></div>`+
-    `<div class="backup-actions"><button type="button" id="btn-create-manual-backup">Создать backup сейчас</button><button type="button" id="btn-delete-old-backups">Очистить старые backup-и</button><button type="button" id="btn-delete-all-backups" class="danger-button">Удалить все backup-и</button></div>`+
+    `<div class="backup-actions"><button type="button" id="btn-create-manual-backup">Создать backup сейчас</button><button type="button" id="btn-upload-backup">Загрузить backup</button><input type="file" id="backup-upload-file" accept=".tgz,.tar.gz,application/gzip,application/octet-stream" hidden><button type="button" id="btn-delete-old-backups">Очистить старые backup-и</button><button type="button" id="btn-delete-all-backups" class="danger-button">Удалить все backup-и</button></div>`+
     `<div class="backup-list">${items.slice(0,50).map(b=>{
       const isFull = b.type==='directory';
       const isLayoutFile = b.type==='file' && /^layout-.*\.json$/.test(String(b.name||''));
@@ -6067,6 +6078,24 @@ function renderBackupManager(){
     catch(e){ showToast('Ошибка восстановления расположения: '+e.message); }
   });
   qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=()=>deleteBackup(btn.dataset.deleteBackup));
+  const upload=el('backup-upload-file');
+  const uploadBtn=el('btn-upload-backup');
+  if(uploadBtn && upload) uploadBtn.onclick=()=>upload.click();
+  if(upload) upload.onchange=e=>{ const file=e.target.files?.[0]; e.target.value=''; if(file) uploadBackupFile(file); };
+}
+async function uploadBackupFile(file){
+  if(!file) return;
+  const maxBytes = 350 * 1024 * 1024;
+  if(file.size > maxBytes){ showToast('Backup слишком большой: максимум 350 MB'); return; }
+  if(!confirm('Загрузить backup-файл на сервер? После проверки он появится в списке backup-ов. Восстановление выполняется отдельной кнопкой.')) return;
+  try{
+    const res=await fetch('api/backups/upload', {method:'POST', headers:{'Content-Type':'application/octet-stream','X-Backup-Filename':encodeURIComponent(file.name||'backup.tgz')}, body:file});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || ('HTTP '+res.status));
+    state.backups={ok:true,backups:data.backups};
+    renderBackupManager();
+    showToast('Backup загружен: '+(data.backup?.name||file.name));
+  }catch(e){ showToast('Ошибка загрузки backup: '+e.message); }
 }
 async function createManualBackup(){
   try{ state.backups=await apiJson('api/backups/create',{method:'POST',body:JSON.stringify({reason:'manual'})}); renderBackupManager(); showToast('Ручной backup создан'); }
@@ -6139,7 +6168,7 @@ function renderZoneCreateSelect(){
   }).join('');
   if(current && rooms.some(r=>normalizedRoomId(r.id)===current)) sel.value=current;
 }
-function closeSettingsModal(){ const m=el('settings-modal'); if(m) m.classList.add('hidden'); }
+function closeSettingsModal(){ closeModal('settings-modal'); }
 function startEditModeForLayoutTool(){
   if(!canEditLayout()){ showToast('Доступно только в admin mode'); return false; }
   if(!state.edit) enterEditMode();
@@ -6175,7 +6204,7 @@ function renderLayoutMaintenanceTools(){
 async function saveConfig(){
   const status=el('settings-status');
   try{
-    status.textContent='Сохраняю настройки add-on...';
+    if(status) status.textContent='Сохраняю настройки add-on...';
     saveUiPrefs();
     const sec = buildSecurityConfigPayload();
     if(sec.security) delete sec.security.panelMode; // per-client
@@ -6183,12 +6212,12 @@ async function saveConfig(){
     const res=await apiJson('api/config',{method:'POST',body:JSON.stringify(payload)});
     state.config=res.config||state.config;
     saveClientPrefs().catch(()=>{});
-    status.textContent='Настройки сохранены. Проверяю подключение к Home Assistant...';
+    if(status) status.textContent='Настройки сохранены. Проверяю подключение к Home Assistant...';
     await testConnection({keepModal:true});
-    status.textContent='Настройки сохранены.';
+    if(status) status.textContent='Настройки сохранены.';
     closeModal('settings-modal');
   }catch(e){
-    status.textContent='Ошибка сохранения настроек: '+e.message;
+    if(status) status.textContent='Ошибка сохранения настроек: '+e.message;
     setConnection(false,'Ошибка настроек');
   }
 }
@@ -6221,19 +6250,19 @@ async function clearConfig(){
   const message = 'Будут удалены все пользовательские настройки, комнаты, устройства, зоны, маркеры, картинки, источники Lovelace/панелей, данные импорта, Attention, dangerous-правила и пользовательский PIN. Перед сбросом будет создан backup текущего runtime-состояния. Продолжить?';
   if(!confirm(message)) return;
   const word=window.prompt('Для полного сброса введите RESET');
-  if(word !== 'RESET'){ status.textContent='Сброс отменён.'; return; }
+  if(word !== 'RESET'){ if(status) status.textContent='Сброс отменён.'; return; }
   try{
-    status.textContent='Выполняю полный сброс проекта...';
+    if(status) status.textContent='Выполняю полный сброс проекта...';
     const res=await apiJson('api/factory-reset',{method:'POST',body:JSON.stringify({confirm:'RESET'})});
     applyFactoryResetClientState(res);
-    status.textContent='Полный сброс выполнен. Backup: '+(res.backup||'создан/не требовался')+'. Перезагрузка страницы...';
+    if(status) status.textContent='Полный сброс выполнен. Backup: '+(res.backup||'создан/не требовался')+'. Перезагрузка страницы...';
     showToast('Проект полностью сброшен к настройкам по умолчанию');
     setTimeout(()=>{ location.href = location.pathname + '?reset=' + Date.now(); }, 900);
   }catch(e){
-    status.textContent='Ошибка полного сброса: '+e.message;
+    if(status) status.textContent='Ошибка полного сброса: '+e.message;
   }
 }
-async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();el('settings-status').textContent=options.keepModal?'Add-on подключен к HA.':'Подключено.'}catch(e){setConnection(false,'Ошибка подключения');el('settings-status').textContent=e.message}}
+async function testConnection(options={}){try{await apiJson('api/ha/test');setConnection(true,'Подключено');if(!options.keepModal)closeModal('settings-modal');await loadStates();startPolling();setText('settings-status', options.keepModal?'Add-on подключен к HA.':'Подключено.')}catch(e){setConnection(false,'Ошибка подключения');setText('settings-status', e.message)}}
 function settingsInputActive(){ const a=document.activeElement; return !!(a && a.closest && a.closest('#settings-modal') && a.matches('input,select,textarea,button')); }
 function markDeviceListUserScroll(){ state.deviceListUserScrollUntil = Date.now() + 30000; }
 function bindDeviceListScrollGuard(){
@@ -6481,7 +6510,7 @@ function applySourceConfig(){
   window.DEVICES=list;
 }
 async function loadSourceConfig(){try{state.sourceConfig=await apiJson('api/source-config')}catch(e){state.sourceConfig=defaultSourceConfig()} applySourceConfig()}
-async function saveSourceConfig(){await apiJson('api/source-config',{method:'POST',body:JSON.stringify(state.sourceConfig||defaultSourceConfig())});applySourceConfig();renderSourceSettings();render();el('settings-status').textContent=`Источники сохранены. Активно: ${devices().length} из ${allDevices().length}`}
+async function saveSourceConfig(){await apiJson('api/source-config',{method:'POST',body:JSON.stringify(state.sourceConfig||defaultSourceConfig())});applySourceConfig();renderSourceSettings();render();setText('settings-status', `Источники сохранены. Активно: ${devices().length} из ${allDevices().length}`)}
 function setSourceKeyEnabled(k,v){if(!state.sourceConfig)state.sourceConfig=defaultSourceConfig(); if(!state.sourceConfig.selectedCards)state.sourceConfig.selectedCards={}; state.sourceConfig.selectedCards[k]=!!v}
 function setAllSources(v){(window.LOVELACE_SOURCE?.views||[]).forEach(view=>(view.cards||[]).forEach(c=>setSourceKeyEnabled(c.sourceKey,v)));applySourceConfig();renderSourceSettings();render()}
 function setSafeSources(){setAllSources(false);const excluded=new Set(['Хрень всякая','Системные']);(window.LOVELACE_SOURCE?.views||[]).forEach(v=>(v.cards||[]).forEach(c=>{const ok=(v.title==='Физические устройства'||v.title==='Медиа')&&!excluded.has(c.title);setSourceKeyEnabled(c.sourceKey,ok)}));applySourceConfig();renderSourceSettings();render()}
@@ -6491,16 +6520,16 @@ function renderSourceSettings(){const box=el('source-settings'); if(!box||!windo
 async function readLovelaceRaw(){
   const status=el('settings-status');
   try{
-    status.textContent='Читаю RAW панели из Home Assistant и пересобираю устройства...';
+    if(status) status.textContent='Читаю RAW панели из Home Assistant и пересобираю устройства...';
     const dashboardPathText=(state.sourceConfig?.dashboardPathText || (state.sourceConfig?.dashboardPaths||[]).join('\n') || '').trim();
     const data=await apiJson('api/ha/lovelace/import',{method:'POST',body:JSON.stringify({dashboardPathText})});
     const ok=(data.results||[]).filter(x=>x.ok).length;
     const bad=(data.results||[]).filter(x=>!x.ok).length;
     const imp=data.import||{};
-    status.textContent=`RAW прочитан: успешно ${ok}, ошибок ${bad}. Устройств: ${imp.devices||0}, карточек: ${imp.cards||0}, templates: ${imp.templatesUsed||0}. Страница перезагрузится.`;
+    if(status) status.textContent=`RAW прочитан: успешно ${ok}, ошибок ${bad}. Устройств: ${imp.devices||0}, карточек: ${imp.cards||0}, templates: ${imp.templatesUsed||0}. Страница перезагрузится.`;
     setTimeout(()=>location.reload(), 1400);
   }catch(e){
-    status.textContent='Ошибка чтения/импорта RAW панели: '+e.message;
+    if(status) status.textContent='Ошибка чтения/импорта RAW панели: '+e.message;
   }
 }
 
@@ -6627,7 +6656,7 @@ function renderInfoModal(){
     const btn=el('btn-normalize-layout');
     if(btn) btn.onclick=async()=>{ if(!confirm('Создать backup и нормализовать расположение датчиков и маркеров в проценты 0–100?')) return; const r=await apiJson('api/layout/normalize',{method:'POST'}); state.layout=r.diagnostics?.normalizedPreview || state.layout; await loadDiagnostics(); render(); showToast('Расположение датчиков и маркеров нормализовано'); };
   } else if(state.infoTab==='backups'){
-    const backups=d.backups||{items:[]}; box.innerHTML=`<h3>Backup / архивы</h3><p class="muted">Показываются все backup-и в /data/backups. Создание и удаление доступно в Настройки → Backup / архивы.</p><div class="backup-summary">Файлов: ${backups.count||0} · Размер: ${formatBytes(backups.totalSize||0)}</div><div class="backup-list">${(backups.items||[]).slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div>${/^layout-.*\.json$/.test(b.name)?`<button data-restore-backup="${esc(b.name)}">Восстановить расположение</button>`:''}<button data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
+    const backups=d.backups||{items:[]}; box.innerHTML=`<h3>Backup / архивы</h3><p class="muted">Показываются все backup-и в /data/backups. Создание и удаление доступно в Настройки → Backup / архивы.</p><div class="backup-summary">Файлов: ${backups.count||0} · Размер: ${formatBytes(backups.totalSize||0)}</div><div class="backup-list">${(backups.items||[]).slice(0,50).map(b=>`<div class="backup-row"><div><b>${esc(b.name)}</b><br><span>${esc(b.type||'file')} · ${esc(new Date(b.mtime).toLocaleString())} · ${formatBytes(b.size)}</span></div><div>${/^layout-.*\.json$/.test(b.name)?`<button type="button" data-restore-backup="${esc(b.name)}">Восстановить расположение</button>`:''}<button type="button" data-delete-backup="${esc(b.name)}">Удалить</button></div></div>`).join('')||'Backup пока нет'}</div>`;
     qsa('[data-restore-backup]',box).forEach(btn=>btn.onclick=async()=>{ if(!confirm('Восстановить '+btn.dataset.restoreBackup+'? Текущее расположение датчиков и маркеров будет сохранено в backup.')) return; const r=await apiJson('api/backups/restore',{method:'POST',body:JSON.stringify({name:btn.dataset.restoreBackup})}); state.layout={...state.layout,...r.layout}; await loadDiagnostics(); render(); showToast('Расположение датчиков и маркеров восстановлено'); });
     qsa('[data-delete-backup]',box).forEach(btn=>btn.onclick=async()=>{ await apiJson('api/backups/delete',{method:'POST',body:JSON.stringify({name:btn.dataset.deleteBackup})}); await loadDiagnostics(); });
   } else if(state.infoTab==='allowlist'){
@@ -7036,8 +7065,8 @@ function bindGlobal(){
   loadUiPrefs();
     document.addEventListener('contextmenu', e=>{ if(e.target.closest('.plan-stage,.room-image-wrap,.device-marker,.badge,.room-zone')) e.preventDefault(); });
   ['pointerdown','touchstart','keydown'].forEach(evt=>document.addEventListener(evt, registerKioskActivity, {passive:true}));
-  el('btn-settings').onclick=()=>openModal('settings-modal');
-  el('btn-close-settings').onclick=()=>closeModal('settings-modal');
+  clickEl('btn-settings', ()=>openModal('settings-modal'));
+  clickEl('btn-close-settings', ()=>closeModal('settings-modal'));
 
 
   const wcRefresh=el('btn-refresh-web-clients'); if(wcRefresh) wcRefresh.onclick=()=>loadWebClientsManager();
@@ -7067,10 +7096,10 @@ function bindGlobal(){
   const pswModal=el('project-setup-wizard-modal'); if(pswModal) pswModal.addEventListener('click',e=>{ if(e.target.id==='project-setup-wizard-modal') closeProjectSetupWizard(); });
   const bwc2=el('btn-level-setup-close'); if(bwc2) bwc2.onclick=closeLevelWizard;
   const bwr=el('btn-level-setup-refresh'); if(bwr) bwr.onclick=async()=>{ await loadLevelsInfo(); renderLevelSetupWizard(state.levelSetupWizardId); };
-  el('btn-close-device').onclick=closeDeviceModal;
-  el('device-modal').addEventListener('click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
-  el('btn-close-info').onclick=()=>closeModal('info-modal');
-  el('info-modal').addEventListener('click',e=>{if(e.target.id==='info-modal')closeModal('info-modal')});
+  clickEl('btn-close-device', closeDeviceModal);
+  onEl('device-modal','click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
+  clickEl('btn-close-info', ()=>closeModal('info-modal'));
+  onEl('info-modal','click',e=>{if(e.target.id==='info-modal')closeModal('info-modal')});
   async function loadFaqContent(){
     const box=el('faq-content');
     if(!box || box.dataset.loaded==='1') return;
@@ -7085,15 +7114,15 @@ function bindGlobal(){
       box.innerHTML='<h1>FAQ / Помощь</h1><p>Не удалось загрузить FAQ. Откройте README или FAQ.md из дистрибутива.</p>';
     }
   }
-  el('btn-faq-settings').onclick=async()=>{ await loadFaqContent(); openModal('faq-modal'); setTimeout(()=>{ const b=el('faq-content'); if(b) b.scrollTop=0; }, 50); };
+  clickEl('btn-faq-settings', async()=>{ await loadFaqContent(); openModal('faq-modal'); setTimeout(()=>{ const b=el('faq-content'); if(b) b.scrollTop=0; }, 50); });
   bindMobileSettings();
-  el('btn-close-faq').onclick=()=>closeModal('faq-modal');
-  el('faq-modal').addEventListener('click',e=>{if(e.target.id==='faq-modal')closeModal('faq-modal')});
-  el('btn-refresh-info').onclick=loadDiagnostics;
+  clickEl('btn-close-faq', ()=>closeModal('faq-modal'));
+  onEl('faq-modal','click',e=>{if(e.target.id==='faq-modal')closeModal('faq-modal')});
+  clickEl('btn-refresh-info', loadDiagnostics);
   const overviewFile=el('overview-image-file');
-  el('btn-upload-overview-image').onclick=()=>overviewFile?.click();
+  clickEl('btn-upload-overview-image', ()=>overviewFile?.click());
   if(overviewFile) overviewFile.onchange=e=>{ const file=e.target.files?.[0]; uploadOverviewImage(file); e.target.value=''; };
-  el('btn-reset-overview-image').onclick=resetOverviewImage;
+  clickEl('btn-reset-overview-image', resetOverviewImage);
   const roomFile=el('room-image-file');
   let pendingRoomImageId='';
   const roomImagesList=el('room-images-list');
@@ -7182,8 +7211,8 @@ function bindGlobal(){
     if(clearSensor){ e.preventDefault(); e.stopPropagation(); clearStandardSensorInput(clearSensor.dataset.roomId || roomId, clearSensor.dataset.clearStandardSensor); return; }
   });
   qsa('[data-info-tab]').forEach(b=>b.onclick=()=>{state.infoTab=b.dataset.infoTab; renderInfoModal();});
-  el('btn-save-config').onclick=()=>saveConfig(); const clearConfigBtn=el('btn-clear-config'); if(clearConfigBtn) clearConfigBtn.onclick=()=>clearConfig(); const cancelSettingsBtn=el('btn-cancel-settings'); if(cancelSettingsBtn) cancelSettingsBtn.onclick=()=>cancelSettingsChanges(); qsa('[data-settings-panel]').forEach(b=>b.onclick=()=>openSettingsPanel(b.dataset.settingsPanel)); el('btn-info-settings').onclick=()=>openInfoModal('summary'); const closeStdSensors=el('btn-close-standard-sensors-modal'); if(closeStdSensors) closeStdSensors.onclick=closeStandardSensorsModal; el('standard-sensors-modal')?.addEventListener('click',e=>{ if(e.target?.id==='standard-sensors-modal') closeStandardSensorsModal(); }); el('btn-refresh').onclick=loadStates; el('btn-overview').onclick=()=>selectRoom('overview');
-  el('toggle-zones').onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; el('toggle-devices').onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; el('toggle-sensors').onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
+  clickEl('btn-save-config', ()=>saveConfig()); const clearConfigBtn=el('btn-clear-config'); if(clearConfigBtn) clearConfigBtn.onclick=()=>clearConfig(); const cancelSettingsBtn=el('btn-cancel-settings'); if(cancelSettingsBtn) cancelSettingsBtn.onclick=()=>cancelSettingsChanges(); qsa('[data-settings-panel]').forEach(b=>b.onclick=()=>openSettingsPanel(b.dataset.settingsPanel)); clickEl('btn-info-settings', ()=>openInfoModal('summary')); const closeStdSensors=el('btn-close-standard-sensors-modal'); if(closeStdSensors) closeStdSensors.onclick=closeStandardSensorsModal; el('standard-sensors-modal')?.addEventListener('click',e=>{ if(e.target?.id==='standard-sensors-modal') closeStandardSensorsModal(); }); clickEl('btn-refresh', loadStates); clickEl('btn-overview', ()=>selectRoom('overview'));
+  const tz=el('toggle-zones'); if(tz) tz.onchange=e=>{state.ui.showZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();}; const td=el('toggle-devices'); if(td) td.onchange=e=>{state.ui.showMarkers=e.target.checked; saveUiPrefs(); render();}; const ts=el('toggle-sensors'); if(ts) ts.onchange=e=>{state.ui.showSensors=e.target.checked; saveUiPrefs(); render();};
   const editBtn=el('btn-edit');
   const startEditHold=()=>{ if(state.edit) return; if(!canEditLayout()){ showToast('Редактирование доступно только в admin mode'); updateEditButtons(); return; } editBtn.classList.add('holding'); showToast('Удерживайте 2 секунды для входа в редактор'); state.editHoldTimer=setTimeout(()=>{ editBtn.classList.remove('holding'); state.editHoldTimer=null; enterEditMode(); },2000); };
   const cancelEditHold=()=>{ if(state.editHoldTimer){ clearTimeout(state.editHoldTimer); state.editHoldTimer=null; editBtn.classList.remove('holding'); } };
@@ -7191,8 +7220,8 @@ function bindGlobal(){
   editBtn.addEventListener('pointerup',cancelEditHold); editBtn.addEventListener('pointercancel',cancelEditHold); editBtn.addEventListener('pointerleave',cancelEditHold);
   editBtn.onclick=e=>{ e.preventDefault(); };
   editBtn.title='Удерживайте 2 секунды, чтобы войти в режим редактирования';
-  el('btn-save-edit').onclick=()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message));
-  el('btn-cancel-edit').onclick=cancelEditChanges;
+  clickEl('btn-save-edit', ()=>saveEditChanges().catch(e=>showToast('Ошибка сохранения: '+e.message)));
+  clickEl('btn-cancel-edit', cancelEditChanges);
   ensureEditViewportControlsRoot();
   const delSel=el('btn-delete-selected'); if(delSel) delSel.onclick=deleteSelectedEditObject;
   const resetSel=el('btn-reset-selected'); if(resetSel) resetSel.onclick=resetSelectedEditObject;
@@ -7202,19 +7231,19 @@ function bindGlobal(){
   const hideEditSheet=el('btn-hide-edit-sheet'); if(hideEditSheet) hideEditSheet.onclick=()=>{ state.editActionSheetHidden=true; renderEditSheet(); showToast('Панель скрыта. Выберите объект на карте, затем нажмите “Действие”.'); };
   const showEditSheet=el('btn-edit-actions-float'); if(showEditSheet) showEditSheet.onclick=()=>{ state.editActionSheetHidden=false; renderEditSheet(); };
   qsa('[data-edit-pan]').forEach(bindEditMapNudgeButton);
-  el('device-search').oninput=renderDevices;
-  el('btn-save-source-config').onclick=saveSourceConfig; el('btn-read-lovelace-raw').onclick=readLovelaceRaw; el('btn-select-all-sources').onclick=()=>setAllSources(true); el('btn-select-safe-sources').onclick=setSafeSources;
-  const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')};
-  el('overview-image').onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room');refitPlacementEditorSoon()}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room');refitPlacementEditorSoon()},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); 
+  const devSearch=el('device-search'); if(devSearch) devSearch.oninput=renderDevices;
+  clickEl('btn-save-source-config', saveSourceConfig); clickEl('btn-read-lovelace-raw', readLovelaceRaw); clickEl('btn-select-all-sources', ()=>setAllSources(true)); clickEl('btn-select-safe-sources', setSafeSources);
+  const font=el('card-font-size'), saved=localStorage.getItem('card_font_size')||'13'; document.documentElement.style.setProperty('--card-font-size',saved+'px'); if(font){ font.value=saved; font.oninput=()=>{localStorage.setItem('card_font_size',font.value);document.documentElement.style.setProperty('--card-font-size',font.value+'px')}; }
+  const ovImg=el('overview-image'); if(ovImg) ovImg.onload=()=>fitStage('overview'); bindStageGestures(); window.addEventListener('resize',()=>{syncAutoMobileMode();fitStage('overview');fitStage('room');refitPlacementEditorSoon()}); window.addEventListener('orientationchange',()=>setTimeout(()=>{syncAutoMobileMode();fitStage('overview');fitStage('room');refitPlacementEditorSoon()},180)); window.addEventListener('beforeunload',e=>{ if(state.edit && state.layoutDirty){ e.preventDefault(); e.returnValue=''; } }); 
 
-  el('btn-hide-sidebar').onclick=()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar);
-  el('btn-show-sidebar').onclick=()=>setPanelHidden('hideSidebar', false);
-  el('btn-toggle-devices-panel').onclick=toggleDeviceListOrPicker;
-  el('btn-show-device-panel').onclick=showDeviceListOrPicker;
-  el('btn-toggle-toolbar').onclick=()=>setPanelHidden('hideToolbar', !state.ui.hideToolbar);
-  el('btn-show-toolbar').onclick=()=>setPanelHidden('hideToolbar', false);
-  el('btn-mobile-sidebar').onclick=()=>{ const open=state.ui.hideSidebar; state.ui.hideSidebar=!open; state.ui.hideDevicePanel=true; saveUiPrefs(); };
-  el('btn-mobile-devices').onclick=()=>{ if(state.edit){ openDevicePicker(); return; } const open=state.ui.hideDevicePanel; state.ui.hideDevicePanel=!open; state.ui.hideSidebar=true; saveUiPrefs(); };
+  clickEl('btn-hide-sidebar', ()=>setPanelHidden('hideSidebar', !state.ui.hideSidebar));
+  clickEl('btn-show-sidebar', ()=>setPanelHidden('hideSidebar', false));
+  clickEl('btn-toggle-devices-panel', toggleDeviceListOrPicker);
+  clickEl('btn-show-device-panel', showDeviceListOrPicker);
+  clickEl('btn-toggle-toolbar', ()=>setPanelHidden('hideToolbar', !state.ui.hideToolbar));
+  clickEl('btn-show-toolbar', ()=>setPanelHidden('hideToolbar', false));
+  clickEl('btn-mobile-sidebar', ()=>{ const open=state.ui.hideSidebar; state.ui.hideSidebar=!open; state.ui.hideDevicePanel=true; saveUiPrefs(); });
+  clickEl('btn-mobile-devices', ()=>{ if(state.edit){ openDevicePicker(); return; } const open=state.ui.hideDevicePanel; state.ui.hideDevicePanel=!open; state.ui.hideSidebar=true; saveUiPrefs(); });
   const closeMobileDevicePanel=el('btn-close-mobile-device-panel'); if(closeMobileDevicePanel) closeMobileDevicePanel.onclick=()=>setPanelHidden('hideDevicePanel', true);
   const closePicker=el('btn-close-device-picker'); if(closePicker) closePicker.onclick=closeDevicePicker;
   const pickerModal=el('device-picker-modal'); if(pickerModal) pickerModal.addEventListener('click',e=>{ if(e.target.id==='device-picker-modal') closeDevicePicker(); });
@@ -7281,7 +7310,7 @@ function bindGlobal(){
   const setupEmpty=el('btn-project-setup-empty'); if(setupEmpty) setupEmpty.onclick=openProjectSetupWizard;
   const settingsWizardBtn=el('btn-open-project-setup-wizard-settings'); if(settingsWizardBtn) settingsWizardBtn.onclick=openProjectSetupWizard;
   const toolbarKiosk=el('btn-toolbar-kiosk'); if(toolbarKiosk) toolbarKiosk.onclick=()=>{ if(state.edit){ showToast('Режим управления отключён, пока идёт редактирование'); return; } state.ui.kioskMode=true; state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; saveUiPrefs(); render(); resetKioskAutoLock(); showToast('Режим киоска включён'); };
-  el('btn-mobile-settings').onclick=()=>openModal('settings-modal');
+  clickEl('btn-mobile-settings',()=>openModal('settings-modal'));
   const mobileOverviewBtn=el('btn-mobile-overview'); if(mobileOverviewBtn) mobileOverviewBtn.onclick=()=>{ selectRoom('overview'); closeMobilePanels(); };
   const kioskOverviewDirect=el('btn-kiosk-overview-direct'); if(kioskOverviewDirect) kioskOverviewDirect.onclick=()=>{ state.kioskTileRoomFilter=''; state.kioskTilePage=0; selectRoom('overview'); hideKioskRooms(); updateKioskOverviewButton(); };
   const exitKiosk=el('btn-exit-kiosk');
@@ -7298,19 +7327,19 @@ function bindGlobal(){
   const kioskRooms=el('btn-kiosk-rooms'); if(kioskRooms) kioskRooms.onclick=openKioskRooms;
   const closeKioskRooms=el('btn-close-kiosk-rooms'); if(closeKioskRooms) closeKioskRooms.onclick=hideKioskRooms;
   const kioskOverview=el('btn-kiosk-overview'); if(kioskOverview) kioskOverview.onclick=()=>{ state.kioskTileRoomFilter=''; state.kioskTilePage=0; selectRoom('overview'); hideKioskRooms(); updateKioskOverviewButton(); };
-  el('pref-mobile-mode').onchange=e=>{ state.ui.mobileMode=!!e.target.checked; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; applyUiPrefs(); saveUiPrefs(); };
-  el('pref-auto-hide').onchange=e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();};
-  el('pref-compact-mode').onchange=e=>{state.ui.compact=e.target.checked; saveUiPrefs();};
-  el('pref-dark-theme').onchange=e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();};
-  el('pref-kiosk-widget').onchange=e=>{state.ui.kioskWidget=e.target.checked; applyUiPrefs(); renderKioskWidget();};
+  onEl('pref-mobile-mode','change',e=>{ state.ui.mobileMode=!!e.target.checked; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; applyUiPrefs(); saveUiPrefs(); });
+  onEl('pref-auto-hide','change',e=>{state.ui.autoHide=e.target.checked; saveUiPrefs();});
+  onEl('pref-compact-mode','change',e=>{state.ui.compact=e.target.checked; saveUiPrefs();});
+  onEl('pref-dark-theme','change',e=>{state.ui.darkTheme=e.target.checked; applyUiPrefs();});
+  onEl('pref-kiosk-widget','change',e=>{state.ui.kioskWidget=e.target.checked; applyUiPrefs(); renderKioskWidget();});
   const dbgPref=el('pref-debug-mode'); if(dbgPref) dbgPref.onchange=e=>{state.ui.debugMode=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const invZones=el('pref-invisible-zones'); if(invZones) invZones.onchange=e=>{state.ui.invisibleZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();};
-  el('pref-kiosk-mode').onchange=e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render(); resetKioskAutoLock();};
+  onEl('pref-kiosk-mode','change',e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render(); resetKioskAutoLock();});
   const ktp=el('pref-kiosk-navigation-mode'); if(ktp) ktp.onchange=e=>{ state.ui.kioskNavigationMode=e.target.value; if(e.target.value==='maps') state.ui.kioskTileMode=false; if(e.target.value==='tiles') state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); applyUiPrefs(); render(); };
   const oldKtp=el('pref-kiosk-tile-mode'); if(oldKtp) oldKtp.onchange=e=>{ state.ui.kioskTileMode=!!e.target.checked; state.kioskTilePage=0; saveUiPrefs(); render(); };
   const pal=el('pref-kiosk-autolock'); if(pal) pal.onchange=e=>{state.ui.kioskAutoLock=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
-  el('pref-weather-entity').onchange=e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();};
+  onEl('pref-weather-entity','change',e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();});
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
   const pmodeSelect=el('pref-panel-mode');
   if(pmodeSelect) pmodeSelect.onchange=async()=>{
@@ -7353,9 +7382,9 @@ function bindGlobal(){
   const zi=el('btn-zoom-in'); if(zi) zi.onclick=()=>zoomViewport(activeStageKind(), 1.16);
   const zf=el('btn-zoom-fit'); if(zf) zf.onclick=()=>fitViewport(activeStageKind());
   qsa('[data-ha-back]').forEach(a=>a.addEventListener('click',e=>{ if(state.selectedRoom!=='overview'){ e.preventDefault(); selectRoom('overview'); } }));
-  el('btn-fullscreen').onclick=async()=>{try{ if(!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen(); }catch(e){showToast('Полный экран недоступен: '+e.message)}};
-  el('btn-quick-overlay').onclick=()=>{state.quickOverlayOpen=true; el('quick-overlay').classList.remove('hidden'); renderQuickActions();};
-  el('btn-close-quick-overlay').onclick=()=>{state.quickOverlayOpen=false; el('quick-overlay').classList.add('hidden');};
+  clickEl('btn-fullscreen',async()=>{try{ if(!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen(); }catch(e){showToast('Полный экран недоступен: '+e.message)}});
+  clickEl('btn-quick-overlay',()=>{state.quickOverlayOpen=true; el('quick-overlay')?.classList.remove('hidden'); renderQuickActions();});
+  clickEl('btn-close-quick-overlay',()=>{state.quickOverlayOpen=false; el('quick-overlay')?.classList.add('hidden');});
 
   /* ── Тема оформления ─────────────────────────────────────────── */
   const ptSel=el('pref-theme');
