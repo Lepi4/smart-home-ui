@@ -1,15 +1,25 @@
-FROM node:20-alpine
+FROM node:20-bookworm-slim
 
-RUN apk add --no-cache python3 make g++
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 ENV NODE_ENV=production
 ENV ALLHA_MODE=home-assistant-addon
-ENV BUILD_VERSION=5.1.0-beta.2
+ENV BUILD_VERSION=5.1.0-beta.3
 ENV PATH=/app/node_modules/.bin:$PATH
+ENV npm_config_audit=false
+ENV npm_config_fund=false
+ENV npm_config_registry=https://registry.npmjs.org
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --registry=https://registry.npmjs.org \
+RUN for i in 1 2 3; do \
+      npm ci --omit=dev --omit=optional --no-audit --no-fund --registry=https://registry.npmjs.org && break; \
+      echo "npm ci failed, retry $i/3" >&2; \
+      npm cache clean --force || true; \
+      sleep $((i * 10)); \
+    done \
   && node -e "require.resolve('express'); require.resolve('ws'); require.resolve('better-sqlite3'); console.log('Dependencies OK')" \
   && npm cache clean --force
 
