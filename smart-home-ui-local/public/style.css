@@ -485,10 +485,10 @@ body.dark-theme .detail-card,body.dark-theme .room-image-wrap{background:rgba(20
   --marker-bg-opacity:.94;
   --sensor-bg-opacity:.92;
 }
-.device-marker{transform:translate(-50%,-50%) scale(var(--marker-scale,1));opacity:1;background:rgba(30,34,40,var(--marker-bg-opacity,.94))}
+.device-marker{transform:translate(-50%,-50%) scale(var(--marker-scale,1));opacity:var(--marker-opacity,1);background:rgba(30,34,40,var(--marker-bg-opacity,.94))}
 .device-marker.sensor-readout,
 .device-marker[data-domain="sensor"],
-.device-marker[data-domain="binary_sensor"]{transform:translate(-50%,-50%) scale(var(--sensor-scale,1));opacity:1}
+.device-marker[data-domain="binary_sensor"]{transform:translate(-50%,-50%) scale(var(--sensor-scale,1));opacity:var(--sensor-opacity,1)}
 .badge{transform:translate(-50%,-50%) scale(var(--sensor-scale,1));opacity:1;background:rgba(34,38,44,var(--sensor-bg-opacity, .92))!important}
 .device-marker.text-marker,.device-marker.sensor-readout{background:rgba(18,23,31,var(--sensor-bg-opacity, .94))!important}
 .device-card .dev-icon,.quick-action .quick-icon{transform:scale(var(--marker-scale,1))}

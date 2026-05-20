@@ -645,8 +645,12 @@ function applyDisplayPrefsOnly(){
   document.documentElement.style.setProperty('--marker-scale', String(clamp(Number(dp.markerScale ?? 1), .1, 2) * mobileMarkerFactor));
   document.documentElement.style.setProperty('--sensor-scale', String(clamp(Number(dp.sensorScale ?? 1), .1, 2) * mobileSensorFactor));
   document.documentElement.style.setProperty('--room-label-scale', String(clamp(Number(dp.roomLabelScale ?? 1), .1, 2)));
-  document.documentElement.style.setProperty('--marker-bg-opacity', String(clamp(1 - Number(dp.markerOpacity ?? 0), 0, 1)));
-  document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(dp.sensorOpacity ?? 0), 0, 1)));
+  const markerOpacityVal = clamp(1 - Number(dp.markerOpacity ?? 0), 0, 1);
+  const sensorOpacityVal = clamp(1 - Number(dp.sensorOpacity ?? 0), 0, 1);
+  document.documentElement.style.setProperty('--marker-bg-opacity', String(markerOpacityVal));
+  document.documentElement.style.setProperty('--marker-opacity', String(markerOpacityVal));
+  document.documentElement.style.setProperty('--sensor-bg-opacity', String(sensorOpacityVal));
+  document.documentElement.style.setProperty('--sensor-opacity', String(sensorOpacityVal));
   document.documentElement.style.setProperty('--device-card-font-scale', String(clamp(Number(state.ui.cardFontScale ?? 0.90), 0.6, 1.6)));
   const vct = clamp(Number(state.ui.virtualCardTransparency ?? 0), 0, 100);
   document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - vct / 100, 0, 1)));
@@ -659,6 +663,7 @@ function previewUiPrefsSoon(){
     applyStageTransform('overview');
     applyStageTransform('room');
     updateZoomControls();
+    if(state.selectedRoom==='overview') renderOverviewMarkers(); else renderRoomMarkers();
   });
   clearTimeout(state.previewPrefsSaveTimer);
   state.previewPrefsSaveTimer=setTimeout(()=>saveUiPrefs(), 1200);
