@@ -7,7 +7,7 @@ RUN apt-get update \
 WORKDIR /app
 ENV NODE_ENV=production
 ENV ALLHA_MODE=home-assistant-addon
-ENV BUILD_VERSION=5.1.0-beta.6
+ENV BUILD_VERSION=5.1.0-beta.7
 ENV PATH=/app/node_modules/.bin:$PATH
 ENV npm_config_audit=false
 ENV npm_config_fund=false

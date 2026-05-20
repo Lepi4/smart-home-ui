@@ -1,3 +1,12 @@
+# ALLHA-2D v5.1.0-beta.7 — badge opacity fix + version sync
+
+## Fixed
+
+- `.badge` elements (StandardSensor temperature/humidity/etc. readouts) now correctly respond to the Sensor Opacity slider. Previously `opacity:1` was hardcoded in CSS, overriding the `--sensor-opacity` variable set by `applyDisplayPrefsOnly()`.
+- `Dockerfile.local` `BUILD_VERSION` was stuck at `5.1.0-beta.3` and now tracks the current version.
+- `package-lock.json` version field synced to `5.1.0-beta.7`.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.7`.
+
 # ALLHA-2D v5.1.0-beta.6 — display prefs live preview hotfix
 
 ## Fixed
