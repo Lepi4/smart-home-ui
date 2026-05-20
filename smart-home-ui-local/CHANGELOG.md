@@ -1,3 +1,10 @@
+# ALLHA-2D v5.1.0-beta.6 — display prefs live preview hotfix
+
+## Fixed
+
+- `refreshVisibleMarkersAfterDisplayPrefs()` extracted from `previewUiPrefsSoon()` and now called before `applyStageTransform` so marker re-render happens in the correct order.
+- `renderOverviewMetrics()` / `renderRoomMetrics()` added to the refresh so sensor badges also update immediately when display settings change.
+
 # ALLHA-2D v5.1.0-beta.5 — image and display fixes
 
 ## Fixed

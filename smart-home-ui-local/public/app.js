@@ -656,14 +656,18 @@ function applyDisplayPrefsOnly(){
   document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - vct / 100, 0, 1)));
   if(isVirtualRoom(state.selectedRoom)) requestAnimationFrame(()=>applyVirtualRoomAdaptiveGrid(state.selectedRoom));
 }
+function refreshVisibleMarkersAfterDisplayPrefs(){
+  if(state.selectedRoom==='overview'){ renderOverviewMarkers(); renderOverviewMetrics(); }
+  else { renderRoomMarkers(); renderRoomMetrics(); }
+}
 function previewUiPrefsSoon(){
   if(state.previewPrefsRaf) cancelAnimationFrame(state.previewPrefsRaf);
   state.previewPrefsRaf=requestAnimationFrame(()=>{
     applyDisplayPrefsOnly();
+    refreshVisibleMarkersAfterDisplayPrefs();
     applyStageTransform('overview');
     applyStageTransform('room');
     updateZoomControls();
-    if(state.selectedRoom==='overview') renderOverviewMarkers(); else renderRoomMarkers();
   });
   clearTimeout(state.previewPrefsSaveTimer);
   state.previewPrefsSaveTimer=setTimeout(()=>saveUiPrefs(), 1200);
