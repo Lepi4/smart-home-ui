@@ -1,6 +1,8 @@
-# ALLHA-2D — v5.1.0-beta.3
+# ALLHA-2D — v5.1.0-beta.5
 
-Backup upload safety beta: загрузка backup до 350 MB, streaming gunzip с лимитом распаковки, воспроизводимые Docker-сборки через npm ci.
+[🇷🇺 Русская версия](README_RU.md)
+
+> **The application UI is currently available in Russian only.**
 
 ALLHA-2D is a 2D dashboard for Home Assistant with floor plans, rooms, devices, standard room sensors, virtual rooms, kiosk/mobile modes, web clients, backups and Home Assistant add-on / Ingress support.
 

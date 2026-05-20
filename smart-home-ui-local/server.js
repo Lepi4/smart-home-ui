@@ -4163,7 +4163,12 @@ function overviewImagePathForLevel(lp){
   return path.join(dir, 'overview.webp');
 }
 function roomImagePathForLevel(lp, roomId){
-  return path.join(lp.imagesDir || lp.images || DATA_IMAGES_DIR, 'rooms', `${safeRoomImageFileBase(roomId)}.webp`);
+  const base = path.join(lp.imagesDir || lp.images || DATA_IMAGES_DIR, 'rooms', safeRoomImageFileBase(roomId));
+  for(const ext of ['webp','png','jpg','jpeg']){
+    const f = `${base}.${ext}`;
+    if(fs.existsSync(f)) return f;
+  }
+  return `${base}.webp`;
 }
 app.get(['/media/overview','/media/overview/:filename','/media/images/overview.webp'], (req,res)=>{
   try{

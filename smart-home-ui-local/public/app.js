@@ -4366,6 +4366,7 @@ function selectRoom(id){
     state.ui.hideSidebar=true; state.ui.hideDevicePanel=true;
   }
   saveUiPrefs();
+  applyDisplayPrefsOnly();
   render();
 }
 function setConnection(ok,text,mode){const cls=mode==='live'?'connected':mode==='polling'?'polling':ok?'connected':'disconnected';const dot=el('connection-dot'); if(dot) dot.className='dot '+cls; setText('connection-text',text)}

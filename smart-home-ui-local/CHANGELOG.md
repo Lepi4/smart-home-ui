@@ -1,3 +1,11 @@
+# ALLHA-2D v5.1.0-beta.5 — image and display fixes
+
+## Fixed
+
+- Room images with non-WebP format (PNG/JPG) now display correctly when `sharp` is unavailable. `roomImagePathForLevel` now tries all extensions (`webp`, `png`, `jpg`, `jpeg`) the same way `overviewImagePathForLevel` does. Previously a PNG saved via copy-fallback was silently replaced by a placeholder SVG.
+- Scoped display settings (marker scale, sensor scale, room label scale, marker opacity, sensor opacity) now update immediately when switching between overview and room views. `applyDisplayPrefsOnly()` is called inside `selectRoom()` before `render()`, so CSS variables `--marker-scale`, `--sensor-scale`, `--room-label-scale`, `--marker-bg-opacity` and `--sensor-bg-opacity` always reflect the current view scope.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.5`.
+
 # ALLHA-2D v5.1.0-beta.3 — CI/package-lock registry hotfix
 
 - package-lock.json resolved tarball URLs changed from the sandbox internal registry to public https://registry.npmjs.org/.
