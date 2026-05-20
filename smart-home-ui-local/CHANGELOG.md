@@ -1,3 +1,11 @@
+# ALLHA-2D v5.1.0-beta.9 — light/climate marker opacity fix
+
+## Fixed
+
+- Light markers (`light-on`, `light-off`, `light-visual`) and `climate-visual` markers were not responding to the Marker Opacity slider. Root cause: early CSS block (line 13) had state-specific `background:#hex` rules with higher specificity (0,1,1,0) than the base `.device-marker` rule (0,0,1,0), overriding the CSS variable approach introduced in beta.8. Fixed by adding `!important` + `rgba()` with `--marker-bg-opacity` variable to all light and climate-visual state backgrounds.
+- `climate-fan` / `climate-on` marker state backgrounds also updated for consistency.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.9`.
+
 # ALLHA-2D v5.1.0-beta.8 — marker/badge opacity affects background only
 
 ## Fixed

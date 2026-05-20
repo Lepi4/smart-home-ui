@@ -7,7 +7,7 @@ RUN apt-get update \
 WORKDIR /app
 ENV NODE_ENV=production
 ENV ALLHA_MODE=local-docker
-ENV BUILD_VERSION=5.1.0-beta.8
+ENV BUILD_VERSION=5.1.0-beta.9
 ENV PATH=/app/node_modules/.bin:$PATH
 ENV npm_config_audit=false
 ENV npm_config_fund=false
