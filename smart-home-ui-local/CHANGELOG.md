@@ -1,3 +1,12 @@
+# ALLHA-2D v5.1.0-beta.8 — marker/badge opacity affects background only
+
+## Fixed
+
+- Marker and sensor opacity sliders now make only the **background** transparent. Previously `opacity` was applied to the whole element, making icons and text values transparent too.
+- Converted all state-specific marker backgrounds (`switch-on`, `switch-off`, `climate-*`, `cover-*`, `window-*`, `media-*`, `leak-*`, `camera-visual`) from hardcoded hex colors to `rgba(r,g,b,var(--marker-bg-opacity))` so the opacity slider can affect them.
+- `.badge` background now also uses `--sensor-bg-opacity`.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.8`.
+
 # ALLHA-2D v5.1.0-beta.7 — badge opacity fix + version sync
 
 ## Fixed
