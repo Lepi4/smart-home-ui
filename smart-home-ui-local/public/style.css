@@ -68,23 +68,23 @@ body.editing .device-card::after{content:none!important;display:none!important}
 .device-marker.climate-off,
 .device-card.climate-off .dev-icon,
 .quick-action.climate-off .quick-icon,
-.device-modal-icon.climate-off{background:#0d1015!important;color:#ffffff!important;box-shadow:none!important}
+.device-modal-icon.climate-off{background:rgba(13,16,21,var(--marker-bg-opacity,.94))!important;color:#ffffff!important;box-shadow:none!important}
 .device-marker.climate-fan,
 .device-card.climate-fan .dev-icon,
 .quick-action.climate-fan .quick-icon,
-.device-modal-icon.climate-fan{background:#f4f7fb!important;color:#12151b!important;box-shadow:0 7px 16px rgba(0,0,0,.20)!important}
+.device-modal-icon.climate-fan{background:rgba(244,247,251,var(--marker-bg-opacity,.94))!important;color:#12151b!important;box-shadow:0 7px 16px rgba(0,0,0,.20)!important}
 .device-marker.climate-dry,
 .device-card.climate-dry .dev-icon,
 .quick-action.climate-dry .quick-icon,
-.device-modal-icon.climate-dry{background:#22a65a!important;color:#fff!important}
+.device-modal-icon.climate-dry{background:rgba(34,166,90,var(--marker-bg-opacity,.94))!important;color:#fff!important}
 .device-marker.climate-cool,
 .device-card.climate-cool .dev-icon,
 .quick-action.climate-cool .quick-icon,
-.device-modal-icon.climate-cool{background:#1c6fe8!important;color:#fff!important}
+.device-modal-icon.climate-cool{background:rgba(28,111,232,var(--marker-bg-opacity,.94))!important;color:#fff!important}
 .device-marker.climate-heat,
 .device-card.climate-heat .dev-icon,
 .quick-action.climate-heat .quick-icon,
-.device-modal-icon.climate-heat{background:#d34235!important;color:#fff!important}
+.device-modal-icon.climate-heat{background:rgba(211,66,53,var(--marker-bg-opacity,.94))!important;color:#fff!important}
 .device-marker.climate-dry::before,.device-card.climate-dry .dev-icon::before,.quick-action.climate-dry .quick-icon::before{background:radial-gradient(circle,rgba(44,220,105,.96),rgba(44,220,105,.58) 45%,rgba(44,220,105,.22) 70%,rgba(44,220,105,0) 100%);animation:softHalo 2.4s ease-in-out infinite}
 .device-marker.climate-fan::before,.device-card.climate-fan .dev-icon::before,.quick-action.climate-fan .quick-icon::before{background:radial-gradient(circle,rgba(255,255,255,.96),rgba(255,255,255,.54) 45%,rgba(255,255,255,.18) 70%,rgba(255,255,255,0) 100%);animation:softHalo 2.4s ease-in-out infinite}
 
@@ -92,15 +92,15 @@ body.editing .device-card::after{content:none!important;display:none!important}
 .device-marker.cover-state-closed,
 .device-card.cover-state-closed .dev-icon,
 .quick-action.cover-state-closed .quick-icon,
-.device-modal-icon.cover-state-closed{background:#0b0e12!important;color:#f4f4f4!important;box-shadow:none!important}
+.device-modal-icon.cover-state-closed{background:rgba(11,14,18,var(--marker-bg-opacity,.94))!important;color:#f4f4f4!important;box-shadow:none!important}
 .device-marker.cover-state-open,
 .device-card.cover-state-open .dev-icon,
 .quick-action.cover-state-open .quick-icon,
-.device-modal-icon.cover-state-open{background:#20a95a!important;color:#fff!important}
+.device-modal-icon.cover-state-open{background:rgba(32,169,90,var(--marker-bg-opacity,.94))!important;color:#fff!important}
 .device-marker.cover-state-partial,
 .device-card.cover-state-partial .dev-icon,
 .quick-action.cover-state-partial .quick-icon,
-.device-modal-icon.cover-state-partial{background:#ffd34d!important;color:#101318!important}
+.device-modal-icon.cover-state-partial{background:rgba(255,211,77,var(--marker-bg-opacity,.94))!important;color:#101318!important}
 .device-marker.cover-state-open::before,.device-card.cover-state-open .dev-icon::before,.quick-action.cover-state-open .quick-icon::before{background:radial-gradient(circle,rgba(42,220,112,.96),rgba(42,220,112,.56) 42%,rgba(42,220,112,.22) 72%,rgba(42,220,112,0) 100%);animation:softHalo 2.4s ease-in-out infinite}
 .device-marker.cover-state-partial::before,.device-card.cover-state-partial .dev-icon::before,.quick-action.cover-state-partial .quick-icon::before{background:radial-gradient(circle,rgba(255,211,77,.96),rgba(255,211,77,.58) 42%,rgba(255,211,77,.24) 72%,rgba(255,211,77,0) 100%);animation:softHalo 2.4s ease-in-out infinite}
 
@@ -108,32 +108,32 @@ body.editing .device-card::after{content:none!important;display:none!important}
 .device-marker.window-state-closed,
 .device-card.window-state-closed .dev-icon,
 .quick-action.window-state-closed .quick-icon,
-.device-modal-icon.window-state-closed{background:#0b0e12!important;color:#f4f4f4!important;box-shadow:none!important}
+.device-modal-icon.window-state-closed{background:rgba(11,14,18,var(--marker-bg-opacity,.94))!important;color:#f4f4f4!important;box-shadow:none!important}
 .device-marker.window-state-open,
 .device-card.window-state-open .dev-icon,
 .quick-action.window-state-open .quick-icon,
-.device-modal-icon.window-state-open{background:#22a65a!important;color:#fff!important}
+.device-modal-icon.window-state-open{background:rgba(34,166,90,var(--marker-bg-opacity,.94))!important;color:#fff!important}
 .device-marker.window-state-open::before,.device-card.window-state-open .dev-icon::before,.quick-action.window-state-open .quick-icon::before{background:radial-gradient(circle,rgba(42,220,112,.96),rgba(42,220,112,.56) 42%,rgba(42,220,112,.22) 72%,rgba(42,220,112,0) 100%);animation:softHalo 2.4s ease-in-out infinite}
 
 /* Media: playback only is green */
 .device-marker.media-state-playing,
 .device-card.media-state-playing .dev-icon,
 .quick-action.media-state-playing .quick-icon,
-.device-modal-icon.media-state-playing{background:#20a95a!important;color:#fff!important}
+.device-modal-icon.media-state-playing{background:rgba(32,169,90,var(--marker-bg-opacity,.94))!important;color:#fff!important}
 .device-marker.media-state-stopped,
 .device-card.media-state-stopped .dev-icon,
 .quick-action.media-state-stopped .quick-icon,
-.device-modal-icon.media-state-stopped{background:#0b0e12!important;color:#f4f4f4!important;box-shadow:none!important}
+.device-modal-icon.media-state-stopped{background:rgba(11,14,18,var(--marker-bg-opacity,.94))!important;color:#f4f4f4!important;box-shadow:none!important}
 
 /* Leak sensors */
 .device-marker.leak-state-dry,
 .device-card.leak-state-dry .dev-icon,
 .quick-action.leak-state-dry .quick-icon,
-.device-modal-icon.leak-state-dry{background:#0b0e12!important;color:#f4f4f4!important;box-shadow:none!important}
+.device-modal-icon.leak-state-dry{background:rgba(11,14,18,var(--marker-bg-opacity,.94))!important;color:#f4f4f4!important;box-shadow:none!important}
 .device-marker.leak-state-leak,
 .device-card.leak-state-leak .dev-icon,
 .quick-action.leak-state-leak .quick-icon,
-.device-modal-icon.leak-state-leak{background:#e2362d!important;color:#fff!important}
+.device-modal-icon.leak-state-leak{background:rgba(226,54,45,var(--marker-bg-opacity,.94))!important;color:#fff!important}
 .device-marker.leak-state-leak::before,.device-card.leak-state-leak .dev-icon::before,.quick-action.leak-state-leak .quick-icon::before{background:radial-gradient(circle,rgba(255,40,35,.98),rgba(255,40,35,.60) 42%,rgba(255,40,35,.26) 72%,rgba(255,40,35,0) 100%);animation:softHalo 1.5s ease-in-out infinite}
 
 /* stronger halos */
@@ -342,8 +342,8 @@ body.compact-mode .device-card{padding:7px;border-radius:10px}
 .device-marker.text-marker .sensor-text{font-size:13px;line-height:1.1;white-space:nowrap;color:#eef5ff}
 .device-marker.text-marker::before{border-radius:999px}
 .device-marker.switch-on::before,.device-card.switch-on .dev-icon::before,.quick-action.switch-on .quick-icon::before{background:radial-gradient(circle,rgba(255,82,82,.98),rgba(255,82,82,.72) 42%,rgba(255,82,82,.32) 72%,rgba(255,82,82,0) 100%)!important}
-.device-marker.switch-on,.device-card.switch-on .dev-icon,.quick-action.switch-on .quick-icon,.device-modal-icon.switch-on{background:#cf3a33!important;color:#fff!important;box-shadow:0 0 0 2px rgba(255,120,120,.18),0 10px 22px rgba(167,19,19,.28)!important}
-.device-marker.switch-off,.device-card.switch-off .dev-icon,.quick-action.switch-off .quick-icon,.device-modal-icon.switch-off{background:#0b0e12!important;color:#f4f4f4!important;box-shadow:none!important}
+.device-marker.switch-on,.device-card.switch-on .dev-icon,.quick-action.switch-on .quick-icon,.device-modal-icon.switch-on{background:rgba(207,58,51,var(--marker-bg-opacity,.94))!important;color:#fff!important;box-shadow:0 0 0 2px rgba(255,120,120,.18),0 10px 22px rgba(167,19,19,.28)!important}
+.device-marker.switch-off,.device-card.switch-off .dev-icon,.quick-action.switch-off .quick-icon,.device-modal-icon.switch-off{background:rgba(11,14,18,var(--marker-bg-opacity,.94))!important;color:#f4f4f4!important;box-shadow:none!important}
 @media (max-width:900px){
   .floating-faq-btn{top:auto;bottom:74px;right:10px}
 }
@@ -485,11 +485,11 @@ body.dark-theme .detail-card,body.dark-theme .room-image-wrap{background:rgba(20
   --marker-bg-opacity:.94;
   --sensor-bg-opacity:.92;
 }
-.device-marker{transform:translate(-50%,-50%) scale(var(--marker-scale,1));opacity:var(--marker-opacity,1);background:rgba(30,34,40,var(--marker-bg-opacity,.94))}
+.device-marker{transform:translate(-50%,-50%) scale(var(--marker-scale,1));background:rgba(30,34,40,var(--marker-bg-opacity,.94))}
 .device-marker.sensor-readout,
 .device-marker[data-domain="sensor"],
-.device-marker[data-domain="binary_sensor"]{transform:translate(-50%,-50%) scale(var(--sensor-scale,1));opacity:var(--sensor-opacity,1)}
-.badge{transform:translate(-50%,-50%) scale(var(--sensor-scale,1));opacity:var(--sensor-opacity,1);background:rgba(34,38,44,var(--sensor-bg-opacity, .92))!important}
+.device-marker[data-domain="binary_sensor"]{transform:translate(-50%,-50%) scale(var(--sensor-scale,1))}
+.badge{transform:translate(-50%,-50%) scale(var(--sensor-scale,1));background:rgba(34,38,44,var(--sensor-bg-opacity, .92))!important}
 .device-marker.text-marker,.device-marker.sensor-readout{background:rgba(18,23,31,var(--sensor-bg-opacity, .94))!important}
 .device-card .dev-icon,.quick-action .quick-icon{transform:scale(var(--marker-scale,1))}
 .device-card:has(.sensor-temperature) .dev-icon,
@@ -2085,7 +2085,7 @@ body[data-theme="sepia"] .modal-card{background:#fdf5e2;color:#3b2a14;border-col
 .camera-stream-img{max-width:100%;max-height:60vh;border-radius:12px;object-fit:contain;background:#000;display:block}
 .camera-modal-footer{display:flex;align-items:center;justify-content:space-between;width:100%;gap:10px}
 .camera-error{color:#db4437;font-size:13px;text-align:center;padding:20px}
-.device-marker.camera-visual,.device-card.camera-visual .dev-icon,.quick-action.camera-visual .quick-icon{background:#1a2535;color:#6eb8f0}
+.device-marker.camera-visual,.device-card.camera-visual .dev-icon,.quick-action.camera-visual .quick-icon{background:rgba(26,37,53,var(--marker-bg-opacity,.94));color:#6eb8f0}
 
 /* ── Undo / Redo ─────────────────────────────────────────────── */
 #btn-undo,#btn-redo{background:rgba(255,178,63,.14);border:1px solid rgba(255,178,63,.4);color:#ffe2b0;min-width:34px;padding-left:9px;padding-right:9px}
