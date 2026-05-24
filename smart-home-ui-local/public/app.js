@@ -1529,17 +1529,18 @@ function sensorKind(d){
   if(t.includes('влаж') || t.includes('humidity')) return 'humidity';
   return 'sensor';
 }
+const SENSOR_SVG_PATHS = {
+  motion:`<circle cx="12" cy="12" r="3"/><path d="M4 12a8 8 0 0 1 8-8M20 12a8 8 0 0 0-8-8M6 18c2-2 4-3 6-3s4 1 6 3"/>`,
+  noise:`<path d="M5 9v6h3l5 4V5L8 9H5z"/><path d="M17 9c1 2 1 4 0 6M20 7c2 3 2 7 0 10"/>`,
+  illuminance:`<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2.2 2.2M17.3 17.3l2.2 2.2M19.5 4.5l-2.2 2.2M6.7 17.3l-2.2 2.2"/>`,
+  temperature:`<path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0Z"/><path d="M12 8v8"/>`,
+  humidity:`<path d="M12 3C8 8 6 11 6 15a6 6 0 0 0 12 0c0-4-2-7-6-12Z"/>`,
+  co2:`<path d="M5 8h8a4 4 0 0 1 0 8H5"/><path d="M13 8a4 4 0 0 1 0 8"/><path d="M19 10h2v4h-2"/>`,
+  sensor:`<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M8 9h8M8 12h8M8 15h5"/>`
+};
 function sensorIconMarkup(d){
   const k=sensorKind(d);
-  const paths={
-    motion:`<circle cx="12" cy="12" r="3"/><path d="M4 12a8 8 0 0 1 8-8M20 12a8 8 0 0 0-8-8M6 18c2-2 4-3 6-3s4 1 6 3"/>`,
-    noise:`<path d="M5 9v6h3l5 4V5L8 9H5z"/><path d="M17 9c1 2 1 4 0 6M20 7c2 3 2 7 0 10"/>`,
-    illuminance:`<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2.2 2.2M17.3 17.3l2.2 2.2M19.5 4.5l-2.2 2.2M6.7 17.3l-2.2 2.2"/>`,
-    temperature:`<path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0Z"/><path d="M12 8v8"/>`,
-    humidity:`<path d="M12 3C8 8 6 11 6 15a6 6 0 0 0 12 0c0-4-2-7-6-12Z"/>`,
-    sensor:`<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M8 9h8M8 12h8M8 15h5"/>`
-  };
-  return `<svg class="icon-svg sensor-${k}" viewBox="0 0 24 24" aria-hidden="true">${paths[k]}</svg>`;
+  return `<svg class="icon-svg sensor-${k}" viewBox="0 0 24 24" aria-hidden="true">${SENSOR_SVG_PATHS[k]||SENSOR_SVG_PATHS.sensor}</svg>`;
 }
 
 /* ── MDI Icon Picker ─────────────────────────────────────────────────── */
@@ -2525,9 +2526,10 @@ function metricContent(r){
   const items = standardMetricItems(r);
   if(!items.length) return '';
   return items.map(({def,value,entityId})=>{
-    const icon = def.icon || def.shortLabel || def.label;
     const aria = `${def.label}: ${value}`;
-    return `<span class="metric-item metric-${esc(def.key)} compact-metric-item" data-metric-entity="${esc(entityId)}" title="${esc(aria)}" aria-label="${esc(aria)}"><span class="metric-icon" aria-hidden="true">${esc(icon)}</span><span class="metric-value">${esc(value)}</span></span>`;
+    const svgPath = SENSOR_SVG_PATHS[def.key] || SENSOR_SVG_PATHS.sensor;
+    const iconHtml = `<svg class="metric-svg-icon" viewBox="0 0 24 24" aria-hidden="true">${svgPath}</svg>`;
+    return `<span class="metric-item metric-${esc(def.key)} compact-metric-item" data-metric-entity="${esc(entityId)}" title="${esc(aria)}" aria-label="${esc(aria)}"><span class="metric-icon" aria-hidden="true">${iconHtml}</span><span class="metric-value">${esc(value)}</span></span>`;
   }).join(' ');
 }
 

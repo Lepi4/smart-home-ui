@@ -1,3 +1,11 @@
+# ALLHA-2D v5.1.0-beta.15 — SVG metric badge icons + CO2 sensor icon fix
+
+## Fixed
+
+- Standard sensor badge icons (temperature, humidity, motion, noise, illuminance) now render as inline SVG instead of emoji. Previously they appeared as squares on Raspberry Pi kiosk Chromium (missing emoji font).
+- CO2 sensor was missing from `sensorIconMarkup` paths — markers for CO2 entities showed `undefined` inside the SVG instead of an icon. Fixed by adding `co2` path and refactoring paths to shared `SENSOR_SVG_PATHS` constant.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.15`.
+
 # ALLHA-2D v5.1.0-beta.14 — SVG icons for all marker domains (Pi kiosk fix)
 
 ## Fixed
