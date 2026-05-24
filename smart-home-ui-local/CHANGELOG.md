@@ -1,3 +1,11 @@
+# ALLHA-2D v5.1.0-beta.21 — camera snapshot via WebSocket fallback + version display fix
+
+## Fixed
+
+- Снапшот камеры теперь использует резервный механизм `camera_thumbnail` через WebSocket (как Lovelace) когда `camera_proxy` возвращает 403. Камеры типа NVT/ONVIF (`camera.nvt_substream`) теперь показывают изображение.
+- `Dockerfile` (HA add-on) имел устаревший `BUILD_VERSION=5.1.0-beta.15` — версия в разделе "Информация и диагностика" не обновлялась с beta.15. Исправлено: оба Dockerfile (`Dockerfile` и `Dockerfile.local`) синхронизированы с актуальной версией.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.21`.
+
 # ALLHA-2D v5.1.0-beta.20 — fix MDI icons under HA Ingress
 
 ## Fixed

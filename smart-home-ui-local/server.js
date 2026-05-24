@@ -4893,20 +4893,32 @@ app.get('/api/camera/stream/:entity_id', makeRateLimit(20, 60_000), async (req, 
   } catch(e) { if(!res.headersSent && !ac.signal.aborted) res.status(500).end(); }
 });
 
-// Одиночный кадр (fallback / кнопка «Обновить»)
+// Одиночный кадр: сначала camera_proxy, при 403/ошибке — WebSocket camera_thumbnail (как Lovelace)
 app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req, res) => {
   const entity_id = req.params.entity_id;
   if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).json({error:'Некорректный entity_id'});
-  if(!HA_TOKEN) return res.status(503).json({error: process.env.ALLHA_MODE === 'local-dev' ? 'HA_TOKEN недоступен. Проверь config/local-config.json' : 'SUPERVISOR_TOKEN недоступен'});
+  if(!HA_TOKEN) return res.status(503).json({error:'HA_TOKEN недоступен'});
   try {
     const camRes = await fetch(`${HA_API_BASE}/camera_proxy/${entity_id}`, {
-      headers: { 'Authorization': `Bearer ${HA_TOKEN}` }
+      headers: { 'Authorization': `Bearer ${HA_TOKEN}` },
+      signal: AbortSignal.timeout(6000)
     });
-    if(!camRes.ok) return res.status(camRes.status).json({error:`HA camera ${camRes.status}`});
-    res.setHeader('Content-Type', camRes.headers.get('content-type') || 'image/jpeg');
-    res.setHeader('Cache-Control', 'no-store');
-    res.end(Buffer.from(await camRes.arrayBuffer()));
-  } catch(e) { safeErrorResponse(req,res,e); }
+    if(camRes.ok) {
+      res.setHeader('Content-Type', camRes.headers.get('content-type') || 'image/jpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.end(Buffer.from(await camRes.arrayBuffer()));
+    }
+  } catch(_) {}
+  // Fallback: WebSocket camera_thumbnail (работает так же как Lovelace)
+  try {
+    const result = await haWsCommand({ type: 'camera_thumbnail', entity_id });
+    if(result?.content) {
+      res.setHeader('Content-Type', result.content_type || 'image/jpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.end(Buffer.from(result.content, 'base64'));
+    }
+  } catch(_) {}
+  res.status(503).json({ error: 'camera unavailable' });
 });
 
 /* ── Layout export / import ───────────────────────────────────── */
