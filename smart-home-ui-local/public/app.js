@@ -46,6 +46,7 @@ const state = {
   ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, haloAnimated:true, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   customIcons: {},
+  customIconColors: {},
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, cameraRefreshTimer:null, cameraStreamTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, placementEditorPanelHidden:false, editActionSheetHidden:false, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), virtualHiddenOpenRooms:new Set(), openVirtualHiddenSettingsRooms:new Set(), standardSensorSuggestions:{}, standardSensorBusy:{}, standardSensorVisibility:{}, roomsHydrated:false, roomsReady:false, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}, renderMetrics:{sseConnected:false, sseConnectedAt:'', sseDisconnectedAt:'', stateChangedMinute:0, statesBatchMinute:0, patchCountMinute:0, renderCountMinute:0, totalPatch:0, totalRender:0, lastFullRenderAt:'', minuteStartedAt:Date.now()}
 };
 
@@ -1549,6 +1550,30 @@ function sensorIconMarkup(d){
   return `<svg class="icon-svg sensor-${k}" viewBox="0 0 24 24" aria-hidden="true">${SENSOR_SVG_PATHS[k]||SENSOR_SVG_PATHS.sensor}</svg>`;
 }
 
+const MARKER_COLOR_PALETTE = ['#ffffff','#ffd34d','#ffab40','#ff8c42','#ff5252','#f48fb1','#ce93d8','#7c4dff','#40c4ff','#00b0ff','#1de9b6','#69f0ae','#aed581','#90a4ae','#aeb8c6'];
+
+async function loadCustomIconColors(){
+  try{ const j=await apiJson('api/custom-icon-colors'); state.customIconColors=j.colors||{}; if(Object.keys(state.customIconColors).length>0) render(); }catch(_){}
+}
+async function selectIconColor(entityId, color){
+  try{
+    const j=await apiJson('api/custom-icon-color',{method:'POST',body:JSON.stringify({entity_id:entityId,color})});
+    if(j.ok){ if(!state.customIconColors) state.customIconColors={}; state.customIconColors[entityId]=color; render(); openDeviceModal(devices().find(d=>d.entity_id===entityId)); }
+  }catch(e){ showToast('Ошибка: '+e.message); }
+}
+async function clearIconColor(entityId){
+  try{
+    const j=await apiJson('api/custom-icon-color',{method:'POST',body:JSON.stringify({entity_id:entityId,color:null})});
+    if(j.ok){ if(state.customIconColors) delete state.customIconColors[entityId]; render(); openDeviceModal(devices().find(d=>d.entity_id===entityId)); }
+  }catch(e){ showToast('Ошибка: '+e.message); }
+}
+function iconColorPaletteHtml(entityId){
+  const cur=state.customIconColors?.[entityId]||'';
+  const circles=MARKER_COLOR_PALETTE.map(c=>`<button type="button" class="icon-color-swatch${c===cur?' icon-color-swatch-active':''}" style="background:${c}" data-color="${c}" data-entity="${esc(entityId)}" title="${c}"></button>`).join('');
+  const reset=cur?`<button type="button" class="icon-color-reset" data-entity="${esc(entityId)}" title="Сбросить цвет">✕</button>`:'';
+  return `<div class="icon-color-palette">${circles}${reset}</div>`;
+}
+
 /* ── MDI Icon Picker ─────────────────────────────────────────────────── */
 let _mdiIcons = null;
 let _iconPickerEntityId = null;
@@ -1834,8 +1859,10 @@ function markerValueHtml(d, scope='overview'){
   return v?`<span class="marker-value">${esc(v)}</span>`:'';
 }
 function markerInnerHtml(d, scope='overview'){
-  if(shouldRenderSensorTextMarker(d, scope)) return `<span class="sensor-room-icon">${iconMarkup(d)}</span><span class="sensor-room-value">${esc(sensorRoomReadingLabel(d))}</span>`;
-  return `<span class="ico">${iconMarkup(d)}</span>${markerValueHtml(d, scope)}`;
+  const color=state.customIconColors?.[d.entity_id];
+  const cs=color?` style="--marker-icon-color:${color}"`:''  ;
+  if(shouldRenderSensorTextMarker(d, scope)) return `<span class="sensor-room-icon"${cs}>${iconMarkup(d)}</span><span class="sensor-room-value">${esc(sensorRoomReadingLabel(d))}</span>`;
+  return `<span class="ico"${cs}>${iconMarkup(d)}</span>${markerValueHtml(d, scope)}`;
 }
 function isOn(d,s=getState(d.entity_id)){const st=s?.state;if(!st)return false;if(['light','switch','input_boolean','fan','humidifier'].includes(d.domain))return st==='on';if(d.domain==='cover')return ['open','opening'].includes(st) || (Number(s?.attributes?.current_position)>0);if(d.domain==='media_player')return st==='playing';if(d.domain==='climate')return st!=='off'&&st!=='unavailable';if(d.domain==='water_heater')return st!=='off'&&st!=='unavailable';if(d.domain==='lock')return st==='unlocked';if(d.domain==='valve')return st==='open';if(isWindowSensor(d))return windowStateKind(d)==='open';if(isLeakSensor(d))return leakStateKind(d)==='leak';return ['on','open','unlocked','playing'].includes(st)}
 function brightnessLevel(d){
@@ -3383,7 +3410,7 @@ function domainControls(d){
       rows.push(`<label class="slider-row">Целевая температура <input type="range" min="${min}" max="${max}" step="1" value="${val}" data-action="water-heater-temp"><span id="water-heater-temp-value">${val}°</span></label>`);
     }
   }
-  if(canEditLayout()) rows.push(`<div class="device-modal-actions"><button type="button" data-action="change-icon" class="btn-icon-change">Сменить иконку (MDI)</button></div>`);
+  if(canEditLayout()) rows.push(`<div class="device-modal-actions"><button type="button" data-action="change-icon" class="btn-icon-change">Сменить иконку (MDI)</button></div>${iconColorPaletteHtml(d.entity_id)}`);
   rows.push(`<details class="rename-box"><summary>Переименовать в этой системе</summary><label class="slider-row rename-row">Новое имя <input type="text" value="${esc(displayName(d))}" data-action="rename-local"><button type="button" data-action="rename-save">Сохранить имя</button></label><p class="muted">Имя меняется только здесь, Home Assistant не трогаем.</p></details>`);
   return rows.join('');
 }
@@ -3486,6 +3513,13 @@ function bindDeviceModalActions(d){
       }catch(e){showToast('Ошибка: '+e.message)}};
       if(ctrl.tagName==='INPUT') ctrl.onchange=runAction; else ctrl.onclick=runAction;
     }
+  });
+  // Цветовая палитра иконок
+  qsa('.icon-color-swatch',body).forEach(btn=>{
+    btn.onclick=()=>selectIconColor(btn.dataset.entity, btn.dataset.color);
+  });
+  qsa('.icon-color-reset',body).forEach(btn=>{
+    btn.onclick=()=>clearIconColor(btn.dataset.entity);
   });
 }
 function deviceRoomId(entityId){ const d=devices().find(x=>x.entity_id===entityId) || allDevices().find(x=>x.entity_id===entityId); return normalizedRoomId(d?.room || state.selectedRoom); }
@@ -7677,6 +7711,7 @@ function applyConfigToInputs(){
 (async function init(){
   await loadLayout();
   loadCustomIcons();
+  loadCustomIconColors();
   await loadSourceConfig();
   await loadPersistedUiState();
   await loadAttention();

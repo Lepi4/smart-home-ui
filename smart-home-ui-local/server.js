@@ -4485,6 +4485,21 @@ app.post('/api/custom-icon', express.json(), (req, res) => {
     res.json({ ok: true });
   } catch(e) { safeErrorResponse(req, res, e); }
 });
+app.get('/api/custom-icon-colors', (req, res) => {
+  try { res.json({ ok: true, colors: allhaDb.getProjectDocument('custom-icon-colors', {}) || {} }); }
+  catch(e) { safeErrorResponse(req, res, e); }
+});
+app.post('/api/custom-icon-color', express.json(), (req, res) => {
+  try {
+    const { entity_id, color } = req.body || {};
+    if (!entity_id || typeof entity_id !== 'string') return res.status(400).json({ ok: false, error: 'entity_id required' });
+    const current = allhaDb.getProjectDocument('custom-icon-colors', {}) || {};
+    if (color && typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color)) current[entity_id] = color;
+    else delete current[entity_id];
+    allhaDb.setProjectDocument('custom-icon-colors', current);
+    res.json({ ok: true });
+  } catch(e) { safeErrorResponse(req, res, e); }
+});
 app.get('/api/layout', (req,res)=>{ try{
   const lp=clientLevelPaths(req);
   res.json(loadEffectiveLayoutForRequest(req, lp.layout));

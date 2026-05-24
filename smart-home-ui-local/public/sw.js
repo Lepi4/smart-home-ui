@@ -1,5 +1,5 @@
 /* ALLHA-2D Service Worker — offline caching */
-const CACHE = 'allha2d-v5.1.0-beta.18';
+const CACHE = 'allha2d-v5.1.0-beta.19';
 const PRECACHE = ['./', './app.js', './style.css', './config.js', './devices.js', './lovelace-source.js', './favicon.png'];
 
 self.addEventListener('install', e => {
