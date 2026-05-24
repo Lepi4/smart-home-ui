@@ -6,6 +6,19 @@
 - `climate-fan` / `climate-on` marker state backgrounds also updated for consistency.
 - Service Worker cache bumped to `allha2d-v5.1.0-beta.9`.
 
+# ALLHA-2D v5.1.0-beta.10 — water_heater support, binary sensor halos, halo animation toggle
+
+## Added
+
+- **`water_heater` domain** — full support: boiler icon, on/off toggle, operation mode selector (electric, gas, heat_pump, eco, performance, heat_boost, away, auto), target temperature slider, orange halo when heating. Appears in device list, floor plan markers, and quick actions.
+- **Binary sensor halos** — generic binary sensors (motion, door contact, etc.) now show a golden halo in the ON / detected state.
+- **Halo animation toggle** — new checkbox in Settings → Map & Markers: "Анимация ореолов". When disabled, all halo pulses are removed while halos themselves remain visible.
+
+## Fixed
+
+- Added `water_heater` operation mode labels to `localizedRawState` (electric, gas, heat_pump, eco, performance, high_demand, heat_boost, away).
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.10`.
+
 # ALLHA-2D v5.1.0-beta.8 — marker/badge opacity affects background only
 
 ## Fixed

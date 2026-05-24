@@ -43,7 +43,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, haloAnimated:true, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, placementEditorPanelHidden:false, editActionSheetHidden:false, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), virtualHiddenOpenRooms:new Set(), openVirtualHiddenSettingsRooms:new Set(), standardSensorSuggestions:{}, standardSensorBusy:{}, standardSensorVisibility:{}, roomsHydrated:false, roomsReady:false, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}, renderMetrics:{sseConnected:false, sseConnectedAt:'', sseDisconnectedAt:'', stateChangedMinute:0, statesBatchMinute:0, patchCountMinute:0, renderCountMinute:0, totalPatch:0, totalRender:0, lastFullRenderAt:'', minuteStartedAt:Date.now()}
 };
@@ -172,8 +172,8 @@ function refreshRuntimeRooms(){
   if(state.selectedRoom && state.selectedRoom !== 'overview' && !ROOM_MAP[state.selectedRoom]) state.selectedRoom='overview';
 }
 const TYPE_ICONS = { light:'💡', switch:'🔌', cover:'▤', climate:'❄️', media_player:'▶️', humidifier:'💧', sensor:'📟', binary_sensor:'●', valve:'🚰', lock:'🔒', scene:'✨', fan:'💨', input_boolean:'✅', input_number:'🔢', input_select:'▾', button:'⏺', script:'▶', automation:'⚙', person:'👤', camera:'📷' };
-const TOGGLE_DOMAINS = new Set(['light','switch','fan','input_boolean','cover','media_player','climate','humidifier','valve']);
-const IMPORTANT_DOMAINS = new Set(['light','switch','cover','climate','media_player','humidifier','fan','sensor','binary_sensor','input_boolean','input_number','input_select','valve','lock','button','script','automation']);
+const TOGGLE_DOMAINS = new Set(['light','switch','fan','input_boolean','cover','media_player','climate','humidifier','valve','water_heater']);
+const IMPORTANT_DOMAINS = new Set(['light','switch','cover','climate','media_player','humidifier','fan','sensor','binary_sensor','input_boolean','input_number','input_select','valve','lock','button','script','automation','water_heater']);
 const LONG_PRESS_MS = 560;
 const GESTURE_MOVE_PX = 14;
 const DRAG_SUPPRESS_MS = 420;
@@ -651,6 +651,7 @@ function applyDisplayPrefsOnly(){
   document.documentElement.style.setProperty('--marker-opacity', String(markerOpacityVal));
   document.documentElement.style.setProperty('--sensor-bg-opacity', String(sensorOpacityVal));
   document.documentElement.style.setProperty('--sensor-opacity', String(sensorOpacityVal));
+  document.body.classList.toggle('halo-animated', state.ui.haloAnimated !== false);
   document.documentElement.style.setProperty('--device-card-font-scale', String(clamp(Number(state.ui.cardFontScale ?? 0.90), 0.6, 1.6)));
   const vct = clamp(Number(state.ui.virtualCardTransparency ?? 0), 0, 100);
   document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - vct / 100, 0, 1)));
@@ -1449,6 +1450,7 @@ function applyUiPrefs(){
   const tdv=el('toggle-devices'); if(tdv) tdv.checked=state.ui.showMarkers!==false;
   const ts=el('toggle-sensors'); if(ts) ts.checked=state.ui.showSensors!==false;
   const ph=el('pref-halo-scale'); if(ph){ ph.value=String(Math.round(Number(state.ui.haloScale ?? 0.50)*100)); const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=ph.value+'%'; }
+  const ha=el('pref-halo-animated'); if(ha) ha.checked=state.ui.haloAnimated!==false;
   syncLegacyDisplayPrefs();
   setPercentRange('pref-overview-halo-scale', 'pref-overview-halo-scale-value', state.ui.overviewHaloScale ?? state.ui.haloScale ?? .50);
   setPercentRange('pref-overview-marker-scale', 'pref-overview-marker-scale-value', state.ui.overviewMarkerScale ?? state.ui.markerScale ?? 1);
@@ -1550,6 +1552,9 @@ function iconMarkup(d){
     };
     return `<svg class="icon-svg climate-${k}" viewBox="0 0 24 24" aria-hidden="true">${paths[k]}</svg>`;
   }
+  if(d.domain==='water_heater'){
+    return `<svg class="icon-svg water-heater-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="4" width="10" height="13" rx="3"/><path d="M10 4V2M14 4V2"/><path d="M12 21v-4"/><path d="M10 10h4M12 8v4"/></svg>`;
+  }
   if(d.domain==='cover'){
     const k=coverKind(d);
     const paths={
@@ -1597,7 +1602,7 @@ function primaryActionLabel(d,s=getState(d.entity_id)){
   if(d.domain==='valve') return isOn(d,s) ? 'Закрыть' : 'Открыть';
   return isOn(d,s) ? 'Выключить' : 'Включить';
 }
-function hasMoreFunctions(d){return ['light','climate','cover','media_player','fan','humidifier','switch','input_boolean','input_number','input_select','valve','button','script','automation'].includes(d.domain)}
+function hasMoreFunctions(d){return ['light','climate','water_heater','cover','media_player','fan','humidifier','switch','input_boolean','input_number','input_select','valve','button','script','automation'].includes(d.domain)}
 function isDimmableLight(d){
   if(d.domain!=='light') return false;
   const a=getState(d.entity_id)?.attributes||{};
@@ -1696,6 +1701,10 @@ function markerValueLabel(d){
     }
     return '';
   }
+  if(d.domain==='water_heater'){
+    const n=Number(a.target_temperature ?? a.current_temperature);
+    return Number.isFinite(n) ? Math.round(n)+'°' : '';
+  }
   if(d.domain==='fan'){
     const pct=Number(a.percentage);
     return Number.isFinite(pct) && pct>0 && pct<100 ? Math.round(pct)+'%' : '';
@@ -1731,7 +1740,7 @@ function markerInnerHtml(d, scope='overview'){
   if(shouldRenderSensorTextMarker(d, scope)) return `<span class="sensor-room-icon">${iconMarkup(d)}</span><span class="sensor-room-value">${esc(sensorRoomReadingLabel(d))}</span>`;
   return `<span class="ico">${iconMarkup(d)}</span>${markerValueHtml(d, scope)}`;
 }
-function isOn(d,s=getState(d.entity_id)){const st=s?.state;if(!st)return false;if(['light','switch','input_boolean','fan','humidifier'].includes(d.domain))return st==='on';if(d.domain==='cover')return ['open','opening'].includes(st) || (Number(s?.attributes?.current_position)>0);if(d.domain==='media_player')return st==='playing';if(d.domain==='climate')return st!=='off'&&st!=='unavailable';if(d.domain==='lock')return st==='unlocked';if(d.domain==='valve')return st==='open';if(isWindowSensor(d))return windowStateKind(d)==='open';if(isLeakSensor(d))return leakStateKind(d)==='leak';return ['on','open','unlocked','playing'].includes(st)}
+function isOn(d,s=getState(d.entity_id)){const st=s?.state;if(!st)return false;if(['light','switch','input_boolean','fan','humidifier'].includes(d.domain))return st==='on';if(d.domain==='cover')return ['open','opening'].includes(st) || (Number(s?.attributes?.current_position)>0);if(d.domain==='media_player')return st==='playing';if(d.domain==='climate')return st!=='off'&&st!=='unavailable';if(d.domain==='water_heater')return st!=='off'&&st!=='unavailable';if(d.domain==='lock')return st==='unlocked';if(d.domain==='valve')return st==='open';if(isWindowSensor(d))return windowStateKind(d)==='open';if(isLeakSensor(d))return leakStateKind(d)==='leak';return ['on','open','unlocked','playing'].includes(st)}
 function brightnessLevel(d){
   const s=getState(d.entity_id); const b=Number(s?.attributes?.brightness);
   if(Number.isFinite(b)) return clamp(b/255,0.12,1);
@@ -1752,6 +1761,7 @@ function visualClass(d){
   if(d.domain==='light') return 'light-visual '+(isOn(d)?'light-on':'light-off')+' light-kind-'+lightKind(d);
   if(d.domain==='switch') return 'switch-visual '+(isOn(d)?'switch-on':'switch-off');
   if(d.domain==='climate') return 'climate-visual '+climateMode(d)+' climate-kind-'+climateKind(d);
+  if(d.domain==='water_heater') return 'water-heater-visual '+(isOn(d)?'water-heater-on':'water-heater-off');
   if(d.domain==='cover') return 'cover-visual cover-'+coverKind(d)+' cover-state-'+coverStateKind(d);
   if(isWindowSensor(d)) return 'window-visual window-state-'+windowStateKind(d);
   if(isLeakSensor(d)) return 'leak-visual leak-state-'+leakStateKind(d);
@@ -1772,9 +1782,11 @@ function visualStyle(d){
   }
   if(d.domain==='switch') return isOn(d)?haloCss(0.98,2.28):'--halo-alpha:0;--halo-scale:1;';
   if(d.domain==='climate') return climateMode(d)==='climate-off'?'--halo-alpha:0;--halo-scale:1;':haloCss(0.92,2.20);
+  if(d.domain==='water_heater') return isOn(d)?haloCss(0.90,2.15):'--halo-alpha:0;--halo-scale:1;';
   if(d.domain==='cover') return coverStateKind(d)==='closed'?'--halo-alpha:0;--halo-scale:1;':haloCss(0.90,2.10);
   if(isWindowSensor(d)) return windowStateKind(d)==='open'?haloCss(0.90,2.05):'--halo-alpha:0;--halo-scale:1;';
   if(isLeakSensor(d)) return leakStateKind(d)==='leak'?haloCss(0.96,2.20):'--halo-alpha:0;--halo-scale:1;';
+  if(d.domain==='binary_sensor') return getState(d.entity_id)?.state==='on'?haloCss(0.82,1.95):'--halo-alpha:0;--halo-scale:1;';
   return '';
 }
 
@@ -1786,7 +1798,10 @@ function localizedRawState(raw){
     detected:'обнаружено', clear:'не обнаружено', dry:'не обнаружено', wet:'обнаружено', leak:'обнаружено',
     playing:'воспроизведение', paused:'пауза', idle:'ожидание', standby:'ожидание', stopped:'остановлено',
     unavailable:'недоступно', unknown:'неизвестно', home:'дома', not_home:'не дома', heat:'обогрев', cool:'охлаждение',
-    auto:'авто', heat_cool:'авто', fan_only:'вентиляция', dry:'осушение'
+    auto:'авто', heat_cool:'авто', fan_only:'вентиляция', dry:'осушение',
+    electric:'электрический', gas:'газовый', heat_pump:'тепловой насос', eco:'эко',
+    performance:'производительность', high_demand:'высокое потребление', heat_boost:'ускоренный нагрев',
+    away:'отсутствие'
   })[st] || String(raw??'');
 }
 function stateText(d){
@@ -1806,6 +1821,7 @@ function stateText(d){
   if(d.domain==='automation') return st==='on'?'автоматизация включена':'автоматизация выключена';
   if(d.domain==='media_player') return mediaStateKind(d)==='playing'?'воспроизведение':'остановлено';
   if(d.domain==='climate') return localizedRawState(st);
+  if(d.domain==='water_heater') return isOn(d)?localizedRawState(st):'выключено';
   if(d.domain==='binary_sensor') return st==='on'?'обнаружено':'не обнаружено';
   return localizedRawState(s.state);
 }
@@ -2888,7 +2904,7 @@ function bindQuickActions(container){
 }
 function renderQuickActions(){
   if(state.edit){ const box=el('quick-actions'); if(box) box.innerHTML='<p class="muted">Быстрые действия отключены в режиме редактирования.</p>'; const over=el('quick-overlay-list'); if(over) over.innerHTML=''; return; }
-  const list=roomDevices(state.selectedRoom).filter(d=>['light','switch','cover','climate','media_player','fan','humidifier','input_number','input_select','valve','button','script','automation'].includes(d.domain)).slice(0,24);
+  const list=roomDevices(state.selectedRoom).filter(d=>['light','switch','cover','climate','water_heater','media_player','fan','humidifier','input_number','input_select','valve','button','script','automation'].includes(d.domain)).slice(0,24);
   const box=el('quick-actions'); if(box){ box.innerHTML=quickActionsHtml(list); bindQuickActions(box); }
   const over=el('quick-overlay-list'); if(over){ over.innerHTML=quickActionsHtml(list); bindQuickActions(over); }
 }
@@ -3242,11 +3258,22 @@ function domainControls(d){
     if(options.length) rows.push(`<label class="slider-row">Значение <select data-action="input-select">${options.map(o=>`<option value="${esc(o)}" ${String(s?.state)===String(o)?'selected':''}>${esc(o)}</option>`).join('')}</select></label>`);
   } else if(d.domain==='fan'){
     if(a.percentage!==undefined) rows.push(`<label class="slider-row">Скорость <input type="range" min="0" max="100" value="${Number(a.percentage)||0}" data-action="fan-percentage"><span id="fan-percentage-value">${Number(a.percentage)||0}%</span></label>`);
+  } else if(d.domain==='water_heater'){
+    const modes=Array.isArray(a.operation_list)?a.operation_list:['off','on'];
+    const curMode=String(s?.state||'off');
+    rows.push(`<div class="device-modal-actions mode-grid">${modes.map(m=>`<button type="button" class="${curMode===m?'selected':''}" data-action="water-heater-mode" data-mode="${esc(m)}">${esc(waterHeaterModeLabel(m))}</button>`).join('')}</div>`);
+    if(a.target_temperature!==undefined || a.current_temperature!==undefined){
+      const minRaw=Number(a.min_temp), maxRaw=Number(a.max_temp);
+      const min=Number.isFinite(minRaw)?minRaw:30, max=Number.isFinite(maxRaw)?maxRaw:75;
+      const val=Number.isFinite(Number(a.target_temperature))?Number(a.target_temperature):(Number.isFinite(Number(a.current_temperature))?Number(a.current_temperature):60);
+      rows.push(`<label class="slider-row">Целевая температура <input type="range" min="${min}" max="${max}" step="1" value="${val}" data-action="water-heater-temp"><span id="water-heater-temp-value">${val}°</span></label>`);
+    }
   }
   rows.push(`<details class="rename-box"><summary>Переименовать в этой системе</summary><label class="slider-row rename-row">Новое имя <input type="text" value="${esc(displayName(d))}" data-action="rename-local"><button type="button" data-action="rename-save">Сохранить имя</button></label><p class="muted">Имя меняется только здесь, Home Assistant не трогаем.</p></details>`);
   return rows.join('');
 }
 function modeLabel(m){return ({off:'Выкл',heat:'Обогрев',cool:'Охлаждение',heat_cool:'Авто',auto:'Авто',fan_only:'Вентиляция',dry:'Осушение'})[m]||m}
+function waterHeaterModeLabel(m){return ({off:'Выкл',on:'Вкл',electric:'Электрический',gas:'Газовый',heat_pump:'Тепловой насос',eco:'Эко',performance:'Производительность',high_demand:'Высокое потребление',heat_boost:'Ускоренный нагрев',away:'Отсутствие',auto:'Авто'})[m]||m}
 function openDeviceModal(d){
   const s=getState(d.entity_id); const a=s?.attributes||{};
   const modal=el('device-modal'); const body=el('device-modal-body');
@@ -3313,10 +3340,11 @@ function bindDeviceModalActions(d){
   const body=el('device-modal-body');
   qsa('[data-action]',body).forEach(ctrl=>{
     if(ctrl.type==='range'){
-      ctrl.oninput=()=>{ const span=el(ctrl.dataset.action==='target-temp'?'target-temp-value':ctrl.dataset.action==='cover-position'?'cover-position-value':ctrl.dataset.action==='fan-percentage'?'fan-percentage-value':ctrl.dataset.action==='input-number'?'input-number-value':'brightness-value'); if(span){ const unit = ctrl.dataset.action==='target-temp' ? '°' : (ctrl.dataset.action==='input-number' ? (getState(d.entity_id)?.attributes?.unit_of_measurement || '') : '%'); span.textContent=String(ctrl.value).replace('.', ',')+unit; } };
+      ctrl.oninput=()=>{ const spanId={['target-temp']:'target-temp-value',['cover-position']:'cover-position-value',['fan-percentage']:'fan-percentage-value',['input-number']:'input-number-value',['water-heater-temp']:'water-heater-temp-value'}[ctrl.dataset.action]||'brightness-value'; const span=el(spanId); if(span){ const isTempAction=ctrl.dataset.action==='target-temp'||ctrl.dataset.action==='water-heater-temp'; const unit=isTempAction?'°':(ctrl.dataset.action==='input-number'?(getState(d.entity_id)?.attributes?.unit_of_measurement||''):'%'); span.textContent=String(ctrl.value).replace('.',',')+unit; } };
       ctrl.onchange=async()=>{try{
         if(ctrl.dataset.action==='brightness') await callService('light','turn_on',{entity_id:d.entity_id,brightness_pct:Number(ctrl.value)});
         if(ctrl.dataset.action==='target-temp') await callService('climate','set_temperature',{entity_id:d.entity_id,temperature:Number(ctrl.value)});
+        if(ctrl.dataset.action==='water-heater-temp') await callService('water_heater','set_temperature',{entity_id:d.entity_id,temperature:Number(ctrl.value)});
         if(ctrl.dataset.action==='cover-position') await callService('cover','set_cover_position',{entity_id:d.entity_id,position:Number(ctrl.value)});
         if(ctrl.dataset.action==='fan-percentage') await callService('fan','set_percentage',{entity_id:d.entity_id,percentage:Number(ctrl.value)});
         if(ctrl.dataset.action==='input-number') await callService('input_number','set_value',{entity_id:d.entity_id,value:Number(ctrl.value)});
@@ -3334,6 +3362,7 @@ function bindDeviceModalActions(d){
         else if(action==='cover') await callService('cover',ctrl.dataset.service,{entity_id:d.entity_id});
         else if(action==='media') await callService('media_player',ctrl.dataset.service,{entity_id:d.entity_id});
         else if(action==='valve') await callService('valve',ctrl.dataset.service,{entity_id:d.entity_id});
+        else if(action==='water-heater-mode') await callService('water_heater','set_operation_mode',{entity_id:d.entity_id,operation_mode:ctrl.dataset.mode});
         else if(action==='automation') await callService('automation',ctrl.dataset.service,{entity_id:d.entity_id});
         else if(action==='input-number-text') await callService('input_number','set_value',{entity_id:d.entity_id,value:Number(ctrl.value)});
         else if(action==='input-select') await callService('input_select','select_option',{entity_id:d.entity_id,option:ctrl.value});
@@ -4087,6 +4116,7 @@ async function toggleDevice(d){
   else if(domain==='cover') { service=st==='open'?'close_cover':'open_cover'; }
   else if(domain==='media_player') { service=st==='off'?'turn_on':'turn_off'; }
   else if(domain==='climate') { service=st==='off'?'turn_on':'turn_off'; }
+  else if(domain==='water_heater') { service=st==='off'?'turn_on':'turn_off'; }
   else if(domain==='humidifier') { service=st==='on'?'turn_off':'turn_on'; }
   else if(domain==='valve') { service=(st==='open' || st==='opening') ? 'close_valve' : 'open_valve'; }
   else if(domain==='button') { service='press'; }
@@ -7368,6 +7398,7 @@ function bindGlobal(){
   };
   ['pref-confirm-dangerous','pref-dangerous-pin'].forEach(id=>{ const n=el(id); if(n) n.onchange=()=>{ saveGlobalPrefs().then(()=>{ updateEditButtons(); applyUiPrefs(); render(); }).catch(()=>{}); }; });
   bindRangePreview('pref-halo-scale','haloScale','pref-halo-scale-value');
+  const haChk=el('pref-halo-animated'); if(haChk) haChk.onchange=()=>{ state.ui.haloAnimated=haChk.checked; applyDisplayPrefsOnly(); saveUiPrefs(); };
   bindRangePreview('pref-hardware-scale','hardwareScale','pref-hardware-scale-value');
   bindRangePreview('pref-overview-halo-scale','overviewHaloScale','pref-overview-halo-scale-value');
   bindRangePreview('pref-overview-marker-scale','overviewMarkerScale','pref-overview-marker-scale-value');
