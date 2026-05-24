@@ -4935,6 +4935,48 @@ app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req
   res.status(503).json({ error: 'camera unavailable' });
 });
 
+// Временный debug-эндпоинт для диагностики камеры
+app.get('/api/camera/debug/:entity_id', async (req, res) => {
+  const entity_id = req.params.entity_id;
+  if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).json({error:'bad entity_id'});
+  const report = { entity_id, HA_API_BASE, has_token: !!HA_TOKEN };
+  // 1) Bearer
+  try {
+    const r = await fetch(`${HA_API_BASE}/camera_proxy/${entity_id}`, {
+      headers: { 'Authorization': `Bearer ${HA_TOKEN}` }, signal: AbortSignal.timeout(6000)
+    });
+    report.bearer_status = r.status;
+    report.bearer_content_type = r.headers.get('content-type');
+  } catch(e) { report.bearer_error = e.message; }
+  // 2) auth/sign_path
+  try {
+    const signed = await haWsCommand('auth/sign_path', { path: `/api/camera_proxy/${entity_id}`, expires: 30 });
+    report.sign_path_result = signed;
+    if(signed?.path) {
+      const haBase = HA_API_BASE.replace(/\/api$/, '');
+      const url = haBase + signed.path;
+      report.sign_path_url = url;
+      try {
+        const r2 = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        report.sign_path_status = r2.status;
+        report.sign_path_content_type = r2.headers.get('content-type');
+      } catch(e2) { report.sign_path_fetch_error = e2.message; }
+    }
+  } catch(e) { report.sign_path_error = e.message; }
+  // 3) camera_thumbnail
+  try {
+    const t = await haWsCommand('camera_thumbnail', { entity_id });
+    report.thumbnail_content_type = t?.content_type;
+    report.thumbnail_has_content = !!(t?.content);
+  } catch(e) { report.thumbnail_error = e.message; }
+  // 4) state attributes
+  try {
+    const st = statesCache?.get ? statesCache.get(entity_id) : (statesCache?.[entity_id]);
+    if(st) report.state_attributes = { state: st.state, entity_picture: st.attributes?.entity_picture, frontend_stream_type: st.attributes?.frontend_stream_type };
+  } catch(e) { report.state_error = e.message; }
+  res.json(report);
+});
+
 /* ── Layout export / import ───────────────────────────────────── */
 app.get('/api/export/layout', (req, res) => {
   try {
