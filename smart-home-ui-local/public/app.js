@@ -46,7 +46,7 @@ const state = {
   ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, haloAnimated:true, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   customIcons: {},
-  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, placementEditorPanelHidden:false, editActionSheetHidden:false, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), virtualHiddenOpenRooms:new Set(), openVirtualHiddenSettingsRooms:new Set(), standardSensorSuggestions:{}, standardSensorBusy:{}, standardSensorVisibility:{}, roomsHydrated:false, roomsReady:false, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}, renderMetrics:{sseConnected:false, sseConnectedAt:'', sseDisconnectedAt:'', stateChangedMinute:0, statesBatchMinute:0, patchCountMinute:0, renderCountMinute:0, totalPatch:0, totalRender:0, lastFullRenderAt:'', minuteStartedAt:Date.now()}
+  stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, cameraRefreshTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, placementEditorPanelHidden:false, editActionSheetHidden:false, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), virtualHiddenOpenRooms:new Set(), openVirtualHiddenSettingsRooms:new Set(), standardSensorSuggestions:{}, standardSensorBusy:{}, standardSensorVisibility:{}, roomsHydrated:false, roomsReady:false, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}, renderMetrics:{sseConnected:false, sseConnectedAt:'', sseDisconnectedAt:'', stateChangedMinute:0, statesBatchMinute:0, patchCountMinute:0, renderCountMinute:0, totalPatch:0, totalRender:0, lastFullRenderAt:'', minuteStartedAt:Date.now()}
 };
 
 const DEFAULT_CLIENT_UI = { ...state.ui };
@@ -2100,8 +2100,17 @@ function openCameraStream(d){
   img.dataset.entity=d.entity_id;
   img.alt='';
   img.src='';
+  const startSnapshot=()=>{
+    img.onerror=()=>{ img.alt='Камера недоступна или стрим не поддерживается'; };
+    img.src=`api/camera/snapshot/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
+    if(state.cameraRefreshTimer) clearInterval(state.cameraRefreshTimer);
+    state.cameraRefreshTimer=setInterval(()=>{
+      if(el('camera-modal')?.classList.contains('hidden')){ clearInterval(state.cameraRefreshTimer); state.cameraRefreshTimer=null; return; }
+      img.src=`api/camera/snapshot/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
+    }, 3000);
+  };
+  img.onerror=startSnapshot;
   img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
-  img.onerror=()=>{ img.alt='Камера недоступна или стрим не поддерживается'; };
   modal.classList.remove('hidden');
 }
 function closeCameraModal(){
@@ -2109,6 +2118,7 @@ function closeCameraModal(){
   if(modal) modal.classList.add('hidden');
   const img=el('camera-stream-img');
   if(img) img.src='';
+  if(state.cameraRefreshTimer){ clearInterval(state.cameraRefreshTimer); state.cameraRefreshTimer=null; }
 }
 function setLayoutDirty(value=true){
   state.layoutDirty=!!value;

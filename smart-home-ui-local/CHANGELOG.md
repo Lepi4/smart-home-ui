@@ -1,3 +1,11 @@
+# ALLHA-2D v5.1.0-beta.17 — camera snapshot fallback + hotfixes
+
+## Fixed
+
+- Camera modal now falls back to JPEG snapshot (auto-refresh каждые 3 с) если MJPEG-стрим (`camera_proxy_stream`) недоступен. NVT/ONVIF-камеры типа `camera.nvt_substream` теперь показывают изображение.
+- Добавлен `cameraRefreshTimer` в `state` — таймер корректно останавливается при закрытии модала.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.17`.
+
 # ALLHA-2D v5.1.0-beta.16 — cameras on floor plan, sensor values on markers, clock date & scale
 
 ## Added
