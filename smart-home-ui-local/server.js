@@ -4470,6 +4470,21 @@ app.get('/api/mobile/debug', (req, res) => {
     database: allhaDb.getInfo()
   });
 });
+app.get('/api/custom-icons', (req, res) => {
+  try { res.json({ ok: true, icons: allhaDb.getProjectDocument('custom-icons', {}) || {} }); }
+  catch(e) { safeErrorResponse(req, res, e); }
+});
+app.post('/api/custom-icon', express.json(), (req, res) => {
+  try {
+    const { entity_id, icon_name } = req.body || {};
+    if (!entity_id || typeof entity_id !== 'string') return res.status(400).json({ ok: false, error: 'entity_id required' });
+    const current = allhaDb.getProjectDocument('custom-icons', {}) || {};
+    if (icon_name && typeof icon_name === 'string') current[entity_id] = icon_name;
+    else delete current[entity_id];
+    allhaDb.setProjectDocument('custom-icons', current);
+    res.json({ ok: true });
+  } catch(e) { safeErrorResponse(req, res, e); }
+});
 app.get('/api/layout', (req,res)=>{ try{
   const lp=clientLevelPaths(req);
   res.json(loadEffectiveLayoutForRequest(req, lp.layout));

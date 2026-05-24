@@ -657,6 +657,25 @@
     </div>
   </div>
 
+  <div id="icon-picker-modal" class="modal hidden icon-picker-modal">
+    <div class="modal-card icon-picker-card">
+      <div class="modal-head">
+        <div>
+          <h2>Иконка устройства</h2>
+          <p class="muted">Поиск по библиотеке MDI (7 400+ иконок)</p>
+        </div>
+        <button type="button" class="close-word" onclick="closeIconPicker()">× Закрыть</button>
+      </div>
+      <div class="icon-picker-search-row">
+        <input id="icon-search-input" type="search" class="search" placeholder="Поиск: radiator, home, thermometer, lock, water, bulb…" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="icon-picker-grid" class="icon-picker-grid"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="clearCustomIcon()">Сбросить (авто)</button>
+        <button type="button" onclick="closeIconPicker()">Закрыть</button>
+      </div>
+    </div>
+  </div>
   <div id="device-picker-modal" class="modal hidden device-picker-modal">
     <div class="modal-card device-picker-card-wrap">
       <div class="modal-head">

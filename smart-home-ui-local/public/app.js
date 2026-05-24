@@ -45,6 +45,7 @@ const state = {
   serverUiState: null,
   ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, haloAnimated:true, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
+  customIcons: {},
   stageGesture: null, editHoldTimer:null, diagnostics:null, infoTab:'summary', clockTimer:null, persistTimer:null, openDeviceRoomGroup:null, openDevicePickerGroup:null, devicePickerShowAll:false, kioskLocked:false, kioskAutoLockTimer:null, kioskTileRoomFilter:'', placementEditor:null, placementEditorPanelHidden:false, editActionSheetHidden:false, images:null, roomsSettings:{version:1,rooms:{}}, attention:{ok:true,hasAlerts:false,rules:[]}, profiles:null, levels:null, backups:null, openStandardSensorRooms:new Set(), virtualHiddenOpenRooms:new Set(), openVirtualHiddenSettingsRooms:new Set(), standardSensorSuggestions:{}, standardSensorBusy:{}, standardSensorVisibility:{}, roomsHydrated:false, roomsReady:false, setupWizard:{step:1, profileName:'Дом', levelCount:1, levelNames:['1 этаж'], createdProfileId:null}, renderMetrics:{sseConnected:false, sseConnectedAt:'', sseDisconnectedAt:'', stateChangedMinute:0, statesBatchMinute:0, patchCountMinute:0, renderCountMinute:0, totalPatch:0, totalRender:0, lastFullRenderAt:'', minuteStartedAt:Date.now()}
 };
 
@@ -1541,7 +1542,82 @@ function sensorIconMarkup(d){
   return `<svg class="icon-svg sensor-${k}" viewBox="0 0 24 24" aria-hidden="true">${paths[k]}</svg>`;
 }
 
+/* ── MDI Icon Picker ─────────────────────────────────────────────────── */
+let _mdiIcons = null;
+let _iconPickerEntityId = null;
+async function loadMdiIcons(){
+  if(!_mdiIcons){
+    try{ _mdiIcons=await fetch('/mdi-icons.json').then(r=>r.json()); }catch(_){ _mdiIcons={}; }
+  }
+  return _mdiIcons;
+}
+async function loadCustomIcons(){
+  try{
+    const j=await apiJson('api/custom-icons');
+    state.customIcons=j.icons||{};
+    if(Object.keys(state.customIcons).length>0){ await loadMdiIcons(); render(); }
+  }catch(_){}
+}
+async function openIconPicker(entityId){
+  _iconPickerEntityId=entityId;
+  const modal=el('icon-picker-modal');
+  if(!modal) return;
+  modal.classList.remove('hidden');
+  syncModalOpenClass();
+  const grid=el('icon-picker-grid');
+  if(grid) grid.innerHTML='<div class="icon-picker-hint icon-picker-loading">Загрузка библиотеки иконок…</div>';
+  await loadMdiIcons();
+  const inp=el('icon-search-input');
+  if(inp){ inp.value=''; inp.oninput=()=>renderIconGrid(inp.value); setTimeout(()=>inp.focus(),60); }
+  renderIconGrid('');
+}
+function closeIconPicker(){
+  el('icon-picker-modal')?.classList.add('hidden');
+  syncModalOpenClass();
+  _iconPickerEntityId=null;
+}
+function renderIconGrid(query){
+  const grid=el('icon-picker-grid');
+  if(!grid||!_mdiIcons) return;
+  const q=query.trim().toLowerCase();
+  if(q.length<2){
+    grid.innerHTML='<div class="icon-picker-hint">Введите минимум 2 символа для поиска.<br><span class="muted">Например: <b>radiator</b>, <b>home</b>, <b>thermometer</b>, <b>lock</b>, <b>water</b>, <b>bulb</b></span></div>';
+    return;
+  }
+  const all=Object.keys(_mdiIcons);
+  const exact=all.filter(n=>n.startsWith(q));
+  const partial=all.filter(n=>!n.startsWith(q)&&n.includes(q));
+  const filtered=[...exact,...partial].slice(0,300);
+  if(!filtered.length){
+    grid.innerHTML=`<div class="icon-picker-hint">Иконки не найдены по запросу «${esc(q)}»</div>`;
+    return;
+  }
+  const current=state.customIcons?.[_iconPickerEntityId]||'';
+  grid.innerHTML=filtered.map(name=>
+    `<button type="button" class="icon-cell${name===current?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(name)}">`+
+    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${esc(_mdiIcons[name])}"/></svg>`+
+    `<span>${esc(name)}</span></button>`
+  ).join('');
+  grid.querySelectorAll('.icon-cell').forEach(btn=>{ btn.onclick=()=>selectCustomIcon(btn.dataset.icon); });
+}
+async function selectCustomIcon(iconName){
+  if(!_iconPickerEntityId) return;
+  try{
+    const j=await apiJson('api/custom-icon',{method:'POST',body:JSON.stringify({entity_id:_iconPickerEntityId,icon_name:iconName})});
+    if(j.ok){ if(!state.customIcons) state.customIcons={}; state.customIcons[_iconPickerEntityId]=iconName; closeIconPicker(); render(); }
+  }catch(e){ showToast('Ошибка: '+e.message); }
+}
+async function clearCustomIcon(){
+  if(!_iconPickerEntityId) return;
+  try{
+    const j=await apiJson('api/custom-icon',{method:'POST',body:JSON.stringify({entity_id:_iconPickerEntityId,icon_name:null})});
+    if(j.ok){ if(state.customIcons) delete state.customIcons[_iconPickerEntityId]; closeIconPicker(); render(); }
+  }catch(e){ showToast('Ошибка: '+e.message); }
+}
+/* ─────────────────────────────────────────────────────────────────────── */
 function iconMarkup(d){
+  const ci=state.customIcons?.[d.entity_id];
+  if(ci&&_mdiIcons?.[ci]) return `<svg class="icon-svg custom-mdi-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${esc(_mdiIcons[ci])}"/></svg>`;
   if(d.domain==='sensor' || (d.domain==='binary_sensor' && !isWindowSensor(d) && !isLeakSensor(d))){ return sensorIconMarkup(d); }
   if(d.domain==='climate'){
     const k=climateKind(d);
@@ -3269,6 +3345,7 @@ function domainControls(d){
       rows.push(`<label class="slider-row">Целевая температура <input type="range" min="${min}" max="${max}" step="1" value="${val}" data-action="water-heater-temp"><span id="water-heater-temp-value">${val}°</span></label>`);
     }
   }
+  if(canEditLayout()) rows.push(`<div class="device-modal-actions"><button type="button" data-action="change-icon" class="btn-icon-change">Сменить иконку (MDI)</button></div>`);
   rows.push(`<details class="rename-box"><summary>Переименовать в этой системе</summary><label class="slider-row rename-row">Новое имя <input type="text" value="${esc(displayName(d))}" data-action="rename-local"><button type="button" data-action="rename-save">Сохранить имя</button></label><p class="muted">Имя меняется только здесь, Home Assistant не трогаем.</p></details>`);
   return rows.join('');
 }
@@ -3355,6 +3432,7 @@ function bindDeviceModalActions(d){
         const action=ctrl.dataset.action;
         if(action==='attention-toggle'){ await toggleAttentionRule(d); return; }
         if(action==='dangerous-toggle'){ await toggleDangerousRule(d); return; }
+        if(action==='change-icon'){ closeDeviceModal(); openIconPicker(d.entity_id); return; }
         if(action==='rename-save'){ const input=body.querySelector('[data-action=\"rename-local\"]'); const name=(input?.value||'').trim(); if(!state.layout.customNames) state.layout.customNames={}; if(name) state.layout.customNames[d.entity_id]=name; else delete state.layout.customNames[d.entity_id]; await saveLayout(false); showToast('Имя сохранено'); render(); openDeviceModal(d); return; }
         if(action==='rename-local') return;
         if(action==='toggle') await toggleDevice(d);
@@ -7545,6 +7623,7 @@ function applyConfigToInputs(){
 
 (async function init(){
   await loadLayout();
+  loadCustomIcons();
   await loadSourceConfig();
   await loadPersistedUiState();
   await loadAttention();

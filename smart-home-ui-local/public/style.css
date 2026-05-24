@@ -1230,6 +1230,21 @@ body.kiosk-mode .kiosk-rooms-btn{left:12px!important}
 body.editing .device-panel{display:none!important}
 body.editing #btn-show-device-panel{display:none!important}
 body.editing .workspace{grid-template-columns:minmax(0,1fr)!important}
+.icon-picker-modal{z-index:1800!important}
+.icon-picker-card{width:min(720px,calc(100vw - 18px));height:min(90dvh,780px);max-height:90dvh;display:flex;flex-direction:column;background:#0f141b!important}
+.icon-picker-search-row{padding:0 1rem .6rem;flex-shrink:0}
+.icon-picker-search-row .search{width:100%;box-sizing:border-box}
+.icon-picker-grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:4px;padding:0 1rem 1rem;overscroll-behavior:contain}
+.icon-picker-hint{grid-column:1/-1;padding:2.5rem 1rem;text-align:center;color:#7b8a9a;line-height:1.8;font-size:14px}
+.icon-picker-hint b{color:#b0bec5}
+.icon-picker-loading{animation:iconPickerPulse 1s ease-in-out infinite}
+@keyframes iconPickerPulse{0%,100%{opacity:1}50%{opacity:.45}}
+.icon-cell{display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 4px 7px;border-radius:10px;border:1.5px solid transparent;background:rgba(255,255,255,.04);cursor:pointer;transition:border-color .13s,background .13s;min-width:0;color:inherit}
+.icon-cell:hover{border-color:#4e8cff;background:rgba(78,140,255,.14)}
+.icon-cell.icon-cell-selected{border-color:#4e8cff;background:rgba(78,140,255,.22)}
+.icon-cell svg{width:30px;height:30px;fill:currentColor;flex-shrink:0}
+.icon-cell span{font-size:9px;color:#7b8a9a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;text-align:center}
+.btn-icon-change{background:rgba(78,140,255,.12)!important;border-color:#4e8cff!important;color:#7eb6ff!important}
 .device-picker-modal{z-index:1800!important}
 .device-picker-card-wrap{width:min(980px,calc(100vw - 18px));height:min(88dvh,760px);max-height:88dvh;background:#0f141b!important}
 .device-picker-tools{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid #252c36;background:#10161e}

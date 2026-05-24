@@ -1,3 +1,15 @@
+# ALLHA-2D v5.1.0-beta.13 — MDI icon picker for markers
+
+## Added
+
+- **MDI icon picker** — long-press a device marker to open the device modal, then tap "Сменить иконку (MDI)" to open the icon picker. Full Material Design Icons library (7 400+ icons) with live search: type 2+ characters and matching icons appear instantly as a grid with SVG previews. Results are sorted: exact-prefix matches first, then partial matches, up to 300 shown.
+- Custom icon is saved per entity to the server (SQLite `project_documents`). Icon persists across page reloads and all connected clients.
+- "Сбросить (авто)" button restores the default domain icon.
+- Custom MDI icon overrides the built-in SVG icon in floor plan markers, quick actions, and device cards.
+- `public/mdi-icons.json` — pre-generated icon library (~2.7 MB, loaded lazily on first icon picker open).
+- `scripts/gen-mdi.js` — regeneration script (`npm run gen:icons`) using `@mdi/svg` devDependency.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.13`.
+
 # ALLHA-2D v5.1.0-beta.12 — window/leak sensor device_class detection
 
 ## Fixed
