@@ -1579,7 +1579,7 @@ let _mdiIcons = null;
 let _iconPickerEntityId = null;
 async function loadMdiIcons(){
   if(!_mdiIcons){
-    try{ _mdiIcons=await fetch('/mdi-icons.json').then(r=>r.json()); }catch(_){ _mdiIcons={}; }
+    try{ _mdiIcons=await fetch('mdi-icons.json').then(r=>r.json()); }catch(_){ _mdiIcons={}; }
   }
   return _mdiIcons;
 }

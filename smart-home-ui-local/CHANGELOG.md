@@ -1,3 +1,10 @@
+# ALLHA-2D v5.1.0-beta.20 — fix MDI icons under HA Ingress
+
+## Fixed
+
+- `fetch('/mdi-icons.json')` заменён на `fetch('mdi-icons.json')` (относительный URL). Под HA Ingress абсолютный путь уходил на корень HA (`/mdi-icons.json`) вместо аддона → 404 → пустой словарь → поиск иконок не работал.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.20`.
+
 # ALLHA-2D v5.1.0-beta.19 — custom icon color per device
 
 ## Added
