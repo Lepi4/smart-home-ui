@@ -349,6 +349,7 @@ body.compact-mode .device-card{padding:7px;border-radius:10px}
 .quick-action.water-heater-off .quick-icon{background:rgba(11,14,18,var(--marker-bg-opacity,.94))!important;color:#f4a045!important;box-shadow:none!important}
 .device-marker.water-heater-on::before,.device-card.water-heater-on .dev-icon::before,.quick-action.water-heater-on .quick-icon::before{background:radial-gradient(circle,rgba(255,120,40,.95),rgba(255,120,40,.56) 42%,rgba(255,120,40,.22) 72%,rgba(255,120,40,0) 100%);animation:softHalo 2.6s ease-in-out infinite}
 .device-marker.active::before,.device-card.active .dev-icon::before,.quick-action.active .quick-icon::before{animation:softHalo 2.4s ease-in-out infinite}
+.device-marker.switch-on::before,.device-card.switch-on .dev-icon::before,.quick-action.switch-on .quick-icon::before{animation:softHalo 2.2s ease-in-out infinite}
 body:not(.halo-animated) .device-marker::before,
 body:not(.halo-animated) .dev-icon::before,
 body:not(.halo-animated) .quick-icon::before{animation:none!important}

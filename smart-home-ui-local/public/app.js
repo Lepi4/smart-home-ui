@@ -1787,7 +1787,7 @@ function visualStyle(d){
   if(isWindowSensor(d)) return windowStateKind(d)==='open'?haloCss(0.90,2.05):'--halo-alpha:0;--halo-scale:1;';
   if(isLeakSensor(d)) return leakStateKind(d)==='leak'?haloCss(0.96,2.20):'--halo-alpha:0;--halo-scale:1;';
   if(d.domain==='binary_sensor') return getState(d.entity_id)?.state==='on'?haloCss(0.82,1.95):'--halo-alpha:0;--halo-scale:1;';
-  return '';
+  return isOn(d)?haloCss(0.82,1.90):'--halo-alpha:0;--halo-scale:1;';
 }
 
 function localizedRawState(raw){

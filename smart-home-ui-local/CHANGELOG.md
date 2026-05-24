@@ -6,6 +6,14 @@
 - `climate-fan` / `climate-on` marker state backgrounds also updated for consistency.
 - Service Worker cache bumped to `allha2d-v5.1.0-beta.9`.
 
+# ALLHA-2D v5.1.0-beta.11 — halos for all active markers
+
+## Fixed
+
+- All active device markers now show a halo. Previously `fan`, `humidifier`, `media_player`, `input_boolean`, `lock`, `valve` had no halo regardless of state. The `visualStyle` fallback now returns `haloCss(0.82, 1.90)` for any domain in the ON/active state.
+- `switch-on` halo is now animated (pulsing). Previously the halo was visible but static.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.11`.
+
 # ALLHA-2D v5.1.0-beta.10 — water_heater support, binary sensor halos, halo animation toggle
 
 ## Added
