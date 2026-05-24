@@ -1,3 +1,11 @@
+# ALLHA-2D v5.1.0-beta.12 — window/leak sensor device_class detection
+
+## Fixed
+
+- Window and door sensors now show a halo regardless of entity name. `isWindowSensor` now checks the HA `device_class` attribute (`window`, `door`) first before falling back to name-based matching. Previously, sensors without "окно"/"window" in the name had no halo even when open.
+- `isLeakSensor` similarly checks `device_class: moisture` first before name matching.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.12`.
+
 # ALLHA-2D v5.1.0-beta.9 — light/climate marker opacity fix
 
 ## Fixed

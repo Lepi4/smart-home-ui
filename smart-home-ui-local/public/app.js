@@ -1503,8 +1503,8 @@ function climateKind(d){
   return 'ac';
 }
 function coverKind(d){ const t=deviceText(d); return (t.includes('рулон') || t.includes('rulon') || t.includes('rol') || t.includes('roller')) ? 'roller' : 'curtain'; }
-function isWindowSensor(d){ const t=deviceText(d); return d.domain==='binary_sensor' && (t.includes('окно') || t.includes('okno') || t.includes('window')); }
-function isLeakSensor(d){ const t=deviceText(d); return d.domain==='binary_sensor' && (t.includes('протеч') || t.includes('protech') || t.includes('leak') || t.includes('water_leak') || t.includes('moisture')); }
+function isWindowSensor(d){ if(d.domain!=='binary_sensor') return false; const dc=getState(d.entity_id)?.attributes?.device_class; if(dc==='window'||dc==='door') return true; const t=deviceText(d); return t.includes('окно')||t.includes('форточ')||t.includes('okno')||t.includes('window'); }
+function isLeakSensor(d){ if(d.domain!=='binary_sensor') return false; const dc=getState(d.entity_id)?.attributes?.device_class; if(dc==='moisture') return true; const t=deviceText(d); return t.includes('протеч')||t.includes('protech')||t.includes('leak')||t.includes('water_leak')||t.includes('moisture'); }
 function coverStateKind(d){
   const s=getState(d.entity_id); const st=String(s?.state||'').toLowerCase(); const pos=s?.attributes?.current_position;
   if(st==='unavailable') return 'unavailable';
