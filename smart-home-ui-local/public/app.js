@@ -174,7 +174,7 @@ function refreshRuntimeRooms(){
 }
 const TYPE_ICONS = { light:'💡', switch:'🔌', cover:'▤', climate:'❄️', media_player:'▶️', humidifier:'💧', sensor:'📟', binary_sensor:'●', valve:'🚰', lock:'🔒', scene:'✨', fan:'💨', input_boolean:'✅', input_number:'🔢', input_select:'▾', button:'⏺', script:'▶', automation:'⚙', person:'👤', camera:'📷' };
 const TOGGLE_DOMAINS = new Set(['light','switch','fan','input_boolean','cover','media_player','climate','humidifier','valve','water_heater']);
-const IMPORTANT_DOMAINS = new Set(['light','switch','cover','climate','media_player','humidifier','fan','sensor','binary_sensor','input_boolean','input_number','input_select','valve','lock','button','script','automation','water_heater']);
+const IMPORTANT_DOMAINS = new Set(['light','switch','cover','climate','media_player','humidifier','fan','sensor','binary_sensor','input_boolean','input_number','input_select','valve','lock','button','script','automation','water_heater','camera']);
 const LONG_PRESS_MS = 560;
 const GESTURE_MOVE_PX = 14;
 const DRAG_SUPPRESS_MS = 420;
@@ -184,7 +184,7 @@ const DRAG_SUPPRESS_MS = 420;
 // Ключи, хранящиеся на сервере глобально (одинаковы для всех устройств)
 const GLOBAL_UI_KEYS = new Set(['weatherEntity']);
 // Ключи, хранящиеся per-device в /api/prefs (у каждого устройства свои)
-const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode']);
+const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode','clockScale','clockShowDate','markerValueScale']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors','theme']);
 const CLIENT_STATE_UI_KEYS = new Set([...DEVICE_UI_KEYS, ...CLIENT_UI_KEYS]);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
@@ -1424,6 +1424,8 @@ function applyUiPrefs(){
   document.documentElement.style.setProperty('--sensor-bg-opacity', String(clamp(1 - Number(displayPrefs.sensorOpacity ?? 0), 0, 1))); // setting is background transparency
   document.documentElement.style.setProperty('--device-card-font-scale', String(clamp(Number(state.ui.cardFontScale ?? 0.90), 0.6, 1.6)));
   document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - Number(state.ui.virtualCardTransparency ?? 0) / 100, 0, 1)));
+  document.documentElement.style.setProperty('--clock-scale', String(clamp(Number(state.ui.clockScale ?? 1), 0.4, 2.5)));
+  document.documentElement.style.setProperty('--marker-value-scale', String(clamp(Number(state.ui.markerValueScale ?? 1), 0.5, 2.5)));
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
   const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel || state.ui.kioskMode);
   const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar || state.ui.kioskMode);
@@ -1444,6 +1446,10 @@ function applyUiPrefs(){
   const kas=el('pref-kiosk-autolock-seconds'); if(kas) kas.value=String(Number(state.ui.kioskAutoLockSeconds||15));
   const we=el('pref-weather-entity'); if(we) we.value=state.ui.weatherEntity||'';
   const widget=el('kiosk-widget'); if(widget) widget.classList.toggle('hidden', !state.ui.kioskWidget);
+  const cks=el('pref-clock-scale'); if(cks){ cks.value=String(Math.round(Number(state.ui.clockScale ?? 1)*100)); const ckv=el('pref-clock-scale-value'); if(ckv) ckv.textContent=cks.value+'%'; }
+  const ckd=el('pref-clock-show-date'); if(ckd) ckd.checked=!!state.ui.clockShowDate;
+  const kcd=el('kiosk-clock-date'); if(kcd) kcd.classList.toggle('hidden', !state.ui.clockShowDate);
+  const mvs=el('pref-marker-value-scale'); if(mvs){ mvs.value=String(Math.round(Number(state.ui.markerValueScale ?? 1)*100)); const mvv=el('pref-marker-value-scale-value'); if(mvv) mvv.textContent=mvs.value+'%'; }
   updateKioskOverviewButton();
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
   const tz=el('toggle-zones'); if(tz) tz.checked=state.ui.showZones!==false;
@@ -1740,7 +1746,9 @@ function sensorReadingLabel(d){
     const formatted = formatSensorReading(s.state, 0, unitRaw);
     if(formatted) return formatted;
   }
-  return '';
+  const raw=String(s.state ?? '').trim();
+  if(!raw || raw==='unknown' || raw==='unavailable') return '';
+  return raw.length>9 ? raw.slice(0,9)+'…' : raw;
 }
 function sensorRoomReadingLabel(d){
   const s=getState(d.entity_id); if(!s || isUnavailable(d)) return '';
@@ -6668,7 +6676,19 @@ async function readLovelaceRaw(){
 
 function formatBytes(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1024*1024) return Math.round(n/102.4)/10+' KB'; return Math.round(n/104857.6)/10+' MB'; }
 function renderKioskWidget(){
-  const clock=el('kiosk-clock'); if(clock){ const d=new Date(); clock.textContent=d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+  const now=new Date();
+  const clock=el('kiosk-clock'); if(clock) clock.textContent=now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const dateEl=el('kiosk-clock-date');
+  if(dateEl){
+    if(state.ui.clockShowDate){
+      const wd=now.toLocaleDateString('ru-RU',{weekday:'long'});
+      const dt=now.toLocaleDateString('ru-RU',{day:'numeric',month:'long'});
+      dateEl.textContent=wd.charAt(0).toUpperCase()+wd.slice(1)+', '+dt;
+      dateEl.classList.remove('hidden');
+    } else {
+      dateEl.classList.add('hidden');
+    }
+  }
   const wbox=el('kiosk-weather'); if(!wbox) return;
   const id=String(state.ui.weatherEntity||'').trim();
   if(!id){ wbox.textContent=''; return; }
@@ -7472,6 +7492,9 @@ function bindGlobal(){
   const pal=el('pref-kiosk-autolock'); if(pal) pal.onchange=e=>{state.ui.kioskAutoLock=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const pas=el('pref-kiosk-autolock-seconds'); if(pas) pas.onchange=e=>{state.ui.kioskAutoLockSeconds=Math.max(5, Math.min(300, Number(e.target.value||15))); applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   onEl('pref-weather-entity','change',e=>{state.ui.weatherEntity=e.target.value.trim(); renderKioskWidget();});
+  bindRangePreview('pref-clock-scale','clockScale','pref-clock-scale-value');
+  onEl('pref-clock-show-date','change',e=>{ state.ui.clockShowDate=e.target.checked; renderKioskWidget(); applyUiPrefs(); saveUiPrefs(); });
+  bindRangePreview('pref-marker-value-scale','markerValueScale','pref-marker-value-scale-value');
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
   const pmodeSelect=el('pref-panel-mode');
   if(pmodeSelect) pmodeSelect.onchange=async()=>{

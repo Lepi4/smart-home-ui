@@ -1,3 +1,17 @@
+# ALLHA-2D v5.1.0-beta.16 — cameras on floor plan, sensor values on markers, clock date & scale
+
+## Added
+
+- **Camera entities in device picker** — `camera` domain added to `IMPORTANT_DOMAINS`; cameras now appear in the device list for adding to floor plan. Camera markers were already fully supported; they were just missing from the picker.
+- **Generic sensor values on markers** — `sensor` entities without a known category (template sensors, custom sensors) now show their raw state value below the icon on the floor plan marker. Previously only temperature, humidity, CO2, noise, and illuminance sensors showed values.
+- **Clock date / day-of-week** — new checkbox in Settings → Interface: "Показывать дату и день недели под часами". When enabled, the kiosk clock widget shows the weekday and date in Russian below the time.
+- **Clock scale slider** — new slider in Settings → Interface: "Масштаб виджета часов" (40–250%). Scales the entire clock/weather widget via CSS `transform:scale(--clock-scale)`.
+- **Marker value font-size slider** — new slider in Settings → Map & Markers: "Размер значения на маркере" (50–250%). Scales the value badge on device markers (brightness %, temperature setpoint, sensor reading) and the large sensor readout in room view.
+
+## Fixed
+
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.16`.
+
 # ALLHA-2D v5.1.0-beta.15 — SVG metric badge icons + CO2 sensor icon fix
 
 ## Fixed

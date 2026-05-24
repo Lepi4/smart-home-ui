@@ -85,6 +85,7 @@
         </div>
         <div id="kiosk-widget" class="kiosk-widget hidden" aria-label="Часы и погода">
           <div id="kiosk-clock" class="kiosk-clock">--:--</div>
+          <div id="kiosk-clock-date" class="kiosk-clock-date hidden"></div>
           <div id="kiosk-weather" class="kiosk-weather"></div>
         </div>
         <div id="project-setup-empty" class="project-setup-empty hidden">
@@ -237,6 +238,8 @@
           </label>
           <label class="settings-check"><input type="checkbox" id="pref-kiosk-widget"> Крупные часы / погода на плане</label>
           <label>Entity погоды или температуры <input id="pref-weather-entity" type="text" placeholder="weather.home или sensor.outdoor_temperature"></label>
+          <label class="settings-check"><input type="checkbox" id="pref-clock-show-date"> Показывать дату и день недели под часами</label>
+          <label>Масштаб виджета часов <input id="pref-clock-scale" type="range" min="40" max="250" value="100"><span id="pref-clock-scale-value">100%</span></label>
           <label class="settings-check"><input type="checkbox" id="pref-invisible-zones"> Невидимые зоны: кликабельны, но не видны</label>
         </div>
       </div>
@@ -246,6 +249,7 @@
         <p class="muted">Размеры и прозрачность элементов карты для текущего клиента.</p>
         <div class="form-grid settings-extra-grid map-marker-settings-grid">
           <label class="settings-wide">Аппаратный масштаб карты по умолчанию <input id="pref-hardware-scale" type="range" min="30" max="150" value="100"><span id="pref-hardware-scale-value">100%</span></label>
+          <label class="settings-wide">Размер значения на маркере (яркость, температура, сенсор) <input id="pref-marker-value-scale" type="range" min="50" max="250" value="100"><span id="pref-marker-value-scale-value">100%</span></label>
           <div class="settings-subsection settings-wide">
             <h4>Общий план</h4>
             <p class="muted">Эти параметры применяются только на общем плане.</p>
