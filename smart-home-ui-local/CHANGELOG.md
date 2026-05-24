@@ -1,3 +1,10 @@
+# ALLHA-2D v5.1.0-beta.14 — SVG icons for all marker domains (Pi kiosk fix)
+
+## Fixed
+
+- Device markers for `switch`, `fan`, `humidifier`, `input_boolean`, `valve`, `lock`, `button`, `script`, `automation`, `input_number`, `input_select`, `scene` now use inline SVG icons instead of emoji characters. Previously these domains fell through to the emoji fallback (`TYPE_ICONS`), which rendered as empty squares on Raspberry Pi kiosk Chromium due to missing emoji fonts.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.14`.
+
 # ALLHA-2D v5.1.0-beta.13 — MDI icon picker for markers
 
 ## Added

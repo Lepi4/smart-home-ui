@@ -1664,6 +1664,18 @@ function iconMarkup(d){
   if(d.domain==='camera'){
     return `<svg class="icon-svg camera-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`;
   }
+  if(d.domain==='switch') return `<svg class="icon-svg switch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M8 6a6 6 0 1 0 8 0"/></svg>`;
+  if(d.domain==='fan') return `<svg class="icon-svg fan-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.5"/><path d="M12 9.5c0-2.5-1.2-5-3.5-5-1.3 0-2.5 1-2.5 2.5 0 2.5 3 3.5 4.5 4.5m2.5 2.5c2.5 0 5 1.2 5 3.5 0 1.3-1 2.5-2.5 2.5-2.5 0-3.5-3-4.5-4.5m-2.5 2c0 2.5 1.2 5 3.5 5 1.3 0 2.5-1 2.5-2.5 0-2.5-3-3.5-4.5-4.5m-2.5-2.5c-2.5 0-5-1.2-5-3.5 0-1.3 1-2.5 2.5-2.5 2.5 0 3.5 3 4.5 4.5"/></svg>`;
+  if(d.domain==='humidifier') return `<svg class="icon-svg humidifier-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C8 8 6 11 6 15a6 6 0 0 0 12 0c0-4-2-7-6-12Z"/><path d="M9 17a3.5 3.5 0 0 0 6 0"/></svg>`;
+  if(d.domain==='input_boolean') return `<svg class="icon-svg toggle-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="5"/><circle cx="16" cy="12" r="4"/></svg>`;
+  if(d.domain==='valve') return `<svg class="icon-svg valve-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>`;
+  if(d.domain==='lock') return `<svg class="icon-svg lock-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
+  if(d.domain==='button') return `<svg class="icon-svg button-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>`;
+  if(d.domain==='script') return `<svg class="icon-svg script-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>`;
+  if(d.domain==='automation') return `<svg class="icon-svg automation-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h3l2-5 4 10 2-5h3"/><circle cx="20" cy="12" r="1.5"/></svg>`;
+  if(d.domain==='input_number') return `<svg class="icon-svg slider-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h7M4 17h16"/><circle cx="14" cy="12" r="2.5"/></svg>`;
+  if(d.domain==='input_select') return `<svg class="icon-svg select-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 11l4 4 4-4"/></svg>`;
+  if(d.domain==='scene') return `<svg class="icon-svg scene-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6L12 2Z"/></svg>`;
   return `<span class="emoji-icon">${esc(d.emoji || TYPE_ICONS[d.domain] || '•')}</span>`;
 }
 function iconFor(d){return d.emoji || TYPE_ICONS[d.domain] || '•'}
