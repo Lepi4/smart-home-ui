@@ -1,3 +1,11 @@
+# ALLHA-2D v5.1.0-beta.22 — camera snapshot auth/sign_path fix
+
+## Fixed
+
+- Снапшот камеры: добавлен второй способ — `auth/sign_path` через WebSocket (тот же механизм, что Lovelace использует для `authSig`). Когда `camera_proxy` с Bearer-токеном возвращает 403 — сервер запрашивает подписанный URL через WebSocket и скачивает кадр по нему. Это должно починить NVT/ONVIF камеры (go2rtc).
+- Исправлен баг: `haWsCommand({ type: 'camera_thumbnail' })` — передавался объект вместо строки типа. Теперь `camera_thumbnail` как третий вариант фолбэка тоже работает корректно.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.22`.
+
 # ALLHA-2D v5.1.0-beta.21 — camera snapshot via WebSocket fallback + version display fix
 
 ## Fixed

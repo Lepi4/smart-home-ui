@@ -4893,11 +4893,12 @@ app.get('/api/camera/stream/:entity_id', makeRateLimit(20, 60_000), async (req, 
   } catch(e) { if(!res.headersSent && !ac.signal.aborted) res.status(500).end(); }
 });
 
-// Одиночный кадр: сначала camera_proxy, при 403/ошибке — WebSocket camera_thumbnail (как Lovelace)
+// Одиночный кадр: 1) Bearer camera_proxy, 2) auth/sign_path (как Lovelace), 3) camera_thumbnail legacy
 app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req, res) => {
   const entity_id = req.params.entity_id;
   if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).json({error:'Некорректный entity_id'});
   if(!HA_TOKEN) return res.status(503).json({error:'HA_TOKEN недоступен'});
+  // 1) Bearer token
   try {
     const camRes = await fetch(`${HA_API_BASE}/camera_proxy/${entity_id}`, {
       headers: { 'Authorization': `Bearer ${HA_TOKEN}` },
@@ -4909,9 +4910,22 @@ app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req
       return res.end(Buffer.from(await camRes.arrayBuffer()));
     }
   } catch(_) {}
-  // Fallback: WebSocket camera_thumbnail (работает так же как Lovelace)
+  // 2) auth/sign_path — Lovelace-способ: получаем подписанный URL с authSig
   try {
-    const result = await haWsCommand({ type: 'camera_thumbnail', entity_id });
+    const signed = await haWsCommand('auth/sign_path', { path: `/api/camera_proxy/${entity_id}`, expires: 30 });
+    if(signed?.path) {
+      const haBase = HA_API_BASE.replace(/\/api$/, '');
+      const camRes = await fetch(haBase + signed.path, { signal: AbortSignal.timeout(6000) });
+      if(camRes.ok) {
+        res.setHeader('Content-Type', camRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        return res.end(Buffer.from(await camRes.arrayBuffer()));
+      }
+    }
+  } catch(_) {}
+  // 3) camera_thumbnail (legacy WebSocket, для совместимости)
+  try {
+    const result = await haWsCommand('camera_thumbnail', { entity_id });
     if(result?.content) {
       res.setHeader('Content-Type', result.content_type || 'image/jpeg');
       res.setHeader('Cache-Control', 'no-store');
