@@ -53,6 +53,9 @@ const state = {
 const DEFAULT_CLIENT_UI = { ...state.ui };
 function resetProfileScopedUiDefaults(){
   const defaults = pickKeys(DEFAULT_CLIENT_UI, CLIENT_STATE_UI_KEYS);
+  // Do not reset user customizations — they are entity-scoped and meaningful across profiles
+  delete defaults.customIcons; delete defaults.customIconColors; delete defaults.defaultIconColor;
+  delete defaults.customMarkerScales; delete defaults.customMarkerOpacities;
   state.ui = { ...state.ui, ...defaults, hideSidebar:true, hideDevicePanel:true };
   state.selectedRoom = 'overview';
   state.viewport = { overview:{zoom:1,panX:0,panY:0}, rooms:{} };
@@ -2321,6 +2324,7 @@ function openCameraStream(d){
     }, 8000);
     video.style.display=''; img.style.display='none';
     video.onerror=fallback; // catch MediaError that HLS.js might miss
+    video.muted=true; // required for autoplay after async delay (gesture context expires during fetch)
     if(typeof Hls !== 'undefined' && Hls && Hls.isSupported()){
       _hlsInstance=new Hls({ enableWorker:false });
       _hlsInstance.loadSource(hlsUrl);
@@ -3731,27 +3735,27 @@ function bindDeviceModalActions(d){
             if(v!==1) a.style.setProperty('--device-marker-scale',String(clamp(v,0.2,3)));
             else a.style.removeProperty('--device-marker-scale');
           });
-          saveUiPrefs(); return;
+          clearTimeout(state._sliderSaveTimer); state._sliderSaveTimer=setTimeout(()=>saveUiPrefs(),400); return;
         }
         if(ctrl.dataset.action==='marker-opacity'){
           const factor=Number(ctrl.value)/100;
           if(!state.ui.customMarkerOpacities) state.ui.customMarkerOpacities={};
           state.ui.customMarkerOpacities[d.entity_id]=factor;
           const span=el('marker-opacity-value'); if(span) span.textContent=ctrl.value+'%';
+          const _dp=scopedDisplayPrefs();
+          const _globalBgOp=clamp(1-Number(_dp.markerOpacity??0),0,1);
           qsa(`.marker-anchor[data-entity="${CSS.escape(d.entity_id)}"]`).forEach(a=>{
             const btn=a.querySelector('.device-marker'); if(!btn) return;
-            const dp=scopedDisplayPrefs();
-            const globalBgOp=clamp(1-Number(dp.markerOpacity??0),0,1);
-            if(factor!==1) btn.style.setProperty('--marker-bg-opacity',String(clamp(globalBgOp*factor,0,1)));
+            if(factor!==1) btn.style.setProperty('--marker-bg-opacity',String(clamp(_globalBgOp*factor,0,1)));
             else btn.style.removeProperty('--marker-bg-opacity');
           });
-          saveUiPrefs(); return;
+          clearTimeout(state._sliderSaveTimer); state._sliderSaveTimer=setTimeout(()=>saveUiPrefs(),400); return;
         }
         const spanId={['target-temp']:'target-temp-value',['cover-position']:'cover-position-value',['fan-percentage']:'fan-percentage-value',['input-number']:'input-number-value',['water-heater-temp']:'water-heater-temp-value'}[ctrl.dataset.action]||'brightness-value';
         const span=el(spanId); if(span){ const isTempAction=ctrl.dataset.action==='target-temp'||ctrl.dataset.action==='water-heater-temp'; const unit=isTempAction?'°':(ctrl.dataset.action==='input-number'?(getState(d.entity_id)?.attributes?.unit_of_measurement||''):'%'); span.textContent=String(ctrl.value).replace('.',',')+unit; }
       };
       ctrl.onchange=async()=>{try{
-        if(ctrl.dataset.action==='marker-scale'||ctrl.dataset.action==='marker-opacity') return; // handled in oninput
+        if(ctrl.dataset.action==='marker-scale'||ctrl.dataset.action==='marker-opacity'){ clearTimeout(state._sliderSaveTimer); state._sliderSaveTimer=null; saveUiPrefs(); return; } // handled in oninput
         if(ctrl.dataset.action==='brightness') await callService('light','turn_on',{entity_id:d.entity_id,brightness_pct:Number(ctrl.value)});
         if(ctrl.dataset.action==='target-temp') await callService('climate','set_temperature',{entity_id:d.entity_id,temperature:Number(ctrl.value)});
         if(ctrl.dataset.action==='water-heater-temp') await callService('water_heater','set_temperature',{entity_id:d.entity_id,temperature:Number(ctrl.value)});

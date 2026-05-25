@@ -1794,6 +1794,10 @@ function loadUiState(uiPath = UI_STATE_PATH){
   for(const key of Object.keys(def.ui)){
     if(Object.prototype.hasOwnProperty.call(legacyUi, key)) cleanUi[key] = legacyUi[key];
   }
+  // Pass through client-persisted customization keys not in the default schema
+  for(const key of ['customIcons','customIconColors','defaultIconColor','customMarkerScales','customMarkerOpacities']){
+    if(Object.prototype.hasOwnProperty.call(legacyUi, key)) cleanUi[key] = legacyUi[key];
+  }
   // Older resets could revive the legacy left sidebar. New/current defaults keep it hidden
   // unless the user explicitly opens it after the reset.
   if(Number(loaded?.version || 0) < 2 && !Object.prototype.hasOwnProperty.call(legacyUi, 'hideSidebar')) cleanUi.hideSidebar = true;
