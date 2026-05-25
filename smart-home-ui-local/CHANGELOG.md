@@ -1,3 +1,13 @@
+# ALLHA-2D v5.1.0-beta.29 — icon picker grouped by category
+
+## Changed
+
+- **Выбор иконок — группировка по категории** — иконки теперь отображаются сгруппированными по первому слову имени (например, все `apple-*` в группе **Apple**, все `google-*` в группе **Google**).
+- Малые пакеты (Бренды, Phosphor, Remix — до 2000 иконок): открываются сразу со всеми иконками без поиска.
+- Большие пакеты (MDI, Tabler — 2000+): поиск открывает сгруппированные результаты.
+- Лимит результатов поиска увеличен с 300 до 500.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.29`.
+
 # ALLHA-2D v5.1.0-beta.28 — fix camera fallback for HEVC/H.265 streams
 
 ## Fixed

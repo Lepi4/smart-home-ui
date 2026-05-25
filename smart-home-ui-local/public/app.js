@@ -1681,26 +1681,48 @@ function renderIconGrid(query){
   const store=_iconStores[_iconPickerPack];
   if(!grid||!pack||!store) return;
   const q=query.trim().toLowerCase();
-  if(q.length<2){
-    grid.innerHTML='<div class="icon-picker-hint">Введите минимум 2 символа для поиска.<br><span class="muted">Например: <b>radiator</b>, <b>home</b>, <b>thermometer</b>, <b>lock</b>, <b>water</b>, <b>bulb</b></span></div>';
-    return;
-  }
   const allNames=Object.keys(store);
+  const isLargePack=allNames.length>=2000;
   const shortOf=n=>iconPackShortName(n);
-  const exact=allNames.filter(n=>shortOf(n).startsWith(q));
-  const partial=allNames.filter(n=>!shortOf(n).startsWith(q)&&shortOf(n).includes(q));
-  const filtered=[...exact,...partial].slice(0,300);
+  const groupOf=n=>{ const s=shortOf(n); const i=s.indexOf('-'); return i>0?s.slice(0,i):s; };
+
+  let filtered;
+  if(q.length===0 && isLargePack){
+    grid.innerHTML='<div class="icon-picker-hint">Введите запрос для поиска.<br><span class="muted">Например: <b>radiator</b>, <b>home</b>, <b>thermometer</b>, <b>lock</b>, <b>water</b>, <b>bulb</b></span></div>';
+    return;
+  } else if(q.length===0){
+    filtered=allNames; // small pack — show all grouped
+  } else {
+    const exact=allNames.filter(n=>shortOf(n).startsWith(q));
+    const partial=allNames.filter(n=>!shortOf(n).startsWith(q)&&shortOf(n).includes(q));
+    filtered=[...exact,...partial].slice(0,500);
+  }
   if(!filtered.length){
     grid.innerHTML=`<div class="icon-picker-hint">Иконки не найдены по запросу «${esc(q)}»</div>`;
     return;
   }
+  // Group by first word before dash
+  const groups=new Map();
+  for(const name of filtered){
+    const g=groupOf(name);
+    if(!groups.has(g)) groups.set(g,[]);
+    groups.get(g).push(name);
+  }
   const current=state.ui?.customIcons?.[_iconPickerEntityId]||'';
-  grid.innerHTML=filtered.map(name=>{
-    const paths=store[name];
-    return `<button type="button" class="icon-cell${name===current?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(name)}">`+
-      `<svg viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`+
-      `<span>${esc(shortOf(name))}</span></button>`;
-  }).join('');
+  let html='';
+  let first=true;
+  for(const [groupName,icons] of groups){
+    const cap=groupName.charAt(0).toUpperCase()+groupName.slice(1);
+    html+=`<div class="icon-group-header${first?' icon-group-first':''}">${esc(cap)}<span class="icon-group-count">${icons.length}</span></div>`;
+    first=false;
+    for(const name of icons){
+      const paths=store[name];
+      html+=`<button type="button" class="icon-cell${name===current?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(iconPackShortName(name))}">`+
+        `<svg viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`+
+        `<span>${esc(shortOf(name))}</span></button>`;
+    }
+  }
+  grid.innerHTML=html;
   grid.querySelectorAll('.icon-cell').forEach(btn=>{ btn.onclick=()=>selectCustomIcon(btn.dataset.icon); });
 }
 function selectCustomIcon(iconName){
