@@ -6,7 +6,7 @@
 .badge .temp:before{content:'🌡 ';font-size:12px}.badge .drop{filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
 .device-marker{width:36px;height:36px}.device-marker.active{box-shadow:0 0 0 3px rgba(255,194,82,.46),0 0 18px 4px rgba(255,194,82,.46),0 7px 15px rgba(0,0,0,.25)}
 .device-card.active .dev-icon,.quick-action.active .quick-icon{box-shadow:0 0 0 2px rgba(255,194,82,.35),0 0 16px rgba(255,194,82,.42)}
-.icon-svg{width:20px;height:20px;display:block;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.device-marker .icon-svg{color:var(--marker-icon-color,#ffd36e)}.device-card .icon-svg,.quick-action .icon-svg{color:#ffd36e}.emoji-icon{display:inline-flex;line-height:1}.quick-action{display:grid!important;grid-template-columns:28px 1fr auto;align-items:center;gap:9px}.quick-icon{width:28px;height:28px;border-radius:9px;background:#222833;display:flex;align-items:center;justify-content:center}.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);z-index:2000;background:rgba(18,23,30,.94);color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 36px rgba(0,0,0,.35);border-radius:999px;padding:10px 16px;font-weight:700;opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.icon-svg{width:20px;height:20px;display:block;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.device-marker .icon-svg{color:var(--marker-icon-color,var(--default-icon-color,#ffd36e))}.device-card .icon-svg,.quick-action .icon-svg{color:var(--default-icon-color,#ffd36e)}.emoji-icon{display:inline-flex;line-height:1}.quick-action{display:grid!important;grid-template-columns:28px 1fr auto;align-items:center;gap:9px}.quick-icon{width:28px;height:28px;border-radius:9px;background:#222833;display:flex;align-items:center;justify-content:center}.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);z-index:2000;background:rgba(18,23,30,.94);color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 36px rgba(0,0,0,.35);border-radius:999px;padding:10px 16px;font-weight:700;opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .device-card{cursor:pointer}.device-card .state{cursor:pointer}.device-card.active{border-color:rgba(255,194,82,.45)}
 
 /* v2.3 visual state system: light inversion + dimmable halo + climate colors */
@@ -4080,6 +4080,10 @@ body.child-modal-open .mobile-menu-bar{display:none!important;visibility:hidden!
 .icon-color-swatch-active{border-color:#fff!important;transform:scale(1.18);box-shadow:0 0 0 2px rgba(255,255,255,.35)}
 .icon-color-reset{width:24px;height:24px;border-radius:50%;border:1px dashed rgba(255,255,255,.35);background:transparent;color:rgba(255,255,255,.55);cursor:pointer;font-size:11px;line-height:24px;text-align:center;padding:0;flex-shrink:0;transition:border-color .12s,color .12s}
 .icon-color-reset:hover{border-color:rgba(255,255,255,.7);color:#fff}
+.settings-icon-color-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 0 2px;color:#c5cfda;font-size:13px}
+.settings-icon-color-row span{flex:0 0 auto}
+.settings-icon-color-row .icon-color-palette{padding:0}
+.btn-small{padding:5px 10px;font-size:12px;border-radius:8px}
 
 /* marker value scale applies only to floor plan markers, not to sidebar tiles or quick actions */
 .device-marker .marker-value{font-size:calc(9px * var(--marker-value-scale,1))!important}

@@ -4939,10 +4939,31 @@ app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req
 app.get('/api/camera/stream-url/:entity_id', async (req, res) => {
   const entity_id = req.params.entity_id;
   if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).json({error:'bad entity_id'});
+
+  // Helper: get entity_picture from HA state (contains static camera token)
+  const getEntityPicture = async () => {
+    try {
+      const r = await fetch(`${HA_API_BASE}/states/${entity_id}`, {
+        headers: { 'Authorization': `Bearer ${HA_TOKEN}` }, signal: AbortSignal.timeout(4000)
+      });
+      if(r.ok){ const d = await r.json(); return d?.attributes?.entity_picture || null; }
+    } catch(_) {}
+    return null;
+  };
+
+  // 1. Try HLS via HA WebSocket camera/stream (go2rtc etc.)
   try {
     const result = await haWsCommand('camera/stream', { entity_id, format: 'hls' });
-    if(result?.url) return res.json({ ok: true, url: result.url, format: 'hls' });
-  } catch(e) {}
+    if(result?.url){
+      const entity_picture = await getEntityPicture();
+      return res.json({ ok: true, url: result.url, format: 'hls', entity_picture });
+    }
+  } catch(_) {}
+
+  // 2. MJPEG fallback: return entity_picture token for browser-side streaming in Ingress mode
+  const entity_picture = await getEntityPicture();
+  if(entity_picture) return res.json({ ok: true, format: 'mjpeg', entity_picture });
+
   res.json({ ok: false });
 });
 

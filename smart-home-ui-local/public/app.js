@@ -185,7 +185,7 @@ const DRAG_SUPPRESS_MS = 420;
 // Ключи, хранящиеся на сервере глобально (одинаковы для всех устройств)
 const GLOBAL_UI_KEYS = new Set(['weatherEntity']);
 // Ключи, хранящиеся per-device в /api/prefs (у каждого устройства свои)
-const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode','clockScale','clockShowDate','markerValueScale']);
+const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode','clockScale','clockShowDate','markerValueScale','customIcons','customIconColors','defaultIconColor']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors','theme']);
 const CLIENT_STATE_UI_KEYS = new Set([...DEVICE_UI_KEYS, ...CLIENT_UI_KEYS]);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
@@ -657,6 +657,8 @@ function applyDisplayPrefsOnly(){
   document.documentElement.style.setProperty('--device-card-font-scale', String(clamp(Number(state.ui.cardFontScale ?? 0.90), 0.6, 1.6)));
   const vct = clamp(Number(state.ui.virtualCardTransparency ?? 0), 0, 100);
   document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - vct / 100, 0, 1)));
+  const dic = state.ui?.defaultIconColor;
+  document.documentElement.style.setProperty('--default-icon-color', dic && /^#[0-9a-fA-F]{6}$/.test(dic) ? dic : '#ffd36e');
   if(isVirtualRoom(state.selectedRoom)) requestAnimationFrame(()=>applyVirtualRoomAdaptiveGrid(state.selectedRoom));
 }
 function refreshVisibleMarkersAfterDisplayPrefs(){
@@ -1455,6 +1457,7 @@ function applyUiPrefs(){
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
   const tz=el('toggle-zones'); if(tz) tz.checked=state.ui.showZones!==false;
   const iz=el('pref-invisible-zones'); if(iz){ iz.checked=!!state.ui.invisibleZones; }
+  renderDefaultIconColorPalette();
   const tdv=el('toggle-devices'); if(tdv) tdv.checked=state.ui.showMarkers!==false;
   const ts=el('toggle-sensors'); if(ts) ts.checked=state.ui.showSensors!==false;
   const ph=el('pref-halo-scale'); if(ph){ ph.value=String(Math.round(Number(state.ui.haloScale ?? 0.50)*100)); const hv=el('pref-halo-scale-value'); if(hv) hv.textContent=ph.value+'%'; }
@@ -1552,26 +1555,35 @@ function sensorIconMarkup(d){
 
 const MARKER_COLOR_PALETTE = ['#ffffff','#ffd34d','#ffab40','#ff8c42','#ff5252','#f48fb1','#ce93d8','#7c4dff','#40c4ff','#00b0ff','#1de9b6','#69f0ae','#aed581','#90a4ae','#aeb8c6'];
 
-async function loadCustomIconColors(){
-  try{ const j=await apiJson('api/custom-icon-colors'); state.customIconColors=j.colors||{}; if(Object.keys(state.customIconColors).length>0) render(); }catch(_){}
+function loadCustomIconColors(){
+  // Colors are now stored in state.ui.customIconColors (localStorage, per-client)
 }
-async function selectIconColor(entityId, color){
-  try{
-    const j=await apiJson('api/custom-icon-color',{method:'POST',body:JSON.stringify({entity_id:entityId,color})});
-    if(j.ok){ if(!state.customIconColors) state.customIconColors={}; state.customIconColors[entityId]=color; render(); openDeviceModal(devices().find(d=>d.entity_id===entityId)); }
-  }catch(e){ showToast('Ошибка: '+e.message); }
+function selectIconColor(entityId, color){
+  if(!state.ui.customIconColors) state.ui.customIconColors={};
+  state.ui.customIconColors[entityId]=color;
+  saveUiPrefs();
+  render();
+  openDeviceModal(devices().find(d=>d.entity_id===entityId));
 }
-async function clearIconColor(entityId){
-  try{
-    const j=await apiJson('api/custom-icon-color',{method:'POST',body:JSON.stringify({entity_id:entityId,color:null})});
-    if(j.ok){ if(state.customIconColors) delete state.customIconColors[entityId]; render(); openDeviceModal(devices().find(d=>d.entity_id===entityId)); }
-  }catch(e){ showToast('Ошибка: '+e.message); }
+function clearIconColor(entityId){
+  if(state.ui?.customIconColors) delete state.ui.customIconColors[entityId];
+  saveUiPrefs();
+  render();
+  openDeviceModal(devices().find(d=>d.entity_id===entityId));
 }
 function iconColorPaletteHtml(entityId){
-  const cur=state.customIconColors?.[entityId]||'';
+  const cur=state.ui?.customIconColors?.[entityId]||'';
   const circles=MARKER_COLOR_PALETTE.map(c=>`<button type="button" class="icon-color-swatch${c===cur?' icon-color-swatch-active':''}" style="background:${c}" data-color="${c}" data-entity="${esc(entityId)}" title="${c}"></button>`).join('');
   const reset=cur?`<button type="button" class="icon-color-reset" data-entity="${esc(entityId)}" title="Сбросить цвет">✕</button>`:'';
   return `<div class="icon-color-palette">${circles}${reset}</div>`;
+}
+function renderDefaultIconColorPalette(){
+  const palette=el('pref-default-icon-color-palette');
+  if(!palette) return;
+  const cur=state.ui?.defaultIconColor||'';
+  palette.innerHTML=MARKER_COLOR_PALETTE.map(c=>
+    `<button type="button" class="icon-color-swatch${c===cur?' icon-color-swatch-active':''}" style="background:${c}" data-global-color="${c}" title="${c}"></button>`
+  ).join('');
 }
 
 /* ── Multi-Pack Icon Picker ──────────────────────────────────────────── */
@@ -1624,16 +1636,13 @@ async function loadIconPack(packId){
 }
 async function loadMdiIcons(){ return loadIconPack('mdi'); }
 async function loadCustomIcons(){
-  try{
-    const j=await apiJson('api/custom-icons');
-    state.customIcons=j.icons||{};
-    if(Object.keys(state.customIcons).length>0){
-      const usedPacks=new Set(['mdi']);
-      Object.values(state.customIcons).forEach(n=>{ const p=iconPackId(n); if(ICON_PACKS[p]) usedPacks.add(p); });
-      await Promise.all([...usedPacks].map(loadIconPack));
-      render();
-    }
-  }catch(_){}
+  // Icons are stored in state.ui.customIcons (localStorage, per-client)
+  const icons = state.ui?.customIcons;
+  if(icons && Object.keys(icons).length>0){
+    const usedPacks=new Set(['mdi']);
+    Object.values(icons).forEach(n=>{ const p=iconPackId(n); if(ICON_PACKS[p]) usedPacks.add(p); });
+    await Promise.all([...usedPacks].map(loadIconPack));
+  }
 }
 async function openIconPicker(entityId){
   _iconPickerEntityId=entityId;
@@ -1685,7 +1694,7 @@ function renderIconGrid(query){
     grid.innerHTML=`<div class="icon-picker-hint">Иконки не найдены по запросу «${esc(q)}»</div>`;
     return;
   }
-  const current=state.customIcons?.[_iconPickerEntityId]||'';
+  const current=state.ui?.customIcons?.[_iconPickerEntityId]||'';
   grid.innerHTML=filtered.map(name=>{
     const paths=store[name];
     return `<button type="button" class="icon-cell${name===current?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(name)}">`+
@@ -1694,23 +1703,24 @@ function renderIconGrid(query){
   }).join('');
   grid.querySelectorAll('.icon-cell').forEach(btn=>{ btn.onclick=()=>selectCustomIcon(btn.dataset.icon); });
 }
-async function selectCustomIcon(iconName){
+function selectCustomIcon(iconName){
   if(!_iconPickerEntityId) return;
-  try{
-    const j=await apiJson('api/custom-icon',{method:'POST',body:JSON.stringify({entity_id:_iconPickerEntityId,icon_name:iconName})});
-    if(j.ok){ if(!state.customIcons) state.customIcons={}; state.customIcons[_iconPickerEntityId]=iconName; closeIconPicker(); render(); }
-  }catch(e){ showToast('Ошибка: '+e.message); }
+  if(!state.ui.customIcons) state.ui.customIcons={};
+  state.ui.customIcons[_iconPickerEntityId]=iconName;
+  saveUiPrefs();
+  closeIconPicker();
+  render();
 }
-async function clearCustomIcon(){
+function clearCustomIcon(){
   if(!_iconPickerEntityId) return;
-  try{
-    const j=await apiJson('api/custom-icon',{method:'POST',body:JSON.stringify({entity_id:_iconPickerEntityId,icon_name:null})});
-    if(j.ok){ if(state.customIcons) delete state.customIcons[_iconPickerEntityId]; closeIconPicker(); render(); }
-  }catch(e){ showToast('Ошибка: '+e.message); }
+  if(state.ui?.customIcons) delete state.ui.customIcons[_iconPickerEntityId];
+  saveUiPrefs();
+  closeIconPicker();
+  render();
 }
 /* ─────────────────────────────────────────────────────────────────────── */
 function iconMarkup(d){
-  const ci=state.customIcons?.[d.entity_id];
+  const ci=state.ui?.customIcons?.[d.entity_id];
   if(ci){ const svgEl=customIconSvg(ci); if(svgEl) return svgEl; }
   if(d.domain==='sensor' || (d.domain==='binary_sensor' && !isWindowSensor(d) && !isLeakSensor(d))){ return sensorIconMarkup(d); }
   if(d.domain==='climate'){
@@ -1921,7 +1931,7 @@ function markerValueHtml(d, scope='overview'){
   return v?`<span class="marker-value">${esc(v)}</span>`:'';
 }
 function markerInnerHtml(d, scope='overview'){
-  const color=state.customIconColors?.[d.entity_id];
+  const color=state.ui?.customIconColors?.[d.entity_id];
   const cs=color?` style="--marker-icon-color:${color}"`:''  ;
   if(shouldRenderSensorTextMarker(d, scope)) return `<span class="sensor-room-icon"${cs}>${iconMarkup(d)}</span><span class="sensor-room-value">${esc(sensorRoomReadingLabel(d))}</span>`;
   return `<span class="ico"${cs}>${iconMarkup(d)}</span>${markerValueHtml(d, scope)}`;
@@ -2230,29 +2240,37 @@ function openCameraStream(d){
     return true;
   };
 
-  // Пытаемся получить HLS URL через HA WebSocket camera/stream
+  const inIngress = window.location.pathname.includes('hassio_ingress');
+
+  // MJPEG stream via entity_picture token (Ingress mode only — browser accesses HA directly)
+  const tryMjpegStream = (entity_picture) => {
+    const mjpegPath = entity_picture.replace('/api/camera_proxy/', '/api/camera_proxy_stream/');
+    img.style.display=''; if(video) video.style.display='none';
+    img.onerror=startSnapshot;
+    img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
+    state.cameraStreamTimer=setTimeout(startSnapshot, 8000);
+    img.src=window.location.origin + mjpegPath;
+  };
+
+  // Пытаемся получить HLS URL или MJPEG token через HA WebSocket camera/stream
   fetch(`api/camera/stream-url/${encodeURIComponent(d.entity_id)}`)
     .then(r=>r.json())
     .then(data=>{
-      if(data?.ok && data.url){
-        // В Ingress-режиме браузер = HA origin; иначе используем относительный путь (сервер проксирует)
-        const haBase = window.location.pathname.includes('hassio_ingress') ? window.location.origin : '';
+      if(data?.ok && data.format==='hls' && data.url){
+        const haBase = inIngress ? window.location.origin : '';
         const hlsUrl = haBase + data.url;
-        if(!tryHlsVideo(hlsUrl)) startSnapshot();
+        if(!tryHlsVideo(hlsUrl)){
+          // HLS failed — try MJPEG if available, else snapshot
+          if(inIngress && data.entity_picture) tryMjpegStream(data.entity_picture);
+          else startSnapshot();
+        }
+      } else if(data?.ok && data.format==='mjpeg' && data.entity_picture && inIngress){
+        tryMjpegStream(data.entity_picture);
       } else {
-        // HLS недоступен — MJPEG/snapshot fallback
-        img.onerror=startSnapshot;
-        img.onload=()=>{ if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } img.onload=null; };
-        state.cameraStreamTimer=setTimeout(startSnapshot, 1500);
-        img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
+        startSnapshot();
       }
     })
-    .catch(()=>{
-      img.onerror=startSnapshot;
-      img.onload=()=>{ if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } img.onload=null; };
-      state.cameraStreamTimer=setTimeout(startSnapshot, 1500);
-      img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
-    });
+    .catch(()=>startSnapshot());
 
   modal.classList.remove('hidden');
 }
@@ -3524,7 +3542,7 @@ function domainControls(d){
       rows.push(`<label class="slider-row">Целевая температура <input type="range" min="${min}" max="${max}" step="1" value="${val}" data-action="water-heater-temp"><span id="water-heater-temp-value">${val}°</span></label>`);
     }
   }
-  if(canEditLayout()) rows.push(`<div class="device-modal-actions"><button type="button" data-action="change-icon" class="btn-icon-change">Сменить иконку (MDI)</button></div>${iconColorPaletteHtml(d.entity_id)}`);
+  if(canEditLayout()) rows.push(`<div class="device-modal-actions"><button type="button" data-action="change-icon" class="btn-icon-change">Сменить иконку</button></div>${iconColorPaletteHtml(d.entity_id)}`);
   rows.push(`<details class="rename-box"><summary>Переименовать в этой системе</summary><label class="slider-row rename-row">Новое имя <input type="text" value="${esc(displayName(d))}" data-action="rename-local"><button type="button" data-action="rename-save">Сохранить имя</button></label><p class="muted">Имя меняется только здесь, Home Assistant не трогаем.</p></details>`);
   return rows.join('');
 }
@@ -7655,6 +7673,13 @@ function bindGlobal(){
   onEl('pref-kiosk-widget','change',e=>{state.ui.kioskWidget=e.target.checked; applyUiPrefs(); renderKioskWidget();});
   const dbgPref=el('pref-debug-mode'); if(dbgPref) dbgPref.onchange=e=>{state.ui.debugMode=e.target.checked; applyUiPrefs(); saveGlobalPrefs().catch(()=>{});};
   const invZones=el('pref-invisible-zones'); if(invZones) invZones.onchange=e=>{state.ui.invisibleZones=e.target.checked; saveUiPrefs(); applyUiPrefs(); render();};
+  onEl('pref-default-icon-color-palette','click',e=>{
+    const btn=e.target.closest('[data-global-color]');
+    if(!btn) return;
+    state.ui.defaultIconColor=btn.dataset.globalColor;
+    saveUiPrefs(); applyUiPrefs(); render(); renderDefaultIconColorPalette();
+  });
+  clickEl('btn-reset-default-icon-color',()=>{ delete state.ui.defaultIconColor; saveUiPrefs(); applyUiPrefs(); render(); renderDefaultIconColorPalette(); });
   onEl('pref-kiosk-mode','change',e=>{state.ui.kioskMode=e.target.checked; if(e.target.checked){ state.kioskLocked=false; state.ui.hideSidebar=true; state.ui.hideDevicePanel=true; state.ui.hideToolbar=true; } saveUiPrefs(); render(); resetKioskAutoLock();});
   const ktp=el('pref-kiosk-navigation-mode'); if(ktp) ktp.onchange=e=>{ state.ui.kioskNavigationMode=e.target.value; if(e.target.value==='maps') state.ui.kioskTileMode=false; if(e.target.value==='tiles') state.ui.kioskTileMode=true; state.kioskTilePage=0; saveUiPrefs(); applyUiPrefs(); render(); };
   const oldKtp=el('pref-kiosk-tile-mode'); if(oldKtp) oldKtp.onchange=e=>{ state.ui.kioskTileMode=!!e.target.checked; state.kioskTilePage=0; saveUiPrefs(); render(); };
@@ -7829,8 +7854,7 @@ function applyConfigToInputs(){
 
 (async function init(){
   await loadLayout();
-  loadCustomIcons();
-  loadCustomIconColors();
+  loadCustomIcons(); // preload icon pack JSON files for any non-MDI icons in state.ui.customIcons
   await loadSourceConfig();
   await loadPersistedUiState();
   await loadAttention();
