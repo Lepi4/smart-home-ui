@@ -1243,7 +1243,8 @@ body.editing .workspace{grid-template-columns:minmax(0,1fr)!important}
 .icon-picker-grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:4px;padding:0 1rem 1rem;overscroll-behavior:contain}
 .icon-picker-hint{grid-column:1/-1;padding:2.5rem 1rem;text-align:center;color:#7b8a9a;line-height:1.8;font-size:14px}
 .icon-group-header{grid-column:1/-1;padding:8px 4px 3px;margin-top:6px;font-size:11px;font-weight:700;color:#7b8a9a;text-transform:uppercase;letter-spacing:.06em;border-top:1px solid rgba(255,255,255,.06);display:flex;align-items:baseline;gap:6px}
-.icon-group-first{border-top:none;margin-top:0}
+.icon-group-pack{font-size:13px;color:#9ab0c4;text-transform:none;letter-spacing:0;padding-top:10px;margin-top:8px;border-top:1px solid rgba(255,255,255,.1)}
+.icon-group-first{border-top:none;margin-top:0;padding-top:4px}
 .icon-group-count{font-weight:400;color:#3f5060;font-size:10px}
 .icon-picker-hint b{color:#b0bec5}
 .icon-picker-loading{animation:iconPickerPulse 1s ease-in-out infinite}

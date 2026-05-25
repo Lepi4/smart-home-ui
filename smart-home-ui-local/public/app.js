@@ -1599,6 +1599,7 @@ const _iconStores = {};
 const _iconPackLoading = {};
 let _iconPickerEntityId = null;
 let _iconPickerPack = 'mdi';
+let _searchGen = 0; // generation counter to cancel stale cross-pack searches
 
 function iconPackId(name){
   if(!name) return 'mdi';
@@ -1675,55 +1676,93 @@ async function switchIconPack(packId){
   await loadIconPack(packId);
   renderIconGrid(el('icon-search-input')?.value||'');
 }
-function renderIconGrid(query){
+// Renders icon grid for a SINGLE pack (used for tab browse without search)
+function renderSinglePackGrid(q){
   const grid=el('icon-picker-grid');
   const pack=ICON_PACKS[_iconPickerPack];
   const store=_iconStores[_iconPickerPack];
   if(!grid||!pack||!store) return;
-  const q=query.trim().toLowerCase();
   const allNames=Object.keys(store);
-  const isLargePack=allNames.length>=2000;
   const shortOf=n=>iconPackShortName(n);
   const groupOf=n=>{ const s=shortOf(n); const i=s.indexOf('-'); return i>0?s.slice(0,i):s; };
+  const filtered=allNames.length<2000?allNames:[];
+  if(!filtered.length){ grid.innerHTML='<div class="icon-picker-hint muted">Используйте поиск выше.</div>'; return; }
+  _buildIconHtml(grid,[{pack,packId:_iconPickerPack,names:filtered}],q);
+}
 
-  let filtered;
-  if(q.length===0 && isLargePack){
-    grid.innerHTML='<div class="icon-picker-hint">Введите запрос для поиска.<br><span class="muted">Например: <b>radiator</b>, <b>home</b>, <b>thermometer</b>, <b>lock</b>, <b>water</b>, <b>bulb</b></span></div>';
-    return;
-  } else if(q.length===0){
-    filtered=allNames; // small pack — show all grouped
-  } else {
+// Cross-pack search: loads all packs, renders results grouped by pack
+async function renderCrossPackSearch(query){
+  const gen=++_searchGen;
+  const grid=el('icon-picker-grid');
+  if(!grid) return;
+  grid.innerHTML='<div class="icon-picker-hint icon-picker-loading">Поиск по всем пакетам…</div>';
+  await Promise.all(Object.keys(ICON_PACKS).map(loadIconPack));
+  if(gen!==_searchGen) return; // cancelled by newer search
+  const q=query.trim().toLowerCase();
+  const packResults=[];
+  for(const [packId,pack] of Object.entries(ICON_PACKS)){
+    const store=_iconStores[packId];
+    if(!store) continue;
+    const allNames=Object.keys(store);
+    const shortOf=n=>iconPackShortName(n);
     const exact=allNames.filter(n=>shortOf(n).startsWith(q));
     const partial=allNames.filter(n=>!shortOf(n).startsWith(q)&&shortOf(n).includes(q));
-    filtered=[...exact,...partial].slice(0,500);
+    const names=[...exact,...partial].slice(0,80);
+    if(names.length) packResults.push({pack,packId,names,total:exact.length+partial.length});
   }
-  if(!filtered.length){
-    grid.innerHTML=`<div class="icon-picker-hint">Иконки не найдены по запросу «${esc(q)}»</div>`;
+  if(!packResults.length){
+    grid.innerHTML=`<div class="icon-picker-hint">Ничего не найдено по запросу «${esc(q)}»</div>`;
     return;
   }
-  // Group by first word before dash
-  const groups=new Map();
-  for(const name of filtered){
-    const g=groupOf(name);
-    if(!groups.has(g)) groups.set(g,[]);
-    groups.get(g).push(name);
-  }
+  _buildIconHtml(grid,packResults,q,true);
+}
+
+// Shared renderer: renders icon groups into grid element
+function _buildIconHtml(grid,groups,q,crossPack=false){
   const current=state.ui?.customIcons?.[_iconPickerEntityId]||'';
-  let html='';
-  let first=true;
-  for(const [groupName,icons] of groups){
-    const cap=groupName.charAt(0).toUpperCase()+groupName.slice(1);
-    html+=`<div class="icon-group-header${first?' icon-group-first':''}">${esc(cap)}<span class="icon-group-count">${icons.length}</span></div>`;
-    first=false;
-    for(const name of icons){
-      const paths=store[name];
-      html+=`<button type="button" class="icon-cell${name===current?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(iconPackShortName(name))}">`+
-        `<svg viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`+
-        `<span>${esc(shortOf(name))}</span></button>`;
+  const shortOf=n=>iconPackShortName(n);
+  const groupOf=n=>{ const s=shortOf(n); const i=s.indexOf('-'); return i>0?s.slice(0,i):s; };
+  let html=''; let isFirst=true;
+
+  for(const {pack,packId,names,total} of groups){
+    if(crossPack){
+      // Cross-pack: one section per pack
+      const extra=total>names.length?` <span class="icon-group-count">показано ${names.length} из ${total}</span>`:
+        `<span class="icon-group-count">${names.length}</span>`;
+      html+=`<div class="icon-group-header icon-group-pack${isFirst?' icon-group-first':''}">${esc(pack.label)}${extra}</div>`;
+      isFirst=false;
+      for(const name of names){
+        const paths=pack.stroke?_iconStores[packId][name]:_iconStores[packId][name];
+        html+=_iconCellHtml(name,_iconStores[packId][name],pack,shortOf(name)===current||name===current);
+      }
+    } else {
+      // Single pack: group by prefix within pack
+      const subGroups=new Map();
+      for(const name of names){ const g=groupOf(name); if(!subGroups.has(g)) subGroups.set(g,[]); subGroups.get(g).push(name); }
+      for(const [groupName,icons] of subGroups){
+        const cap=groupName.charAt(0).toUpperCase()+groupName.slice(1);
+        html+=`<div class="icon-group-header${isFirst?' icon-group-first':''}">${esc(cap)}<span class="icon-group-count">${icons.length}</span></div>`;
+        isFirst=false;
+        for(const name of icons) html+=_iconCellHtml(name,_iconStores[packId][name],pack,name===current);
+      }
     }
   }
   grid.innerHTML=html;
   grid.querySelectorAll('.icon-cell').forEach(btn=>{ btn.onclick=()=>selectCustomIcon(btn.dataset.icon); });
+}
+function _iconCellHtml(name,paths,pack,selected){
+  return `<button type="button" class="icon-cell${selected?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(iconPackShortName(name))}">`+
+    `<svg viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`+
+    `<span>${esc(iconPackShortName(name))}</span></button>`;
+}
+
+function renderIconGrid(query){
+  const q=query.trim().toLowerCase();
+  if(q.length>=2){
+    renderCrossPackSearch(q); // search all packs, show grouped by pack
+  } else {
+    renderSinglePackGrid(q); // browse current tab (small packs show all, large show hint)
+  }
 }
 function selectCustomIcon(iconName){
   if(!_iconPickerEntityId) return;
