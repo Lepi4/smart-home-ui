@@ -188,7 +188,7 @@ const DRAG_SUPPRESS_MS = 420;
 // Ключи, хранящиеся на сервере глобально (одинаковы для всех устройств)
 const GLOBAL_UI_KEYS = new Set(['weatherEntity']);
 // Ключи, хранящиеся per-device в /api/prefs (у каждого устройства свои)
-const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode','clockScale','clockShowDate','markerValueScale','customIcons','customIconColors','defaultIconColor','customMarkerScales','customMarkerOpacities']);
+const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode','clockScale','clockShowDate','markerValueScale','cardValueScale','customIcons','customIconColors','defaultIconColor','customMarkerScales','customMarkerOpacities']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors','theme']);
 const CLIENT_STATE_UI_KEYS = new Set([...DEVICE_UI_KEYS, ...CLIENT_UI_KEYS]);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
@@ -1444,6 +1444,7 @@ function applyUiPrefs(){
   document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - Number(state.ui.virtualCardTransparency ?? 0) / 100, 0, 1)));
   document.documentElement.style.setProperty('--clock-scale', String(clamp(Number(state.ui.clockScale ?? 1), 0.4, 2.5)));
   document.documentElement.style.setProperty('--marker-value-scale', String(clamp(Number(state.ui.markerValueScale ?? 1), 0.5, 2.5)));
+  document.documentElement.style.setProperty('--card-value-scale', String(clamp(Number(state.ui.cardValueScale ?? 1), 0.5, 2.5)));
   const _dic = state.ui?.defaultIconColor;
   document.documentElement.style.setProperty('--default-icon-color', _dic && /^#[0-9a-fA-F]{6}$/.test(_dic) ? _dic : '#ffd36e');
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
@@ -1470,6 +1471,7 @@ function applyUiPrefs(){
   const ckd=el('pref-clock-show-date'); if(ckd) ckd.checked=!!state.ui.clockShowDate;
   const kcd=el('kiosk-clock-date'); if(kcd) kcd.classList.toggle('hidden', !state.ui.clockShowDate);
   const mvs=el('pref-marker-value-scale'); if(mvs){ mvs.value=String(Math.round(Number(state.ui.markerValueScale ?? 1)*100)); const mvv=el('pref-marker-value-scale-value'); if(mvv) mvv.textContent=mvs.value+'%'; }
+  const cvs=el('pref-card-value-scale'); if(cvs){ cvs.value=String(Math.round(Number(state.ui.cardValueScale ?? 1)*100)); const cvv=el('pref-card-value-scale-value'); if(cvv) cvv.textContent=cvs.value+'%'; }
   updateKioskOverviewButton();
   const showAll=el('pref-show-all-devices-room'); if(showAll) showAll.checked=!!state.ui.showAllDevicesInRoom;
   const tz=el('toggle-zones'); if(tz) tz.checked=state.ui.showZones!==false;
@@ -1611,6 +1613,8 @@ const ICON_PACKS = {
   ph:  { label:'Phosphor', file:'phosphor-icons.json', viewBox:'0 0 256 256',  stroke:false },
   ti:  { label:'Tabler',   file:'tabler-icons.json',   viewBox:'0 0 24 24',    stroke:true  },
   ri:  { label:'Remix',    file:'remix-icons.json',    viewBox:'0 0 24 24',    stroke:false },
+  lu:  { label:'Lucide',   file:'lucide-icons.json',   viewBox:'0 0 24 24',    stroke:false, bodyMode:true },
+  sl:  { label:'Solar',    file:'solar-icons.json',    viewBox:'0 0 24 24',    stroke:false, bodyMode:true },
 };
 const _iconStores = {};
 const _iconPackLoading = {};
@@ -1632,15 +1636,23 @@ function svgPathsHtml(paths, stroke){
   if(stroke) return ps.map(d=>`<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="${esc(d)}"/>`).join('');
   return ps.map(d=>`<path d="${esc(d)}"/>`).join('');
 }
+// bodyMode packs store raw SVG body (may contain <polyline>, <circle> etc.)
+function svgBodyHtml(body, stroke){
+  if(stroke) return `<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
+  return body;
+}
+function _packInner(data, pack){
+  return pack.bodyMode ? svgBodyHtml(data, pack.stroke) : svgPathsHtml(data, pack.stroke);
+}
 function customIconSvg(name){
   if(!name) return null;
   const packId=iconPackId(name);
   const pack=ICON_PACKS[packId];
   const store=_iconStores[packId];
   if(!store) return null;
-  const paths=store[packId==='mdi'?name:name];
-  if(!paths) return null;
-  return `<svg class="icon-svg custom-mdi-icon" viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`;
+  const data=store[name];
+  if(!data) return null;
+  return `<svg class="icon-svg custom-mdi-icon" viewBox="${pack.viewBox}" aria-hidden="true">${_packInner(data,pack)}</svg>`;
 }
 async function loadIconPack(packId){
   if(_iconStores[packId]) return _iconStores[packId];
@@ -1767,9 +1779,9 @@ function _buildIconHtml(grid,groups,q,crossPack=false){
   grid.innerHTML=html;
   grid.querySelectorAll('.icon-cell').forEach(btn=>{ btn.onclick=()=>selectCustomIcon(btn.dataset.icon); });
 }
-function _iconCellHtml(name,paths,pack,selected){
+function _iconCellHtml(name,data,pack,selected){
   return `<button type="button" class="icon-cell${selected?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(iconPackShortName(name))}">`+
-    `<svg viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`+
+    `<svg viewBox="${pack.viewBox}" aria-hidden="true">${_packInner(data,pack)}</svg>`+
     `<span>${esc(iconPackShortName(name))}</span></button>`;
 }
 
@@ -7852,6 +7864,7 @@ function bindGlobal(){
   bindRangePreview('pref-clock-scale','clockScale','pref-clock-scale-value');
   onEl('pref-clock-show-date','change',e=>{ state.ui.clockShowDate=e.target.checked; renderKioskWidget(); applyUiPrefs(); saveUiPrefs(); });
   bindRangePreview('pref-marker-value-scale','markerValueScale','pref-marker-value-scale-value');
+  bindRangePreview('pref-card-value-scale','cardValueScale','pref-card-value-scale-value');
   const showAllPref=el('pref-show-all-devices-room'); if(showAllPref) showAllPref.onchange=e=>{state.ui.showAllDevicesInRoom=e.target.checked; renderDevices(); saveGlobalPrefs().catch(()=>{});};
   const pmodeSelect=el('pref-panel-mode');
   if(pmodeSelect) pmodeSelect.onchange=async()=>{

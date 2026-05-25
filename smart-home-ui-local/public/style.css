@@ -498,6 +498,7 @@ body.dark-theme .detail-card,body.dark-theme .room-image-wrap{background:rgba(20
   --sensor-bg-opacity:.92;
   --clock-scale:1;
   --marker-value-scale:1;
+  --card-value-scale:1;
 }
 .device-marker{transform:translate(-50%,-50%) scale(var(--marker-scale,1));background:rgba(30,34,40,var(--marker-bg-opacity,.94))}
 .device-marker.sensor-readout,
@@ -4097,3 +4098,5 @@ body.child-modal-open .mobile-menu-bar{display:none!important;visibility:hidden!
 .device-marker .marker-value{font-size:calc(9px * var(--marker-value-scale,1))!important}
 .device-marker.sensor-readout .sensor-room-value{font-size:calc(16px * var(--marker-value-scale,1))!important}
 @media(max-width:560px){.device-marker.sensor-readout .sensor-room-value{font-size:calc(14px * var(--marker-value-scale,1))!important}}
+/* card value scale: sidebar tiles and quick action icons (independent from floor plan markers) */
+.dev-icon .marker-value,.quick-icon .marker-value{font-size:calc(9px * var(--card-value-scale,1))!important}
