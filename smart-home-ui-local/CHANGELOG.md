@@ -1,3 +1,10 @@
+# ALLHA-2D v5.1.0-beta.25 — marker value scale fix
+
+## Fixed
+
+- Ползунок "Размер значения на маркере" теперь влияет **только** на значения на маркерах плана этажа. Ранее он также увеличивал текст в плитках боковой панели (`.dev-icon`) и быстрых действиях (`.quick-icon`), делая их нечитаемыми. Исправлено: `--marker-value-scale` применяется только к `.device-marker`.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.25`.
+
 # ALLHA-2D v5.1.0-beta.24 — HLS video player for cameras
 
 ## Added

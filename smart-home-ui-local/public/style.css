@@ -4077,7 +4077,7 @@ body.child-modal-open .mobile-menu-bar{display:none!important;visibility:hidden!
 .icon-color-reset{width:24px;height:24px;border-radius:50%;border:1px dashed rgba(255,255,255,.35);background:transparent;color:rgba(255,255,255,.55);cursor:pointer;font-size:11px;line-height:24px;text-align:center;padding:0;flex-shrink:0;transition:border-color .12s,color .12s}
 .icon-color-reset:hover{border-color:rgba(255,255,255,.7);color:#fff}
 
-/* v5.1.0-beta.16: marker value font-size scale + sensor-room-value scale */
-.device-marker .marker-value,.dev-icon .marker-value,.quick-icon .marker-value{font-size:calc(9px * var(--marker-value-scale,1))!important}
+/* marker value scale applies only to floor plan markers, not to sidebar tiles or quick actions */
+.device-marker .marker-value{font-size:calc(9px * var(--marker-value-scale,1))!important}
 .device-marker.sensor-readout .sensor-room-value{font-size:calc(16px * var(--marker-value-scale,1))!important}
 @media(max-width:560px){.device-marker.sensor-readout .sensor-room-value{font-size:calc(14px * var(--marker-value-scale,1))!important}}
