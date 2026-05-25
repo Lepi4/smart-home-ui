@@ -43,7 +43,7 @@ const state = {
   suppressClick: false,
   quickOverlayOpen: false,
   serverUiState: null,
-  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, haloAnimated:true, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false },
+  ui: { hideSidebar:true, hideDevicePanel:true, hideToolbar:false, mobileMode:true, autoHide:false, compact:false, haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00, overviewHaloScale:0.50, overviewMarkerScale:1.00, overviewMarkerOpacity:0.00, overviewSensorScale:1.00, overviewRoomLabelScale:1.00, overviewSensorOpacity:0.00, roomHaloScale:0.50, roomMarkerScale:1.00, roomMarkerOpacity:0.00, roomSensorScale:1.00, roomSensorOpacity:0.00, cardFontScale:0.90, virtualCardTransparency:0.00, virtualCardScale:1.00, showAllDevicesInRoom:false, haloAnimated:true, darkTheme:true, theme:'dark', kioskWidget:false, kioskMode:false, kioskTileMode:false, kioskNavigationMode:'switchable', kioskAutoLock:false, kioskAutoLockSeconds:15, weatherEntity:'', showZones:true, invisibleZones:false, showMarkers:true, showSensors:true, debugMode:false, customMarkerScales:{}, customMarkerOpacities:{} },
   viewport: { overview:{zoom:1,panX:0,panY:0}, rooms:{} },
   customIcons: {},
   customIconColors: {},
@@ -185,7 +185,7 @@ const DRAG_SUPPRESS_MS = 420;
 // Ключи, хранящиеся на сервере глобально (одинаковы для всех устройств)
 const GLOBAL_UI_KEYS = new Set(['weatherEntity']);
 // Ключи, хранящиеся per-device в /api/prefs (у каждого устройства свои)
-const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode','clockScale','clockShowDate','markerValueScale','customIcons','customIconColors','defaultIconColor']);
+const CLIENT_UI_KEYS = new Set(['darkTheme','kioskWidget','kioskAutoLock','kioskAutoLockSeconds','haloScale','hardwareScale','markerScale','sensorScale','roomLabelScale','markerOpacity','sensorOpacity','overviewHaloScale','overviewMarkerScale','overviewMarkerOpacity','overviewSensorScale','overviewRoomLabelScale','overviewSensorOpacity','roomHaloScale','roomMarkerScale','roomMarkerOpacity','roomSensorScale','roomSensorOpacity','cardFontScale','virtualCardTransparency','virtualCardScale','showAllDevicesInRoom','debugMode','clockScale','clockShowDate','markerValueScale','customIcons','customIconColors','defaultIconColor','customMarkerScales','customMarkerOpacities']);
 const DEVICE_UI_KEYS = new Set(['hideSidebar','hideDevicePanel','hideToolbar','mobileMode','autoHide','compact','kioskMode','kioskTileMode','kioskNavigationMode','showZones','invisibleZones','showMarkers','showSensors','theme']);
 const CLIENT_STATE_UI_KEYS = new Set([...DEVICE_UI_KEYS, ...CLIENT_UI_KEYS]);
 function pickKeys(obj, keys){ const out={}; for(const k of keys){ if(obj && Object.prototype.hasOwnProperty.call(obj,k)) out[k]=obj[k]; } return out; }
@@ -3138,12 +3138,22 @@ function markerEl(d,p,scope){
   anchor.dataset.scope=scope;
   anchor.style.left=clamp(Number(renderPos.x)||0,0,100)+'%';
   anchor.style.top=clamp(Number(renderPos.y)||0,0,100)+'%';
+  // Per-device marker scale (CSS calc multiplies with global --marker-scale)
+  const devScale=state.ui.customMarkerScales?.[d.entity_id];
+  if(devScale && devScale!==1) anchor.style.setProperty('--device-marker-scale',String(clamp(devScale,0.2,3)));
 
   const b=document.createElement('button');
   b.type='button';
   b.className='device-marker '+(editSimple?'edit-static':visualClass(d))+(shouldRenderSensorTextMarker(d, scope) && !editSimple?' text-marker sensor-readout':'')+(isSelectedEdit('marker', d.entity_id, scope)?' edit-selected':'');
   b.dataset.entity=d.entity_id; b.dataset.scope=scope; b.dataset.domain=d.domain||domainOf(d.entity_id); b.title=`${displayName(d)}\n${d.entity_id}`;
   if(!editSimple) b.style.cssText += visualStyle(d);
+  // Per-device background opacity — precomputed as global×device factor
+  const devOpFactor=state.ui.customMarkerOpacities?.[d.entity_id];
+  if(devOpFactor!==undefined && devOpFactor!==1){
+    const dp=scopedDisplayPrefs();
+    const globalBgOp=clamp(1-Number(dp.markerOpacity??0),0,1);
+    b.style.setProperty('--marker-bg-opacity',String(clamp(globalBgOp*devOpFactor,0,1)));
+  }
   b.innerHTML=editSimple?`<span class="edit-marker-icon">${iconMarkup(d)}</span>`:markerInnerHtml(d, scope);
 
   if(state.edit){
@@ -3630,6 +3640,15 @@ function domainControls(d){
     }
   }
   if(canEditLayout()) rows.push(`<div class="device-modal-actions"><button type="button" data-action="change-icon" class="btn-icon-change">Сменить иконку</button></div>${iconColorPaletteHtml(d.entity_id)}`);
+  // Per-device marker size and background opacity sliders
+  {
+    const curScale=Math.round((state.ui.customMarkerScales?.[d.entity_id]??1)*100);
+    const curOp=Math.round((state.ui.customMarkerOpacities?.[d.entity_id]??1)*100);
+    rows.push(`<div class="marker-appearance-section">
+      <label class="slider-row">Размер маркера <input type="range" min="30" max="250" step="5" value="${curScale}" data-action="marker-scale"><span id="marker-scale-value">${curScale}%</span><button type="button" data-action="marker-scale-reset" class="btn-small btn-secondary">×</button></label>
+      <label class="slider-row">Прозрачность фона <input type="range" min="0" max="100" step="5" value="${curOp}" data-action="marker-opacity"><span id="marker-opacity-value">${curOp}%</span><button type="button" data-action="marker-opacity-reset" class="btn-small btn-secondary">×</button></label>
+    </div>`);
+  }
   rows.push(`<details class="rename-box"><summary>Переименовать в этой системе</summary><label class="slider-row rename-row">Новое имя <input type="text" value="${esc(displayName(d))}" data-action="rename-local"><button type="button" data-action="rename-save">Сохранить имя</button></label><p class="muted">Имя меняется только здесь, Home Assistant не трогаем.</p></details>`);
   return rows.join('');
 }
@@ -3701,8 +3720,38 @@ function bindDeviceModalActions(d){
   const body=el('device-modal-body');
   qsa('[data-action]',body).forEach(ctrl=>{
     if(ctrl.type==='range'){
-      ctrl.oninput=()=>{ const spanId={['target-temp']:'target-temp-value',['cover-position']:'cover-position-value',['fan-percentage']:'fan-percentage-value',['input-number']:'input-number-value',['water-heater-temp']:'water-heater-temp-value'}[ctrl.dataset.action]||'brightness-value'; const span=el(spanId); if(span){ const isTempAction=ctrl.dataset.action==='target-temp'||ctrl.dataset.action==='water-heater-temp'; const unit=isTempAction?'°':(ctrl.dataset.action==='input-number'?(getState(d.entity_id)?.attributes?.unit_of_measurement||''):'%'); span.textContent=String(ctrl.value).replace('.',',')+unit; } };
+      ctrl.oninput=()=>{
+        // Per-device marker scale — live preview
+        if(ctrl.dataset.action==='marker-scale'){
+          const v=Number(ctrl.value)/100;
+          if(!state.ui.customMarkerScales) state.ui.customMarkerScales={};
+          state.ui.customMarkerScales[d.entity_id]=v;
+          const span=el('marker-scale-value'); if(span) span.textContent=ctrl.value+'%';
+          qsa(`.marker-anchor[data-entity="${CSS.escape(d.entity_id)}"]`).forEach(a=>{
+            if(v!==1) a.style.setProperty('--device-marker-scale',String(clamp(v,0.2,3)));
+            else a.style.removeProperty('--device-marker-scale');
+          });
+          saveUiPrefs(); return;
+        }
+        if(ctrl.dataset.action==='marker-opacity'){
+          const factor=Number(ctrl.value)/100;
+          if(!state.ui.customMarkerOpacities) state.ui.customMarkerOpacities={};
+          state.ui.customMarkerOpacities[d.entity_id]=factor;
+          const span=el('marker-opacity-value'); if(span) span.textContent=ctrl.value+'%';
+          qsa(`.marker-anchor[data-entity="${CSS.escape(d.entity_id)}"]`).forEach(a=>{
+            const btn=a.querySelector('.device-marker'); if(!btn) return;
+            const dp=scopedDisplayPrefs();
+            const globalBgOp=clamp(1-Number(dp.markerOpacity??0),0,1);
+            if(factor!==1) btn.style.setProperty('--marker-bg-opacity',String(clamp(globalBgOp*factor,0,1)));
+            else btn.style.removeProperty('--marker-bg-opacity');
+          });
+          saveUiPrefs(); return;
+        }
+        const spanId={['target-temp']:'target-temp-value',['cover-position']:'cover-position-value',['fan-percentage']:'fan-percentage-value',['input-number']:'input-number-value',['water-heater-temp']:'water-heater-temp-value'}[ctrl.dataset.action]||'brightness-value';
+        const span=el(spanId); if(span){ const isTempAction=ctrl.dataset.action==='target-temp'||ctrl.dataset.action==='water-heater-temp'; const unit=isTempAction?'°':(ctrl.dataset.action==='input-number'?(getState(d.entity_id)?.attributes?.unit_of_measurement||''):'%'); span.textContent=String(ctrl.value).replace('.',',')+unit; }
+      };
       ctrl.onchange=async()=>{try{
+        if(ctrl.dataset.action==='marker-scale'||ctrl.dataset.action==='marker-opacity') return; // handled in oninput
         if(ctrl.dataset.action==='brightness') await callService('light','turn_on',{entity_id:d.entity_id,brightness_pct:Number(ctrl.value)});
         if(ctrl.dataset.action==='target-temp') await callService('climate','set_temperature',{entity_id:d.entity_id,temperature:Number(ctrl.value)});
         if(ctrl.dataset.action==='water-heater-temp') await callService('water_heater','set_temperature',{entity_id:d.entity_id,temperature:Number(ctrl.value)});
@@ -3717,6 +3766,16 @@ function bindDeviceModalActions(d){
         if(action==='attention-toggle'){ await toggleAttentionRule(d); return; }
         if(action==='dangerous-toggle'){ await toggleDangerousRule(d); return; }
         if(action==='change-icon'){ closeDeviceModal(); openIconPicker(d.entity_id); return; }
+        if(action==='marker-scale-reset'){
+          if(state.ui.customMarkerScales) delete state.ui.customMarkerScales[d.entity_id];
+          qsa(`.marker-anchor[data-entity="${CSS.escape(d.entity_id)}"]`).forEach(a=>a.style.removeProperty('--device-marker-scale'));
+          saveUiPrefs(); openDeviceModal(d); return;
+        }
+        if(action==='marker-opacity-reset'){
+          if(state.ui.customMarkerOpacities) delete state.ui.customMarkerOpacities[d.entity_id];
+          qsa(`.marker-anchor[data-entity="${CSS.escape(d.entity_id)}"]`).forEach(a=>{ const btn=a.querySelector('.device-marker'); btn?.style.removeProperty('--marker-bg-opacity'); });
+          saveUiPrefs(); openDeviceModal(d); return;
+        }
         if(action==='rename-save'){ const input=body.querySelector('[data-action=\"rename-local\"]'); const name=(input?.value||'').trim(); if(!state.layout.customNames) state.layout.customNames={}; if(name) state.layout.customNames[d.entity_id]=name; else delete state.layout.customNames[d.entity_id]; await saveLayout(false); showToast('Имя сохранено'); render(); openDeviceModal(d); return; }
         if(action==='rename-local') return;
         if(action==='toggle') await toggleDevice(d);

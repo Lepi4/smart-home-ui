@@ -4951,16 +4951,43 @@ app.get('/api/camera/stream-url/:entity_id', async (req, res) => {
     return null;
   };
 
-  // 1. Try HLS via HA WebSocket camera/stream (go2rtc etc.)
-  try {
-    const result = await haWsCommand('camera/stream', { entity_id, format: 'hls' });
-    if(result?.url){
-      const entity_picture = await getEntityPicture();
-      return res.json({ ok: true, url: result.url, format: 'hls', entity_picture });
-    }
-  } catch(_) {}
+  // Helper: try to get HLS URL for a given entity
+  const tryHlsForEntity = async (eid) => {
+    try {
+      const r = await haWsCommand('camera/stream', { entity_id: eid, format: 'hls' });
+      return r?.url || null;
+    } catch(_) { return null; }
+  };
 
-  // 2. MJPEG fallback: return entity_picture token for browser-side streaming in Ingress mode
+  // Helper: check if entity exists in HA
+  const entityExists = async (eid) => {
+    try {
+      const r = await fetch(`${HA_API_BASE}/states/${eid}`, {
+        headers: { 'Authorization': `Bearer ${HA_TOKEN}` }, signal: AbortSignal.timeout(2000)
+      });
+      return r.ok;
+    } catch(_) { return false; }
+  };
+
+  // 1. Try HLS for the requested entity
+  let hlsUrl = await tryHlsForEntity(entity_id);
+
+  // 2. If no HLS — try _h264 variant (go2rtc H.264 transcode) for non-_h264 entities
+  let usedEntityId = entity_id;
+  if(!hlsUrl && !entity_id.endsWith('_h264')) {
+    const h264Variant = entity_id + '_h264';
+    if(await entityExists(h264Variant)) {
+      const altUrl = await tryHlsForEntity(h264Variant);
+      if(altUrl) { hlsUrl = altUrl; usedEntityId = h264Variant; }
+    }
+  }
+
+  if(hlsUrl) {
+    const entity_picture = await getEntityPicture();
+    return res.json({ ok: true, url: hlsUrl, format: 'hls', entity_picture, used_entity_id: usedEntityId });
+  }
+
+  // 3. MJPEG fallback: return entity_picture token for browser-side streaming in Ingress mode
   const entity_picture = await getEntityPicture();
   if(entity_picture) return res.json({ ok: true, format: 'mjpeg', entity_picture });
 
