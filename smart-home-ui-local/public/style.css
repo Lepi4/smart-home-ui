@@ -1234,6 +1234,10 @@ body.editing #btn-show-device-panel{display:none!important}
 body.editing .workspace{grid-template-columns:minmax(0,1fr)!important}
 .icon-picker-modal{z-index:1800!important}
 .icon-picker-card{width:min(720px,calc(100vw - 18px));height:min(90dvh,780px);max-height:90dvh;display:flex;flex-direction:column;background:#0f141b!important}
+.icon-picker-pack-tabs{display:flex;gap:4px;padding:.5rem 1rem .4rem;flex-shrink:0;flex-wrap:wrap}
+.icon-pack-tab{padding:5px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.12);background:transparent;color:#7b8a9a;font-size:13px;cursor:pointer;transition:border-color .13s,background .13s,color .13s}
+.icon-pack-tab:hover{border-color:#4e8cff;color:#b0c4de}
+.icon-pack-tab.active{border-color:#4e8cff;background:rgba(78,140,255,.18);color:#e0eaff}
 .icon-picker-search-row{padding:0 1rem .6rem;flex-shrink:0}
 .icon-picker-search-row .search{width:100%;box-sizing:border-box}
 .icon-picker-grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:4px;padding:0 1rem 1rem;overscroll-behavior:contain}

@@ -1574,31 +1574,81 @@ function iconColorPaletteHtml(entityId){
   return `<div class="icon-color-palette">${circles}${reset}</div>`;
 }
 
-/* ── MDI Icon Picker ─────────────────────────────────────────────────── */
-let _mdiIcons = null;
+/* ── Multi-Pack Icon Picker ──────────────────────────────────────────── */
+// To add a new pack: run the gen script, put JSON in public/, add entry here.
+const ICON_PACKS = {
+  mdi: { label:'MDI',      file:'mdi-icons.json',      viewBox:'0 0 24 24',    stroke:false },
+  cbi: { label:'Бренды',   file:'brand-icons.json',    viewBox:'0 0 24 24',    stroke:false },
+  ph:  { label:'Phosphor', file:'phosphor-icons.json', viewBox:'0 0 256 256',  stroke:false },
+  ti:  { label:'Tabler',   file:'tabler-icons.json',   viewBox:'0 0 24 24',    stroke:true  },
+  ri:  { label:'Remix',    file:'remix-icons.json',    viewBox:'0 0 24 24',    stroke:false },
+};
+const _iconStores = {};
+const _iconPackLoading = {};
 let _iconPickerEntityId = null;
-async function loadMdiIcons(){
-  if(!_mdiIcons){
-    try{ _mdiIcons=await fetch('mdi-icons.json').then(r=>r.json()); }catch(_){ _mdiIcons={}; }
-  }
-  return _mdiIcons;
+let _iconPickerPack = 'mdi';
+
+function iconPackId(name){
+  if(!name) return 'mdi';
+  const c=name.indexOf(':');
+  return c<0 ? 'mdi' : name.slice(0,c);
 }
+function iconPackShortName(name){
+  const c=name.indexOf(':');
+  return c<0 ? name : name.slice(c+1);
+}
+function svgPathsHtml(paths, stroke){
+  const ps=Array.isArray(paths)?paths:[paths];
+  if(stroke) return ps.map(d=>`<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="${esc(d)}"/>`).join('');
+  return ps.map(d=>`<path d="${esc(d)}"/>`).join('');
+}
+function customIconSvg(name){
+  if(!name) return null;
+  const packId=iconPackId(name);
+  const pack=ICON_PACKS[packId];
+  const store=_iconStores[packId];
+  if(!store) return null;
+  const paths=store[packId==='mdi'?name:name];
+  if(!paths) return null;
+  return `<svg class="icon-svg custom-mdi-icon" viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`;
+}
+async function loadIconPack(packId){
+  if(_iconStores[packId]) return _iconStores[packId];
+  if(_iconPackLoading[packId]) return _iconPackLoading[packId];
+  const pack=ICON_PACKS[packId];
+  if(!pack){ _iconStores[packId]={}; return {}; }
+  _iconPackLoading[packId]=fetch(pack.file).then(r=>r.json()).then(data=>{
+    _iconStores[packId]=data; delete _iconPackLoading[packId]; return data;
+  }).catch(()=>{ _iconStores[packId]={}; delete _iconPackLoading[packId]; return {}; });
+  return _iconPackLoading[packId];
+}
+async function loadMdiIcons(){ return loadIconPack('mdi'); }
 async function loadCustomIcons(){
   try{
     const j=await apiJson('api/custom-icons');
     state.customIcons=j.icons||{};
-    if(Object.keys(state.customIcons).length>0){ await loadMdiIcons(); render(); }
+    if(Object.keys(state.customIcons).length>0){
+      const usedPacks=new Set(['mdi']);
+      Object.values(state.customIcons).forEach(n=>{ const p=iconPackId(n); if(ICON_PACKS[p]) usedPacks.add(p); });
+      await Promise.all([...usedPacks].map(loadIconPack));
+      render();
+    }
   }catch(_){}
 }
 async function openIconPicker(entityId){
   _iconPickerEntityId=entityId;
+  _iconPickerPack='mdi';
   const modal=el('icon-picker-modal');
   if(!modal) return;
   modal.classList.remove('hidden');
   syncModalOpenClass();
+  const tabsEl=el('icon-picker-pack-tabs');
+  if(tabsEl) tabsEl.innerHTML=Object.entries(ICON_PACKS).map(([id,p])=>
+    `<button type="button" class="icon-pack-tab${id===_iconPickerPack?' active':''}" data-pack="${id}">${p.label}</button>`
+  ).join('');
   const grid=el('icon-picker-grid');
   if(grid) grid.innerHTML='<div class="icon-picker-hint icon-picker-loading">Загрузка библиотеки иконок…</div>';
-  await loadMdiIcons();
+  await loadIconPack('mdi');
   const inp=el('icon-search-input');
   if(inp){ inp.value=''; inp.oninput=()=>renderIconGrid(inp.value); setTimeout(()=>inp.focus(),60); }
   renderIconGrid('');
@@ -1608,28 +1658,40 @@ function closeIconPicker(){
   syncModalOpenClass();
   _iconPickerEntityId=null;
 }
+async function switchIconPack(packId){
+  _iconPickerPack=packId;
+  document.querySelectorAll('.icon-pack-tab').forEach(t=>t.classList.toggle('active',t.dataset.pack===packId));
+  const grid=el('icon-picker-grid');
+  if(grid) grid.innerHTML='<div class="icon-picker-hint icon-picker-loading">Загрузка…</div>';
+  await loadIconPack(packId);
+  renderIconGrid(el('icon-search-input')?.value||'');
+}
 function renderIconGrid(query){
   const grid=el('icon-picker-grid');
-  if(!grid||!_mdiIcons) return;
+  const pack=ICON_PACKS[_iconPickerPack];
+  const store=_iconStores[_iconPickerPack];
+  if(!grid||!pack||!store) return;
   const q=query.trim().toLowerCase();
   if(q.length<2){
     grid.innerHTML='<div class="icon-picker-hint">Введите минимум 2 символа для поиска.<br><span class="muted">Например: <b>radiator</b>, <b>home</b>, <b>thermometer</b>, <b>lock</b>, <b>water</b>, <b>bulb</b></span></div>';
     return;
   }
-  const all=Object.keys(_mdiIcons);
-  const exact=all.filter(n=>n.startsWith(q));
-  const partial=all.filter(n=>!n.startsWith(q)&&n.includes(q));
+  const allNames=Object.keys(store);
+  const shortOf=n=>iconPackShortName(n);
+  const exact=allNames.filter(n=>shortOf(n).startsWith(q));
+  const partial=allNames.filter(n=>!shortOf(n).startsWith(q)&&shortOf(n).includes(q));
   const filtered=[...exact,...partial].slice(0,300);
   if(!filtered.length){
     grid.innerHTML=`<div class="icon-picker-hint">Иконки не найдены по запросу «${esc(q)}»</div>`;
     return;
   }
   const current=state.customIcons?.[_iconPickerEntityId]||'';
-  grid.innerHTML=filtered.map(name=>
-    `<button type="button" class="icon-cell${name===current?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(name)}">`+
-    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${esc(_mdiIcons[name])}"/></svg>`+
-    `<span>${esc(name)}</span></button>`
-  ).join('');
+  grid.innerHTML=filtered.map(name=>{
+    const paths=store[name];
+    return `<button type="button" class="icon-cell${name===current?' icon-cell-selected':''}" data-icon="${esc(name)}" title="${esc(name)}">`+
+      `<svg viewBox="${pack.viewBox}" aria-hidden="true">${svgPathsHtml(paths,pack.stroke)}</svg>`+
+      `<span>${esc(shortOf(name))}</span></button>`;
+  }).join('');
   grid.querySelectorAll('.icon-cell').forEach(btn=>{ btn.onclick=()=>selectCustomIcon(btn.dataset.icon); });
 }
 async function selectCustomIcon(iconName){
@@ -1649,7 +1711,7 @@ async function clearCustomIcon(){
 /* ─────────────────────────────────────────────────────────────────────── */
 function iconMarkup(d){
   const ci=state.customIcons?.[d.entity_id];
-  if(ci&&_mdiIcons?.[ci]) return `<svg class="icon-svg custom-mdi-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${esc(_mdiIcons[ci])}"/></svg>`;
+  if(ci){ const svgEl=customIconSvg(ci); if(svgEl) return svgEl; }
   if(d.domain==='sensor' || (d.domain==='binary_sensor' && !isWindowSensor(d) && !isLeakSensor(d))){ return sensorIconMarkup(d); }
   if(d.domain==='climate'){
     const k=climateKind(d);
@@ -7350,6 +7412,11 @@ function bindGlobal(){
   const pswModal=el('project-setup-wizard-modal'); if(pswModal) pswModal.addEventListener('click',e=>{ if(e.target.id==='project-setup-wizard-modal') closeProjectSetupWizard(); });
   const bwc2=el('btn-level-setup-close'); if(bwc2) bwc2.onclick=closeLevelWizard;
   const bwr=el('btn-level-setup-refresh'); if(bwr) bwr.onclick=async()=>{ await loadLevelsInfo(); renderLevelSetupWizard(state.levelSetupWizardId); };
+  onEl('icon-picker-pack-tabs','click',e=>{
+    const tab=e.target.closest('[data-pack]');
+    if(tab) switchIconPack(tab.dataset.pack);
+  });
+  onEl('icon-picker-modal','click',e=>{if(e.target.id==='icon-picker-modal')closeIconPicker()});
   clickEl('btn-close-device', closeDeviceModal);
   onEl('device-modal','click',e=>{if(e.target.id==='device-modal')closeDeviceModal()});
   clickEl('btn-close-info', ()=>closeModal('info-modal'));

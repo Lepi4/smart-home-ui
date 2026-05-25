@@ -1,11 +1,15 @@
 {
   "name": "allha-2d-ha-addon",
-  "version": "5.1.0-beta.25",
+  "version": "5.1.0-beta.26",
   "private": true,
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "gen:icons": "node scripts/gen-mdi.js"
+    "gen:icons": "node scripts/gen-mdi.js",
+    "gen:brand": "node scripts/gen-brand-icons.js",
+    "gen:phosphor": "node scripts/gen-phosphor-icons.js <path-to-assets/regular>",
+    "gen:tabler": "node scripts/gen-tabler-icons.js <path-to-outline-svg-dir>",
+    "gen:remix": "node scripts/gen-remix-icons.js <path-to-RemixIcon/icons>"
   },
   "dependencies": {
     "better-sqlite3": "9.4.3",

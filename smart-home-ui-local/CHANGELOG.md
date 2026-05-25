@@ -1,3 +1,18 @@
+# ALLHA-2D v5.1.0-beta.26 — multi-pack icon picker (MDI + Brands + Phosphor + Tabler + Remix)
+
+## Added
+
+- **Мультипаковый выбор иконок** — в редакторе иконок устройств теперь 5 пакетов на выбор:
+  - **MDI** — Material Design Icons (7 400+ иконок)
+  - **Бренды** — Custom Brand Icons от elax46 (1 580+ иконок устройств и брендов умного дома)
+  - **Phosphor** — Phosphor Icons (1 510+ иконок, viewBox 256×256)
+  - **Tabler** — Tabler Icons stroke-based (5 090+ иконок, чёткие линии)
+  - **Remix** — Remix Icons line-варианты (1 540+ иконок)
+- Пакеты загружаются лениво (только при первом переключении на пакет).
+- Иконки хранятся с префиксом пакета: `cbi:`, `ph:`, `ti:`, `ri:`, MDI без префикса.
+- Добавлены скрипты генерации JSON-файлов для каждого пакета в `scripts/`.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.26`.
+
 # ALLHA-2D v5.1.0-beta.25 — marker value scale fix
 
 ## Fixed
