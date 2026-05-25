@@ -1,3 +1,10 @@
+# ALLHA-2D v5.1.0-beta.30 — fix icon picker subtitle
+
+## Fixed
+
+- Заголовок окна выбора иконок теперь корректно отображает все пакеты: `MDI · Бренды · Phosphor · Tabler · Remix — 17 000+ иконок` (ранее осталась старая надпись «Поиск по библиотеке MDI»).
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.30`.
+
 # ALLHA-2D v5.1.0-beta.29 — icon picker grouped by category
 
 ## Changed
