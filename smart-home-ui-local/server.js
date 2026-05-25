@@ -4935,6 +4935,17 @@ app.get('/api/camera/snapshot/:entity_id', makeRateLimit(60, 60_000), async (req
   res.status(503).json({ error: 'camera unavailable' });
 });
 
+// HLS stream URL через HA WebSocket camera/stream
+app.get('/api/camera/stream-url/:entity_id', async (req, res) => {
+  const entity_id = req.params.entity_id;
+  if(!/^camera\.[a-zA-Z0-9_]+$/.test(entity_id)) return res.status(400).json({error:'bad entity_id'});
+  try {
+    const result = await haWsCommand('camera/stream', { entity_id, format: 'hls' });
+    if(result?.url) return res.json({ ok: true, url: result.url, format: 'hls' });
+  } catch(e) {}
+  res.json({ ok: false });
+});
+
 // Временный debug-эндпоинт для диагностики камеры
 app.get('/api/camera/debug/:entity_id', async (req, res) => {
   const entity_id = req.params.entity_id;

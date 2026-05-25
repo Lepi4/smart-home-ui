@@ -819,6 +819,7 @@
         <button type="button" id="btn-close-camera" class="close-word">× Закрыть</button>
       </div>
       <div class="camera-modal-body">
+        <video id="camera-stream-video" class="camera-stream-video" autoplay playsinline muted controls></video>
         <img id="camera-stream-img" src="data:," alt="Камера" class="camera-stream-img">
         <div class="camera-modal-footer">
           <span id="camera-modal-entity" class="muted"></span>
@@ -828,6 +829,7 @@
     </div>
   </div>
 
+  <script src="hls.min.js" onerror="window.Hls=null"></script>
   <script src="config.js"></script>
   <script src="lovelace-source.js"></script>
   <script src="devices.js"></script>

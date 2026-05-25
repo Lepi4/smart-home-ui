@@ -2116,21 +2116,30 @@ function updateUndoRedoButtons(){
 }
 
 /* ── Камера ──────────────────────────────────────────────────── */
+let _hlsInstance = null;
+function _destroyHls(){
+  if(_hlsInstance){ try{ _hlsInstance.destroy(); }catch(e){} _hlsInstance=null; }
+}
 function openCameraStream(d){
   const modal=el('camera-modal');
   const img=el('camera-stream-img');
+  const video=el('camera-stream-video');
   const title=el('camera-modal-title');
   const entityLabel=el('camera-modal-entity');
   if(!modal||!img) return;
   if(title) title.textContent=displayName(d);
   if(entityLabel) entityLabel.textContent=d.entity_id;
   img.dataset.entity=d.entity_id;
-  img.alt='';
-  img.src='';
+  img.alt=''; img.src='';
+  _destroyHls();
+  if(video){ video.src=''; video.style.display='none'; }
+  img.style.display='';
+
   const startSnapshot=()=>{
     if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
     img.onload=null;
     img.onerror=()=>{ img.alt='Камера недоступна или стрим не поддерживается'; };
+    img.style.display=''; if(video) video.style.display='none';
     img.src=`api/camera/snapshot/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
     if(state.cameraRefreshTimer) clearInterval(state.cameraRefreshTimer);
     state.cameraRefreshTimer=setInterval(()=>{
@@ -2138,11 +2147,51 @@ function openCameraStream(d){
       img.src=`api/camera/snapshot/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
     }, 3000);
   };
-  img.onerror=startSnapshot;
-  img.onload=()=>{ if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } img.onload=null; };
-  // если MJPEG не отдал первый кадр за 8 сек — переключаемся на снапшот
-  state.cameraStreamTimer=setTimeout(startSnapshot, 8000);
-  img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
+
+  const tryHlsVideo=(hlsUrl)=>{
+    if(!video) return false;
+    const fallback=()=>{ _destroyHls(); video.style.display='none'; img.style.display=''; startSnapshot(); };
+    video.style.display=''; img.style.display='none';
+    if(typeof Hls !== 'undefined' && Hls && Hls.isSupported()){
+      _hlsInstance=new Hls({ enableWorker:false });
+      _hlsInstance.loadSource(hlsUrl);
+      _hlsInstance.attachMedia(video);
+      _hlsInstance.on(Hls.Events.ERROR, (_,data)=>{ if(data.fatal) fallback(); });
+      video.play().catch(()=>{});
+    } else if(video.canPlayType('application/vnd.apple.mpegurl')){
+      video.src=hlsUrl;
+      video.onerror=fallback;
+      video.play().catch(()=>{});
+    } else {
+      fallback(); return false;
+    }
+    return true;
+  };
+
+  // Пытаемся получить HLS URL через HA WebSocket camera/stream
+  fetch(`api/camera/stream-url/${encodeURIComponent(d.entity_id)}`)
+    .then(r=>r.json())
+    .then(data=>{
+      if(data?.ok && data.url){
+        // В Ingress-режиме браузер = HA origin; иначе используем относительный путь (сервер проксирует)
+        const haBase = window.location.pathname.includes('hassio_ingress') ? window.location.origin : '';
+        const hlsUrl = haBase + data.url;
+        if(!tryHlsVideo(hlsUrl)) startSnapshot();
+      } else {
+        // HLS недоступен — MJPEG/snapshot fallback
+        img.onerror=startSnapshot;
+        img.onload=()=>{ if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } img.onload=null; };
+        state.cameraStreamTimer=setTimeout(startSnapshot, 1500);
+        img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
+      }
+    })
+    .catch(()=>{
+      img.onerror=startSnapshot;
+      img.onload=()=>{ if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } img.onload=null; };
+      state.cameraStreamTimer=setTimeout(startSnapshot, 1500);
+      img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
+    });
+
   modal.classList.remove('hidden');
 }
 function closeCameraModal(){
@@ -2150,6 +2199,9 @@ function closeCameraModal(){
   if(modal) modal.classList.add('hidden');
   const img=el('camera-stream-img');
   if(img) img.src='';
+  const video=el('camera-stream-video');
+  if(video){ try{ video.pause(); }catch(e){} video.src=''; video.style.display='none'; }
+  _destroyHls();
   if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
   if(state.cameraRefreshTimer){ clearInterval(state.cameraRefreshTimer); state.cameraRefreshTimer=null; }
 }

@@ -1,3 +1,12 @@
+# ALLHA-2D v5.1.0-beta.24 — HLS video player for cameras
+
+## Added
+
+- **HLS видеоплеер для камер** — встроен `hls.js` (v1.5.15). При открытии камеры сервер запрашивает у HA HLS-поток через WebSocket `camera/stream`. В Ingress-режиме браузер воспроизводит HLS напрямую с HA через `<video>` + HLS.js (Chrome/Firefox) или нативно (Safari). При ошибке — автоматический откат на снапшот.
+- Новый эндпоинт `GET /api/camera/stream-url/:entity_id` — возвращает HLS URL от HA WebSocket.
+- Таймаут ожидания MJPEG снижен с 8с до 1.5с — снапшот теперь появляется быстрее для камер без MJPEG.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.24`.
+
 # ALLHA-2D v5.1.0-beta.22 — camera snapshot auth/sign_path fix
 
 ## Fixed
