@@ -1429,6 +1429,8 @@ function applyUiPrefs(){
   document.documentElement.style.setProperty('--virtual-card-bg-alpha', String(clamp(1 - Number(state.ui.virtualCardTransparency ?? 0) / 100, 0, 1)));
   document.documentElement.style.setProperty('--clock-scale', String(clamp(Number(state.ui.clockScale ?? 1), 0.4, 2.5)));
   document.documentElement.style.setProperty('--marker-value-scale', String(clamp(Number(state.ui.markerValueScale ?? 1), 0.5, 2.5)));
+  const _dic = state.ui?.defaultIconColor;
+  document.documentElement.style.setProperty('--default-icon-color', _dic && /^#[0-9a-fA-F]{6}$/.test(_dic) ? _dic : '#ffd36e');
   const bs=el('btn-show-sidebar'); if(bs) bs.classList.toggle('hidden', !state.ui.hideSidebar || state.ui.kioskMode);
   const bd=el('btn-show-device-panel'); if(bd) bd.classList.toggle('hidden', !state.ui.hideDevicePanel || state.ui.kioskMode);
   const bt=el('btn-show-toolbar'); if(bt) bt.classList.toggle('hidden', !state.ui.hideToolbar || state.ui.kioskMode);
@@ -2283,21 +2285,42 @@ function openCameraStream(d){
 
   const inIngress = window.location.pathname.includes('hassio_ingress');
 
+  // MJPEG via server proxy — works in both Ingress and direct-port mode
+  const doServerMjpeg = () => {
+    if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
+    img.style.display=''; if(video) video.style.display='none';
+    img.onerror=startSnapshot;
+    img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
+    state.cameraStreamTimer=setTimeout(startSnapshot, 10000);
+    img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}`;
+  };
+
   // MJPEG stream via entity_picture token (Ingress mode only — browser accesses HA directly)
   const tryMjpegStream = (entity_picture) => {
     const mjpegPath = entity_picture.replace('/api/camera_proxy/', '/api/camera_proxy_stream/');
     img.style.display=''; if(video) video.style.display='none';
-    img.onerror=startSnapshot;
+    img.onerror=doServerMjpeg;
     img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
-    state.cameraStreamTimer=setTimeout(startSnapshot, 8000);
+    state.cameraStreamTimer=setTimeout(doServerMjpeg, 8000);
     img.src=window.location.origin + mjpegPath;
   };
 
   // onFail: called when HLS fails (async codec error, e.g. HEVC not supported)
   const tryHlsVideo=(hlsUrl, onFail)=>{
     if(!video) { onFail(); return false; }
-    const fallback=()=>{ _destroyHls(); video.style.display='none'; img.style.display=''; onFail(); };
+    let _hlsFailed=false;
+    const fallback=()=>{
+      if(_hlsFailed) return; _hlsFailed=true;
+      if(state.cameraHlsTimer){ clearTimeout(state.cameraHlsTimer); state.cameraHlsTimer=null; }
+      _destroyHls(); video.style.display='none'; img.style.display=''; onFail();
+    };
+    // 8s timeout: if video isn't actually playing by then (e.g. HEVC on Windows silently fails)
+    state.cameraHlsTimer=setTimeout(()=>{
+      if(video.readyState>=2 && !video.paused) return; // actually playing, keep it
+      fallback();
+    }, 8000);
     video.style.display=''; img.style.display='none';
+    video.onerror=fallback; // catch MediaError that HLS.js might miss
     if(typeof Hls !== 'undefined' && Hls && Hls.isSupported()){
       _hlsInstance=new Hls({ enableWorker:false });
       _hlsInstance.loadSource(hlsUrl);
@@ -2306,7 +2329,6 @@ function openCameraStream(d){
       video.play().catch(()=>{});
     } else if(video.canPlayType('application/vnd.apple.mpegurl')){
       video.src=hlsUrl;
-      video.onerror=fallback;
       video.play().catch(()=>{});
     } else {
       fallback(); return false;
@@ -2324,11 +2346,12 @@ function openCameraStream(d){
         // onFail: HLS codec unsupported (e.g. HEVC/H.265) → try MJPEG → snapshot
         const hlsFail = () => {
           if(inIngress && data.entity_picture) tryMjpegStream(data.entity_picture);
-          else startSnapshot();
+          else doServerMjpeg();
         };
         tryHlsVideo(hlsUrl, hlsFail);
-      } else if(data?.ok && data.format==='mjpeg' && data.entity_picture && inIngress){
-        tryMjpegStream(data.entity_picture);
+      } else if(data?.ok && data.format==='mjpeg' && data.entity_picture){
+        if(inIngress) tryMjpegStream(data.entity_picture);
+        else doServerMjpeg();
       } else {
         startSnapshot();
       }
@@ -2347,6 +2370,7 @@ function closeCameraModal(){
   _destroyHls();
   if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
   if(state.cameraRefreshTimer){ clearInterval(state.cameraRefreshTimer); state.cameraRefreshTimer=null; }
+  if(state.cameraHlsTimer){ clearTimeout(state.cameraHlsTimer); state.cameraHlsTimer=null; }
 }
 function setLayoutDirty(value=true){
   state.layoutDirty=!!value;
