@@ -2220,9 +2220,22 @@ function openCameraStream(d){
     }, 3000);
   };
 
-  const tryHlsVideo=(hlsUrl)=>{
-    if(!video) return false;
-    const fallback=()=>{ _destroyHls(); video.style.display='none'; img.style.display=''; startSnapshot(); };
+  const inIngress = window.location.pathname.includes('hassio_ingress');
+
+  // MJPEG stream via entity_picture token (Ingress mode only — browser accesses HA directly)
+  const tryMjpegStream = (entity_picture) => {
+    const mjpegPath = entity_picture.replace('/api/camera_proxy/', '/api/camera_proxy_stream/');
+    img.style.display=''; if(video) video.style.display='none';
+    img.onerror=startSnapshot;
+    img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
+    state.cameraStreamTimer=setTimeout(startSnapshot, 8000);
+    img.src=window.location.origin + mjpegPath;
+  };
+
+  // onFail: called when HLS fails (async codec error, e.g. HEVC not supported)
+  const tryHlsVideo=(hlsUrl, onFail)=>{
+    if(!video) { onFail(); return false; }
+    const fallback=()=>{ _destroyHls(); video.style.display='none'; img.style.display=''; onFail(); };
     video.style.display=''; img.style.display='none';
     if(typeof Hls !== 'undefined' && Hls && Hls.isSupported()){
       _hlsInstance=new Hls({ enableWorker:false });
@@ -2240,18 +2253,6 @@ function openCameraStream(d){
     return true;
   };
 
-  const inIngress = window.location.pathname.includes('hassio_ingress');
-
-  // MJPEG stream via entity_picture token (Ingress mode only — browser accesses HA directly)
-  const tryMjpegStream = (entity_picture) => {
-    const mjpegPath = entity_picture.replace('/api/camera_proxy/', '/api/camera_proxy_stream/');
-    img.style.display=''; if(video) video.style.display='none';
-    img.onerror=startSnapshot;
-    img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
-    state.cameraStreamTimer=setTimeout(startSnapshot, 8000);
-    img.src=window.location.origin + mjpegPath;
-  };
-
   // Пытаемся получить HLS URL или MJPEG token через HA WebSocket camera/stream
   fetch(`api/camera/stream-url/${encodeURIComponent(d.entity_id)}`)
     .then(r=>r.json())
@@ -2259,11 +2260,12 @@ function openCameraStream(d){
       if(data?.ok && data.format==='hls' && data.url){
         const haBase = inIngress ? window.location.origin : '';
         const hlsUrl = haBase + data.url;
-        if(!tryHlsVideo(hlsUrl)){
-          // HLS failed — try MJPEG if available, else snapshot
+        // onFail: HLS codec unsupported (e.g. HEVC/H.265) → try MJPEG → snapshot
+        const hlsFail = () => {
           if(inIngress && data.entity_picture) tryMjpegStream(data.entity_picture);
           else startSnapshot();
-        }
+        };
+        tryHlsVideo(hlsUrl, hlsFail);
       } else if(data?.ok && data.format==='mjpeg' && data.entity_picture && inIngress){
         tryMjpegStream(data.entity_picture);
       } else {

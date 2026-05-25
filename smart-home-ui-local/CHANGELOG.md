@@ -1,3 +1,10 @@
+# ALLHA-2D v5.1.0-beta.28 — fix camera fallback for HEVC/H.265 streams
+
+## Fixed
+
+- **Камера HEVC (H.265)** — ONVIF камеры с кодеком HEVC/H.265 теперь автоматически переключаются на MJPEG-поток при ошибке HLS. Ранее при фатальной ошибке HLS.js (неподдерживаемый кодек) срабатывал только снапшот-фолбэк вместо MJPEG. Теперь цепочка: HLS → MJPEG (entity_picture token) → снапшот.
+- Service Worker cache bumped to `allha2d-v5.1.0-beta.28`.
+
 # ALLHA-2D v5.1.0-beta.27 — camera MJPEG stream + per-client icon settings
 
 ## Added
