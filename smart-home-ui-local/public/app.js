@@ -235,6 +235,12 @@ async function loadAuthoritativeClientSettings(){
     const settings = data?.settings || {};
     if(settings.ui){
       const over = pickKeys(settings.ui, CLIENT_STATE_UI_KEYS);
+      // Never let an empty icon/scale object from per-device settings wipe icons that were
+      // already loaded from /api/ui-state. An empty {} means this device slot has no saved
+      // icons yet; the user's icons live in the ui-state file and localStorage.
+      for(const k of ['customIcons','customIconColors','customMarkerScales','customMarkerOpacities']){
+        if(over[k] && typeof over[k]==='object' && !Object.keys(over[k]).length) delete over[k];
+      }
       if(Object.keys(over).length){
         state.ui = { ...state.ui, ...over };
         saveLocalUiPrefs(pickKeys(state.ui, CLIENT_STATE_UI_KEYS));
@@ -526,6 +532,12 @@ function loadUiPrefs(){
     // v4.1.21.18.17: server/client ui-state is authoritative for per-client display settings.
     // localStorage is only a fast fallback. This prevents mobile restart from restoring old default
     // scale/opacity over the saved mobile device settings.
+    // v5.1.0-beta.35: for icon/color customizations, prefer non-empty localStorage over an empty
+    // server value. Empty server = never saved there (e.g. first load after update), not intentional clear.
+    // Intentional clear also empties localStorage, so saved would also be {} and serverUi still wins.
+    for(const k of ['customIcons','customIconColors','customMarkerScales','customMarkerOpacities']){
+      if(serverUi[k] && typeof serverUi[k]==='object' && !Object.keys(serverUi[k]).length && saved[k] && Object.keys(saved[k]).length>0) delete serverUi[k];
+    }
     state.ui = { ...state.ui, ...saved, ...serverUi, hideSidebar:true };
     // v3.5.8.9: mobile version is a normal user switch again.
     // Default/reset enables it, but the user can turn it off in settings.
@@ -2345,8 +2357,9 @@ function openCameraStream(d){
     .then(r=>r.json())
     .then(data=>{
       if(data?.ok && data.format==='hls' && data.url){
-        const haBase = inIngress ? window.location.origin : '';
-        const hlsUrl = haBase + data.url;
+        // Route HLS through ALLHA-2D's proxy (Bearer auth added server-side).
+        // Relative URL (no leading slash) works in both Ingress and local-docker mode.
+        const hlsUrl = data.url.replace(/^\/api\/hls\//, 'api/camera/hls-proxy/');
         // onFail: HLS codec unsupported (e.g. HEVC/H.265) → try MJPEG → snapshot
         const hlsFail = () => {
           if(inIngress && data.entity_picture) tryMjpegStream(data.entity_picture);

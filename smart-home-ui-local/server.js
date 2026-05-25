@@ -4998,6 +4998,30 @@ app.get('/api/camera/stream-url/:entity_id', async (req, res) => {
   res.json({ ok: false });
 });
 
+// HLS proxy: pipes go2rtc HLS playlists and segments from HA supervisor with Bearer auth.
+// Required because HLS.js XHR requests cannot attach a Bearer token to HA directly.
+// All relative segment/sub-playlist URLs inside the m3u8 are preserved and also hit this proxy.
+app.get('/api/camera/hls-proxy/*', async (req, res) => {
+  if(!HA_TOKEN) return res.status(503).end();
+  const haPath = '/api/hls/' + req.params[0];
+  const haBase = HA_API_BASE.replace(/\/api$/, '');
+  try{
+    const upstream = await fetch(haBase + haPath, {
+      headers: { 'Authorization': `Bearer ${HA_TOKEN}` },
+      signal: AbortSignal.timeout(30000)
+    });
+    const ct = upstream.headers.get('content-type') || 'application/octet-stream';
+    res.status(upstream.status);
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+    if(!upstream.ok) return res.end();
+    const buf = await upstream.arrayBuffer();
+    res.end(Buffer.from(buf));
+  }catch(e){
+    if(!res.headersSent) res.status(502).end();
+  }
+});
+
 // Временный debug-эндпоинт для диагностики камеры
 app.get('/api/camera/debug/:entity_id', async (req, res) => {
   const entity_id = req.params.entity_id;
