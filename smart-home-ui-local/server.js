@@ -3998,6 +3998,7 @@ function saveAddonConfig(cfg){
       : (current.mobileAccess || defaultMobileAccessConfig()),
     cameraGateway: normalizeCameraGateway({ ...(current.cameraGateway||{}), ...(cfg?.cameraGateway||{}) })
   };
+  if(cfg?.cameraGateway !== undefined) _invalidateGo2rtcUrl();
   atomicWriteJson(ADDON_CONFIG_PATH, next);
   if(cfg?.mobileAccess !== undefined){
     atomicWriteJson(MOBILE_ACCESS_PATH, next.mobileAccess || defaultMobileAccessConfig());
@@ -5105,9 +5106,25 @@ app.get('/api/camera/debug/:entity_id', async (req, res) => {
 });
 
 /* ── go2rtc Camera Gateway ────────────────────────────────────── */
-function go2rtcBaseUrl(){
-  const cfg = loadAddonConfig();
-  return String(cfg?.cameraGateway?.go2rtcUrl || 'http://127.0.0.1:1984').replace(/\/+$/, '');
+let _go2rtcUrl = null;
+function _invalidateGo2rtcUrl(){ _go2rtcUrl = null; }
+async function resolveGo2rtcUrl(){
+  if(_go2rtcUrl) return _go2rtcUrl;
+  const configured = String(loadAddonConfig()?.cameraGateway?.go2rtcUrl || 'http://127.0.0.1:1984').replace(/\/+$/, '');
+  // When using the default, also probe container-to-host gateway IPs automatically.
+  // ALLHA-2D runs with host_network:false so 127.0.0.1 inside the container is NOT the HA host.
+  const candidates = [configured];
+  if(configured === 'http://127.0.0.1:1984'){
+    candidates.push('http://172.30.32.1:1984', 'http://172.17.0.1:1984');
+  }
+  for(const url of candidates){
+    try{
+      const r = await fetch(`${url}/api/streams`, { signal: AbortSignal.timeout(1200) });
+      if(r.ok){ _go2rtcUrl = url; return url; }
+    }catch(_){}
+  }
+  _go2rtcUrl = configured;
+  return _go2rtcUrl;
 }
 function isSafeCameraStreamName(value){
   if(typeof value !== 'string') return false;
@@ -5117,7 +5134,7 @@ function isSafeCameraStreamName(value){
 }
 
 app.get('/api/camera/go2rtc/test', async (req, res) => {
-  const base = go2rtcBaseUrl();
+  const base = await resolveGo2rtcUrl();
   try{
     const r = await fetch(`${base}/api/streams`, { signal: AbortSignal.timeout(4000) });
     if(!r.ok) return res.json({ ok:false, status:r.status });
@@ -5141,7 +5158,7 @@ app.get('/api/camera/go2rtc/play/:stream', (req, res) => {
 app.get('/api/camera/go2rtc/hls/:stream/index.m3u8', async (req, res) => {
   const stream = req.params.stream;
   if(!isSafeCameraStreamName(stream)) return res.status(400).end();
-  const base = go2rtcBaseUrl();
+  const base = await resolveGo2rtcUrl();
   try{
     const r = await fetch(`${base}/api/stream.m3u8?src=${encodeURIComponent(stream)}`, { signal: AbortSignal.timeout(10000) });
     if(!r.ok) return res.status(r.status).end();
@@ -5161,7 +5178,7 @@ app.get('/api/camera/go2rtc/hls/:stream/*', async (req, res) => {
   if(!isSafeCameraStreamName(stream)) return res.status(400).end();
   const subPath = req.params[0];
   const qs = new URLSearchParams(req.query).toString();
-  const base = go2rtcBaseUrl();
+  const base = await resolveGo2rtcUrl();
   const url = `${base}/api/hls/${subPath}${qs ? '?' + qs : ''}`;
   const ac = new AbortController();
   req.on('close', () => ac.abort());
@@ -5179,7 +5196,7 @@ app.get('/api/camera/go2rtc/hls/:stream/*', async (req, res) => {
 app.get('/api/camera/go2rtc/mjpeg/:stream', makeRateLimit(20, 60_000), async (req, res) => {
   const stream = req.params.stream;
   if(!isSafeCameraStreamName(stream)) return res.status(400).end();
-  const base = go2rtcBaseUrl();
+  const base = await resolveGo2rtcUrl();
   const ac = new AbortController();
   req.on('close', () => ac.abort());
   try{
@@ -5196,7 +5213,7 @@ app.get('/api/camera/go2rtc/mjpeg/:stream', makeRateLimit(20, 60_000), async (re
 app.get('/api/camera/go2rtc/snapshot/:stream', makeRateLimit(60, 60_000), async (req, res) => {
   const stream = req.params.stream;
   if(!isSafeCameraStreamName(stream)) return res.status(400).end();
-  const base = go2rtcBaseUrl();
+  const base = await resolveGo2rtcUrl();
   try{
     const r = await fetch(`${base}/api/frame.jpeg?src=${encodeURIComponent(stream)}`, { signal: AbortSignal.timeout(8000) });
     if(!r.ok) return res.status(r.status).end();

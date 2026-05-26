@@ -1510,6 +1510,9 @@ function applyUiPrefs(){
   updateMobileLockedSettingsUI();
   updateEditButtons();
   applyStageTransform('overview'); applyStageTransform('room'); updateZoomControls();
+  // Pre-load icon packs that are actually assigned to avoid blank-on-first-render
+  const _usedPacks=new Set(Object.values(state.ui.customIcons||{}).map(iconPackId));
+  for(const _pid of _usedPacks) if(typeof ICON_PACKS!=='undefined' && ICON_PACKS[_pid] && !_iconStores[_pid]) loadIconPack(_pid);
 }
 function normalizedRoomId(id){return String(id||'').trim()}
 function roomDevices(id){const rid=normalizedRoomId(id);return devices().filter(d=>normalizedRoomId(effectiveDeviceRoomId(d) || d.room)===rid || (rid==='overview' && d.room!=='media'))}
@@ -2422,10 +2425,8 @@ function closeCameraModal(){
 }
 function renderCameraRoom(r){
   const panel=el('camera-room-panel');
-  const stage=el('room-stage');
   if(!panel) return;
-  if(stage) stage.style.display='none';
-  panel.style.display='';
+  panel.style.display='flex';
   panel.innerHTML='';
   setText('room-title', r.label);
   const climateEl=el('room-climate-line'); if(climateEl) climateEl.innerHTML='';
@@ -3052,9 +3053,8 @@ function renderOverviewMarkers(){
   requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function renderRoom(){
-  const _camPanel=el('camera-room-panel'); const _stage=el('room-stage');
+  const _camPanel=el('camera-room-panel');
   if(_camPanel) _camPanel.style.display='none';
-  if(_stage) _stage.style.display='';
   virtualDebugSnapshot('renderRoom:start');
   const r=room(state.selectedRoom); if(!r)return;
   if(r.cameraRoom){ renderCameraRoom(r); return; }
