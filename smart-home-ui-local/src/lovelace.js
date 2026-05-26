@@ -185,6 +185,28 @@ function flattenCardForEntityCollection(card, config, stats){
   }
   return out;
 }
+function isSafeCameraStreamName(value){
+  if(typeof value !== 'string') return false;
+  const v = value.trim();
+  if(!v || /[/?&#%]/.test(v) || v.includes('..')) return false;
+  return /^[A-Za-z0-9_.-]+$/.test(v);
+}
+function parseCameraMarkdownCard(card){
+  if(!card || card.type !== 'markdown') return null;
+  const content = String(card.content || '').trim();
+  if(!content) return null;
+  const streams = [];
+  for(const line of content.split('\n')){
+    const m = line.trim().match(/^([^:\n]+):\s*(\S+)$/);
+    if(!m) continue;
+    const label = m[1].trim();
+    const stream = m[2].trim();
+    if(label && isSafeCameraStreamName(stream)) streams.push({ label, stream });
+  }
+  if(!streams.length) return null;
+  const title = String(card.title || 'Камеры').trim();
+  return { title, streams };
+}
 function makeDevice(ref, ctx){
   const domain = domainOf(ref.entity_id);
   const category = ctx.cardTitle || 'Без группы';
@@ -229,6 +251,7 @@ function parseLovelaceRawBundle(bundle, haRegistry={}){
   const viewsOut = [];
   const stats = { generatedAt, dashboards:0, views:0, cards:0, rooms:0, roomsFromCardTitles:0, viewDetails:[], roomDetails:[], entitiesFound:0, templatesUsed:new Set(), templateWarnings:[], skippedViews:[], haRegistry: haRegistry.meta || null };
   const roomsById = new Map();
+  const cameraRooms = [];
   const results = bundle?.results || [];
   for(const result of results){
     if(!result.ok) continue;
@@ -244,6 +267,14 @@ function parseLovelaceRawBundle(bundle, haRegistry={}){
       const viewRoomIds = new Set();
       const cardsOut=[];
       for(const originalCard of getCardsFromView(view)){
+        const camCard = parseCameraMarkdownCard(originalCard);
+        if(camCard){
+          const camRoomId = roomIdFromLovelaceTitle(camCard.title);
+          if(camRoomId && !cameraRooms.some(r=>r.id===camRoomId)){
+            cameraRooms.push({ id:camRoomId, title:camCard.title, streams:camCard.streams });
+          }
+          continue;
+        }
         const cTitle = cardTitle(originalCard, viewTitle);
         const explicitTitle = normalizeRoomTitle(originalCard._allhaRoomTitle || (originalCard._allhaCardTitleExplicit ? cTitle : ''));
         const sourceKey = `${viewTitle}::${cTitle}`;
@@ -282,7 +313,7 @@ function parseLovelaceRawBundle(bundle, haRegistry={}){
   const devices = [...devicesById.values()].sort((a,b)=>String(a.sourceKey).localeCompare(String(b.sourceKey),'ru') || a.entity_id.localeCompare(b.entity_id));
   stats.entitiesFound = devices.length;
   const source = { version:2, generatedAt, generatedFrom:'ha-lovelace-raw', haRegistry: haRegistry.meta || null, views:viewsOut };
-  return { devices, source, stats: { ...stats, templatesUsed:[...stats.templatesUsed] } };
+  return { devices, source, cameraRooms, stats: { ...stats, templatesUsed:[...stats.templatesUsed] } };
 }
 
 module.exports = {
@@ -314,5 +345,7 @@ module.exports = {
   collectEntityRefs,
   flattenCardForEntityCollection,
   makeDevice,
+  isSafeCameraStreamName,
+  parseCameraMarkdownCard,
   parseLovelaceRawBundle
 };

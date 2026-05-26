@@ -3015,6 +3015,8 @@ function normalizeRoomSettingsRoom(roomId, value){
   else if(Object.prototype.hasOwnProperty.call(current, 'standardSensorOverviewOrientation')) out.standardSensorOverviewOrientation = 'horizontal';
   if(current.standardSensorRoomOrientation === 'vertical') out.standardSensorRoomOrientation = 'vertical';
   else if(Object.prototype.hasOwnProperty.call(current, 'standardSensorRoomOrientation')) out.standardSensorRoomOrientation = 'horizontal';
+  if(current.cameraRoom === true) out.cameraRoom = true;
+  if(Array.isArray(current.cameraStreams)) out.cameraStreams = current.cameraStreams.filter(s=>s && typeof s === 'object' && s.label && s.stream);
   return out;
 }
 
@@ -3216,7 +3218,20 @@ function mergeParsedRoomsIntoSettings(parsed, roomsPath = ROOMS_SETTINGS_PATH){
       standardSensors: prevSensors
     });
   }
-  const next = { version:Number(currentRaw.version)||1, rooms:nextRooms, updatedAt:new Date().toISOString(), importSummary:{ rooms:parsedRooms.size, entities:(parsed?.devices||[]).length, source:'lovelace-import' } };
+  for(const camRoom of (parsed?.cameraRooms || [])){
+    const id = String(camRoom?.id || '').trim();
+    if(!id || id === 'overview') continue;
+    const prev = nextRooms[id] || oldRooms[id] || {};
+    nextRooms[id] = normalizeRoomSettingsRoom(id, {
+      ...prev,
+      alias: prev.alias || camRoom.title || id,
+      source: 'lovelace-camera-room',
+      cameraRoom: true,
+      cameraStreams: camRoom.streams || [],
+      updatedAt: new Date().toISOString()
+    });
+  }
+  const next = { version:Number(currentRaw.version)||1, rooms:nextRooms, updatedAt:new Date().toISOString(), importSummary:{ rooms:parsedRooms.size, cameraRooms:(parsed?.cameraRooms||[]).length, entities:(parsed?.devices||[]).length, source:'lovelace-import' } };
   return saveRoomsSettings(next, roomsPath);
 }
 function resetInvalidSelectedRoomAfterImport(validRoomIds, uiPath = UI_STATE_PATH){
@@ -3746,12 +3761,17 @@ function defaultAddonConfig(){
       haloScale:0.50, hardwareScale:1.00, markerScale:1.00, sensorScale:1.00, roomLabelScale:1.00, markerOpacity:0.00, sensorOpacity:0.00
     },
     security: { panelMode:'admin', confirmDangerousServices:true, dangerousRequirePin:false, pinEnabled:false },
-    mobileAccess: { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '', qrPassword: '', externalEnabled: false, externalUrl: '', externalMode: 'keendns_http' }
+    mobileAccess: { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '', qrPassword: '', externalEnabled: false, externalUrl: '', externalMode: 'keendns_http' },
+    cameraGateway: { go2rtcUrl: 'http://127.0.0.1:1984' }
   };
 }
 
 function defaultMobileAccessConfig(){
   return { enabled: false, localUrl: '', remoteUrl: '', pairingPassword: '', qrPassword: '', pairingPasswordHash: '', pairingPasswordSalt: '', externalEnabled: false, externalUrl: '', externalMode: 'keendns_http' };
+}
+function normalizeCameraGateway(input){
+  const src = input && typeof input === 'object' ? input : {};
+  return { go2rtcUrl: String(src.go2rtcUrl || 'http://127.0.0.1:1984').trim().replace(/\/+$/, '') };
 }
 function hashMobilePairingPassword(password, salt){
   const pwd = String(password || '');
@@ -3956,7 +3976,8 @@ function loadAddonConfig(){
       sseBatchMs: Math.max(0, Math.min(60000, Number(local.sseBatchMs ?? options.sseBatchMs ?? process.env.ALLHA_SSE_BATCH_MS ?? defaults.sseBatchMs))),
       dashboardPaths: normalizeDashboardPaths(local.dashboardPaths ?? local.dashboardPathText ?? options.dashboardPaths ?? options.dashboardPathText ?? ''),
       ui: normalizeUiConfig({ ...(options.ui||{}), ...(local.ui||{}), ...Object.fromEntries(Object.entries(local).filter(([k])=>Object.prototype.hasOwnProperty.call(defaults.ui,k))) }),
-      security: normalizeSecurityConfig({ ...(options.security||{}), ...(local.security||{}) })
+      security: normalizeSecurityConfig({ ...(options.security||{}), ...(local.security||{}) }),
+      cameraGateway: normalizeCameraGateway({ ...(options.cameraGateway||{}), ...(local.cameraGateway||{}) })
     };
   } catch(e) {
     return defaults;
@@ -3974,7 +3995,8 @@ function saveAddonConfig(cfg){
     security: normalizeSecurityConfig({ ...current.security, ...(cfg?.security||{}) }),
     mobileAccess: cfg?.mobileAccess !== undefined
       ? normalizeMobileAccessConfig(cfg.mobileAccess, current.mobileAccess || defaultMobileAccessConfig())
-      : (current.mobileAccess || defaultMobileAccessConfig())
+      : (current.mobileAccess || defaultMobileAccessConfig()),
+    cameraGateway: normalizeCameraGateway({ ...(current.cameraGateway||{}), ...(cfg?.cameraGateway||{}) })
   };
   atomicWriteJson(ADDON_CONFIG_PATH, next);
   if(cfg?.mobileAccess !== undefined){
@@ -4024,7 +4046,8 @@ function publicConfig(cfg){
         hasPairingPassword: mobilePairingPasswordIsSet(m),
         pairedDevices: mobileAuth.listDevices().length
       };
-    })()
+    })(),
+    cameraGateway: normalizeCameraGateway(cfg?.cameraGateway || {})
   };
 }
 function splitDashboardPath(raw){
@@ -5079,6 +5102,108 @@ app.get('/api/camera/debug/:entity_id', async (req, res) => {
     if(st) report.state_attributes = { state: st.state, entity_picture: st.attributes?.entity_picture, frontend_stream_type: st.attributes?.frontend_stream_type };
   } catch(e) { report.state_error = e.message; }
   res.json(report);
+});
+
+/* ── go2rtc Camera Gateway ────────────────────────────────────── */
+function go2rtcBaseUrl(){
+  const cfg = loadAddonConfig();
+  return String(cfg?.cameraGateway?.go2rtcUrl || 'http://127.0.0.1:1984').replace(/\/+$/, '');
+}
+function isSafeCameraStreamName(value){
+  if(typeof value !== 'string') return false;
+  const v = value.trim();
+  if(!v || /[/?&#%]/.test(v) || v.includes('..')) return false;
+  return /^[A-Za-z0-9_.-]+$/.test(v);
+}
+
+app.get('/api/camera/go2rtc/test', async (req, res) => {
+  const base = go2rtcBaseUrl();
+  try{
+    const r = await fetch(`${base}/api/streams`, { signal: AbortSignal.timeout(4000) });
+    if(!r.ok) return res.json({ ok:false, status:r.status });
+    const data = await r.json();
+    res.json({ ok:true, url:base, streams: Object.keys(data||{}).slice(0,20) });
+  }catch(e){ res.json({ ok:false, error:e.message }); }
+});
+
+app.get('/api/camera/go2rtc/play/:stream', (req, res) => {
+  const stream = req.params.stream;
+  if(!isSafeCameraStreamName(stream)) return res.status(400).json({ error:'bad stream name' });
+  res.json({
+    ok: true,
+    stream,
+    hls: `api/camera/go2rtc/hls/${stream}/index.m3u8`,
+    mjpeg: `api/camera/go2rtc/mjpeg/${stream}`,
+    snapshot: `api/camera/go2rtc/snapshot/${stream}`
+  });
+});
+
+app.get('/api/camera/go2rtc/hls/:stream/index.m3u8', async (req, res) => {
+  const stream = req.params.stream;
+  if(!isSafeCameraStreamName(stream)) return res.status(400).end();
+  const base = go2rtcBaseUrl();
+  try{
+    const r = await fetch(`${base}/api/stream.m3u8?src=${encodeURIComponent(stream)}`, { signal: AbortSignal.timeout(10000) });
+    if(!r.ok) return res.status(r.status).end();
+    let text = await r.text();
+    // go2rtc master playlist returns "hls/playlist.m3u8?id=SESSION" as relative path.
+    // Strip leading "hls/" so browser resolves sub-playlist relative to this endpoint's URL,
+    // then the wildcard route below proxies /api/hls/playlist.m3u8 correctly.
+    text = text.replace(/^hls\//gm, '');
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(text);
+  }catch(e){ if(!res.headersSent) res.status(502).end(); }
+});
+
+app.get('/api/camera/go2rtc/hls/:stream/*', async (req, res) => {
+  const stream = req.params.stream;
+  if(!isSafeCameraStreamName(stream)) return res.status(400).end();
+  const subPath = req.params[0];
+  const qs = new URLSearchParams(req.query).toString();
+  const base = go2rtcBaseUrl();
+  const url = `${base}/api/hls/${subPath}${qs ? '?' + qs : ''}`;
+  const ac = new AbortController();
+  req.on('close', () => ac.abort());
+  try{
+    const r = await fetch(url, { signal: ac.signal });
+    if(!r.ok) return res.status(r.status).end();
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'no-store');
+    const nodeStream = Readable.fromWeb(r.body);
+    nodeStream.pipe(res);
+    nodeStream.on('error', () => { if(!res.writableEnded) res.end(); });
+  }catch(e){ if(!res.headersSent && !ac.signal.aborted) res.status(502).end(); }
+});
+
+app.get('/api/camera/go2rtc/mjpeg/:stream', makeRateLimit(20, 60_000), async (req, res) => {
+  const stream = req.params.stream;
+  if(!isSafeCameraStreamName(stream)) return res.status(400).end();
+  const base = go2rtcBaseUrl();
+  const ac = new AbortController();
+  req.on('close', () => ac.abort());
+  try{
+    const r = await fetch(`${base}/api/stream.mjpeg?src=${encodeURIComponent(stream)}`, { signal: ac.signal });
+    if(!r.ok) return res.status(r.status).end();
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'multipart/x-mixed-replace; boundary=ffmpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    const nodeStream = Readable.fromWeb(r.body);
+    nodeStream.pipe(res);
+    nodeStream.on('error', () => { if(!res.writableEnded) res.end(); });
+  }catch(e){ if(!res.headersSent && !ac.signal.aborted) res.status(502).end(); }
+});
+
+app.get('/api/camera/go2rtc/snapshot/:stream', makeRateLimit(60, 60_000), async (req, res) => {
+  const stream = req.params.stream;
+  if(!isSafeCameraStreamName(stream)) return res.status(400).end();
+  const base = go2rtcBaseUrl();
+  try{
+    const r = await fetch(`${base}/api/frame.jpeg?src=${encodeURIComponent(stream)}`, { signal: AbortSignal.timeout(8000) });
+    if(!r.ok) return res.status(r.status).end();
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'image/jpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(Buffer.from(await r.arrayBuffer()));
+  }catch(e){ if(!res.headersSent) res.status(502).end(); }
 });
 
 /* ── Layout export / import ───────────────────────────────────── */
