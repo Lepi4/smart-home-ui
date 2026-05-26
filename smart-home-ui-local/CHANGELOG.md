@@ -1,3 +1,90 @@
+# ALLHA-2D v5.1.0 — Camera rooms, multi-pack icons, per-client settings
+
+## Камеры / Cameras
+
+**Комнаты с камерами** — новый тип комнаты «Камеры». Работает исключительно через [go2rtc](https://github.com/AlexxIT/go2rtc) (встроен в Home Assistant с версии 2024.x).
+
+### Как работает парсинг камер
+
+Камеры подтягиваются из карт Lovelace так же, как и обычные устройства:
+
+1. ALLHA-2D читает все дашборды Lovelace через WebSocket API Home Assistant.
+2. Из карт типа `picture-elements` и `picture-glance` извлекаются `camera_image` / `entity` с доменом `camera.*`.
+3. Каждая найденная камера сопоставляется с потоком go2rtc по имени entity. Например, `camera.nvt_substream` → поток `nvt_substream` в go2rtc.
+4. В редакторе комнаты-камеры вы задаёте фоновое изображение (план этажа или фото) и список потоков go2rtc, которые на нём отображаются в виде кликабельных плиток.
+
+### Как работает воспроизведение
+
+При нажатии на плитку открывается модальное окно с плеером go2rtc. Сервер ALLHA-2D проксирует:
+- статические файлы плеера (`stream.html`, `video-rtc.js`, `video-stream.js`) через HTTP;
+- WebSocket-соединение плеера (`/api/ws`) — через WebSocket-прокси на сервере.
+
+Плеер go2rtc сам выбирает наилучший протокол: **WebRTC → MSE → HLS**. Это работает на всех клиентах:
+- браузер в LAN (порт 8099);
+- HA Ingress (панель в интерфейсе HA);
+- мобильное приложение снаружи (порт 32457).
+
+Адрес go2rtc (по умолчанию `http://127.0.0.1:1984`) определяется автоматически — сервер перебирает стандартные gateway-адреса контейнера и кэширует рабочий на 5 минут. При смене IP HA переобнаружение происходит автоматически. Адрес можно переопределить в настройках (`cameraGateway → go2rtcUrl`).
+
+---
+
+**Camera rooms** — new room type "Cameras". Works exclusively via [go2rtc](https://github.com/AlexxIT/go2rtc) (built into Home Assistant since 2024.x).
+
+### How camera parsing works
+
+Cameras are parsed from Lovelace cards the same way regular devices are:
+
+1. ALLHA-2D reads all Lovelace dashboards via Home Assistant WebSocket API.
+2. Cards of type `picture-elements` and `picture-glance` are scanned for `camera_image` / `entity` fields with domain `camera.*`.
+3. Each found camera is matched to a go2rtc stream by entity name. E.g. `camera.nvt_substream` → stream `nvt_substream` in go2rtc.
+4. In the camera room editor you set a background image (floor plan or photo) and the list of go2rtc streams displayed as clickable tiles on top of it.
+
+### How playback works
+
+Clicking a tile opens a modal with the go2rtc player. ALLHA-2D server proxies:
+- player static files (`stream.html`, `video-rtc.js`, `video-stream.js`) over HTTP;
+- player WebSocket (`/api/ws`) via a WebSocket proxy on the server.
+
+The go2rtc player automatically selects the best protocol: **WebRTC → MSE → HLS**. Works on all clients:
+- LAN browser (port 8099);
+- HA Ingress (panel inside HA UI);
+- mobile app from outside (port 32457).
+
+The go2rtc URL (default `http://127.0.0.1:1984`) is resolved automatically — the server probes standard container gateway addresses and caches the working one for 5 minutes. If the HA server's IP changes, re-discovery happens automatically. The address can be overridden in settings (`cameraGateway → go2rtcUrl`).
+
+---
+
+## Иконки устройств / Device icons
+
+- **5 пакетов иконок** — MDI (7 400+), Custom Brand Icons (1 580+), Phosphor (1 510+), Tabler (5 090+), Remix (1 540+). Итого 17 000+ иконок. / **5 icon packs** — MDI, Brand Icons, Phosphor, Tabler, Remix. 17 000+ icons total.
+- **Поиск по всем пакетам** — при вводе 2+ символов результаты сгруппированы по пакету. / **Cross-pack search** — 2+ chars searches all packs simultaneously, results grouped by pack.
+- **Просмотр без поиска** — малые пакеты открываются со всеми иконками при переключении вкладки. / **Browse without typing** — small packs show all icons on tab switch.
+- **Иконки и цвета — per-client** — хранятся в `localStorage` браузера, не на сервере. Каждое устройство имеет свой набор иконок и цветов. / **Icons & colors are per-client** — stored in browser `localStorage`. Each device has its own icon/color set independently.
+- **Глобальный цвет иконок** — палитра в Настройки → Интерфейс, применяется к текущему клиенту. / **Global icon color** — color picker in Settings → Interface, applied per-client.
+
+---
+
+## Прочие улучшения / Other improvements
+
+- **Opacity маркеров** — ползунок непрозрачности корректно работает для всех типов маркеров, включая `light-on/off`, `climate-visual`. / **Marker opacity** — opacity slider works correctly for all marker types including light and climate state markers.
+- **Поиск иконок через Ingress** — исправлена загрузка `mdi-icons.json` (относительный URL, работает под HA Ingress). / **Icon search under Ingress** — fixed `mdi-icons.json` loading (relative URL, works under HA Ingress proxy).
+- **HLS таймаут** — увеличен до 15 с для учёта cold-start go2rtc (~6.5 с). / **HLS timeout** — increased to 15 s to account for go2rtc cold start (~6.5 s).
+
+---
+
+## Обновление / Update
+
+**HA Add-on:** обновить через Supervisor → Дополнения → ALLHA-2D → Обновить.
+
+**Local Docker:**
+```powershell
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+**Full Changelog**: https://github.com/Lepi4/smart-home-ui/compare/v5.0.2...v5.1.0
+
 # ALLHA-2D v5.1.0-beta.31 — cross-pack icon search + browse all without typing
 
 ## Changed

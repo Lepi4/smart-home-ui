@@ -2121,6 +2121,7 @@ body[data-theme="sepia"] .modal-card{background:#fdf5e2;color:#3b2a14;border-col
 /* ── Камера ──────────────────────────────────────────────────── */
 .camera-modal-card{max-width:720px}
 .camera-modal-body{padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center}
+.camera-stream-iframe{width:100%;min-height:320px;max-height:65vh;border:none;background:#000;border-radius:12px;display:block}
 .camera-stream-img{max-width:100%;max-height:60vh;border-radius:12px;object-fit:contain;background:#000;display:block}
 .camera-stream-video{display:none;width:100%;max-height:60vh;border-radius:12px;background:#000;outline:none}
 .camera-modal-footer{display:flex;align-items:center;justify-content:space-between;width:100%;gap:10px}
@@ -2130,13 +2131,17 @@ body[data-theme="sepia"] .modal-card{background:#fdf5e2;color:#3b2a14;border-col
 .camera-error{color:#db4437;font-size:13px;text-align:center;padding:20px}
 .device-marker.camera-visual,.device-card.camera-visual .dev-icon,.quick-action.camera-visual .quick-icon{background:rgba(26,37,53,var(--marker-bg-opacity,.94));color:#6eb8f0}
 .room-image-wrap{position:relative}
-.camera-room{position:absolute;inset:0;background:rgba(10,15,22,.82);display:flex;flex-direction:column;align-items:flex-start;padding:20px;overflow-y:auto;z-index:20;border-radius:12px}
-.camera-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:16px;width:100%}
-.camera-tile{background:rgba(30,45,65,.92);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:20px 12px;display:flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer;transition:background .15s,transform .1s;user-select:none}
-.camera-tile:hover{background:rgba(50,75,110,.92)}
+.camera-room{background:#101317;display:flex;flex-direction:column;padding:20px;overflow-y:auto;border-radius:18px;min-height:0;color:#e8eaf0}
+.camera-tile-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,160px));gap:12px;width:100%;align-content:center;justify-content:center}
+.camera-tile{background:rgba(20,30,48,.82);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:18px 10px;display:flex;flex-direction:column;align-items:center;gap:9px;cursor:pointer;transition:background .15s,transform .1s;color:#e8eaf0;font-weight:500;backdrop-filter:blur(6px)}
+.camera-tile:hover{background:rgba(45,65,105,.90);border-color:rgba(255,255,255,.2)}
 .camera-tile:active{transform:scale(.96)}
-.camera-tile-icon{font-size:32px;line-height:1}
-.camera-tile-name{font-size:14px;font-weight:500;text-align:center;color:#e8eaf0}
+.camera-tile-icon{font-size:30px;line-height:1}
+.camera-tile-name{font-size:13px;text-align:center;line-height:1.3}
+body.camera-room-active #room-markers{display:none!important}
+body.camera-room-active #room-metrics{z-index:46}
+body.camera-room-active .room-virtual-cards{align-items:center;justify-content:center}
+body.camera-room-active .camera-tile-grid{margin:auto;width:auto;max-width:90%}
 
 /* ── Undo / Redo ─────────────────────────────────────────────── */
 #btn-undo,#btn-redo{background:rgba(255,178,63,.14);border:1px solid rgba(255,178,63,.4);color:#ffe2b0;min-width:34px;padding-left:9px;padding-right:9px}

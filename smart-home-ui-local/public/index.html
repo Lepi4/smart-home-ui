@@ -112,8 +112,8 @@
                 <div id="room-metrics" class="overlay"></div>
                 <div id="room-markers" class="overlay"></div>
               </div>
-              <div id="camera-room-panel" class="camera-room" style="display:none"></div>
             </div>
+            <div id="camera-room-panel" class="camera-room" style="display:none"></div>
             <div class="room-details">
               <div class="detail-card">
                 <h2 id="room-title">Комната</h2>
@@ -827,6 +827,7 @@
         <button type="button" id="btn-close-camera" class="close-word">× Закрыть</button>
       </div>
       <div class="camera-modal-body">
+        <iframe id="camera-stream-iframe" class="camera-stream-iframe" src="" allow="autoplay" style="display:none"></iframe>
         <video id="camera-stream-video" class="camera-stream-video" autoplay playsinline muted controls></video>
         <img id="camera-stream-img" src="data:," alt="Камера" class="camera-stream-img">
         <div class="camera-modal-footer">

@@ -2418,58 +2418,67 @@ function closeCameraModal(){
   if(img) img.src='data:,';
   const video=el('camera-stream-video');
   if(video){ try{ video.pause(); }catch(e){} video.src=''; video.style.display='none'; }
+  const iframe=el('camera-stream-iframe');
+  if(iframe){ iframe.src=''; iframe.style.display='none'; }
   _destroyHls();
   if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
   if(state.cameraRefreshTimer){ clearInterval(state.cameraRefreshTimer); state.cameraRefreshTimer=null; }
   if(state.cameraHlsTimer){ clearTimeout(state.cameraHlsTimer); state.cameraHlsTimer=null; }
 }
 function renderCameraRoom(r){
-  const panel=el('camera-room-panel');
-  if(!panel) return;
-  panel.style.display='flex';
-  panel.innerHTML='';
-  setText('room-title', r.label);
-  const climateEl=el('room-climate-line'); if(climateEl) climateEl.innerHTML='';
-  const grid=document.createElement('div');
-  grid.className='camera-grid';
-  for(const s of (r.cameraStreams||[])){
-    const tile=document.createElement('div');
-    tile.className='camera-tile';
-    tile.innerHTML=`<div class="camera-tile-icon">📷</div><div class="camera-tile-name">${esc(s.label)}</div>`;
-    tile.onclick=()=>openCameraGateway({label:s.label, stream:s.stream});
-    grid.appendChild(tile);
-  }
-  if(!(r.cameraStreams||[]).length){
-    const empty=document.createElement('p');
-    empty.className='muted'; empty.textContent='Нет камер в этой комнате';
-    panel.appendChild(empty);
-  } else {
-    panel.appendChild(grid);
-  }
+  document.body.classList.add('camera-room-active');
+  const img=el('room-image');
+  if(!img) return;
+  ensureVirtualRoomCardsLayer();
+  const src=roomImageSrc(r.id);
+  const afterReady=()=>{
+    fitStage('room');
+    const layer=ensureVirtualRoomCardsLayer(); if(!layer) return;
+    layer.classList.remove('hidden');
+    const streams=r.cameraStreams||[];
+    if(!streams.length){
+      layer.innerHTML='<div class="virtual-room-empty">Нет камер в этой комнате</div>';
+    } else {
+      layer.innerHTML=`<div class="camera-tile-grid">${streams.map(s=>`<button type="button" class="camera-tile" data-stream="${esc(s.stream)}"><span class="camera-tile-icon">📷</span><span class="camera-tile-name">${esc(s.label)}</span></button>`).join('')}</div>`;
+      layer.querySelectorAll('[data-stream]').forEach(btn=>{
+        const s=streams.find(x=>x.stream===btn.dataset.stream);
+        if(s) btn.onclick=()=>openCameraGateway({label:s.label,stream:s.stream});
+      });
+    }
+    positionVirtualRoomCardsLayer();
+    requestAnimationFrame(()=>positionVirtualRoomCardsLayer());
+  };
+  const absSrc=new URL(src,location.href).href;
+  if(img.dataset.src!==src||img.src!==absSrc){
+    img.dataset.src=src; img.onload=afterReady; img.onerror=afterReady; img.src=src;
+  } else if(img.complete) afterReady();
+  setText('room-title',r.label);
+  const mline=el('room-climate-line'); if(mline) mline.innerHTML='';
 }
 function openCameraGateway({label, stream}){
   const modal=el('camera-modal');
   const img=el('camera-stream-img');
   const video=el('camera-stream-video');
+  const iframe=el('camera-stream-iframe');
   if(!modal||!img) return;
   const titleEl=el('camera-modal-title'); if(titleEl) titleEl.textContent=label;
   const entityLabel=el('camera-modal-entity'); if(entityLabel) entityLabel.textContent=stream;
-  img.dataset.entity='';
-  img.dataset.stream=stream;
+  img.dataset.entity=''; img.dataset.stream=stream;
   img.alt=''; img.src='data:,';
-  _setCamStatus('Загрузка…');
+  _setCamStatus('');
   _destroyHls();
   if(video){ video.src=''; video.style.display='none'; }
-  img.style.display='';
+  if(iframe){ iframe.src=''; iframe.style.display='none'; }
+  img.style.display='none';
   modal.classList.remove('hidden');
 
   const snapshotUrl=()=>`api/camera/go2rtc/snapshot/${encodeURIComponent(stream)}?t=${Date.now()}`;
-
   const startSnapshot=()=>{
     if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
     img.onload=null;
     _setCamStatus('Снапшот');
     img.onerror=()=>{ img.alt='Камера недоступна'; _setCamStatus('Снапшот: ошибка','fail'); };
+    if(iframe) iframe.style.display='none';
     img.style.display=''; if(video) video.style.display='none';
     img.src=snapshotUrl();
     if(state.cameraRefreshTimer) clearInterval(state.cameraRefreshTimer);
@@ -2479,44 +2488,18 @@ function openCameraGateway({label, stream}){
     }, 3000);
   };
 
-  const doMjpeg=()=>{
-    if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
-    _setCamStatus('MJPEG: загрузка…');
-    img.style.display=''; if(video) video.style.display='none';
-    img.onerror=()=>{ _setCamStatus('MJPEG: ошибка → снапшот','fail'); startSnapshot(); };
-    img.onload=()=>{ img.onload=null; _setCamStatus('MJPEG ▶','ok'); if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
-    state.cameraStreamTimer=setTimeout(()=>{ _setCamStatus('MJPEG: таймаут → снапшот','fail'); startSnapshot(); }, 10000);
-    img.src=`api/camera/go2rtc/mjpeg/${encodeURIComponent(stream)}`;
-  };
-
-  const hlsUrl=`api/camera/go2rtc/hls/${encodeURIComponent(stream)}/index.m3u8`;
-  if(typeof Hls !== 'undefined' && Hls && Hls.isSupported()){
-    let _hlsFailed=false;
-    const fallback=()=>{
-      if(_hlsFailed) return; _hlsFailed=true;
-      if(state.cameraHlsTimer){ clearTimeout(state.cameraHlsTimer); state.cameraHlsTimer=null; }
-      _destroyHls(); if(video) video.style.display='none'; img.style.display='';
-      doMjpeg();
-    };
-    _setCamStatus('HLS: загрузка…');
-    state.cameraHlsTimer=setTimeout(()=>{
-      if(video && video.readyState>=2 && !video.paused) return;
-      _setCamStatus('HLS: таймаут → MJPEG','fail'); fallback();
-    }, 8000);
-    if(video){ video.style.display=''; img.style.display='none'; video.muted=true; video.onerror=()=>{ _setCamStatus('HLS: ошибка → MJPEG','fail'); fallback(); }; }
-    _hlsInstance=new Hls({ enableWorker:false });
-    _hlsInstance.loadSource(hlsUrl);
-    if(video) _hlsInstance.attachMedia(video);
-    _hlsInstance.on(Hls.Events.MANIFEST_PARSED,()=>{ _setCamStatus('HLS ▶','ok'); });
-    _hlsInstance.on(Hls.Events.ERROR,(_,data)=>{ if(data.fatal){ _setCamStatus('HLS: fatal → MJPEG','fail'); fallback(); } });
-    if(video) video.play().catch(()=>{});
-  } else if(video && video.canPlayType('application/vnd.apple.mpegurl')){
-    _setCamStatus('HLS: загрузка…');
-    video.style.display=''; img.style.display='none'; video.muted=true; video.src=hlsUrl;
-    video.onerror=()=>{ _setCamStatus('HLS: ошибка → MJPEG','fail'); _destroyHls(); video.style.display='none'; img.style.display=''; doMjpeg(); };
-    video.play().catch(()=>{});
+  // Try go2rtc player (MSE/WebRTC auto-select) via iframe proxy
+  if(iframe){
+    const playerUrl=new URL(`api/camera/go2rtc/ui/stream.html?src=${encodeURIComponent(stream)}`, document.baseURI||location.href).href;
+    iframe.style.display='';
+    if(video) video.style.display='none';
+    img.style.display='none';
+    // Fallback to snapshot if player page fails to load
+    iframe.onerror=()=>{ iframe.style.display='none'; startSnapshot(); };
+    state.cameraStreamTimer=setTimeout(()=>{ state.cameraStreamTimer=null; }, 20000);
+    iframe.src=playerUrl;
   } else {
-    doMjpeg();
+    startSnapshot();
   }
 }
 function setLayoutDirty(value=true){
@@ -3053,6 +3036,7 @@ function renderOverviewMarkers(){
   requestAnimationFrame(updateLiveCoordinateDebug);
 }
 function renderRoom(){
+  document.body.classList.remove('camera-room-active');
   const _camPanel=el('camera-room-panel');
   if(_camPanel) _camPanel.style.display='none';
   virtualDebugSnapshot('renderRoom:start');

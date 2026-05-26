@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
+const WebSocket = require('ws');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { HA_API_BASE, HA_WS_URL, HA_TOKEN, haFetch, haWsCommand, haCallService, statesCache, sseClients, broadcastSseEvent, setSseBatchMs, noteSseClientConnected, noteSseClientDisconnected, noteSseClientRejected, noteSseHeartbeat, startHaWsSubscription, getHaStatus, stopHaWsSubscription } = require('./src/ha');
@@ -5107,24 +5108,27 @@ app.get('/api/camera/debug/:entity_id', async (req, res) => {
 
 /* ── go2rtc Camera Gateway ────────────────────────────────────── */
 let _go2rtcUrl = null;
-function _invalidateGo2rtcUrl(){ _go2rtcUrl = null; }
+let _go2rtcUrlExpiry = 0;
+const _GO2RTC_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+function _invalidateGo2rtcUrl(){ _go2rtcUrl = null; _go2rtcUrlExpiry = 0; }
 async function resolveGo2rtcUrl(){
-  if(_go2rtcUrl) return _go2rtcUrl;
-  const configured = String(loadAddonConfig()?.cameraGateway?.go2rtcUrl || 'http://127.0.0.1:1984').replace(/\/+$/, '');
-  // When using the default, also probe container-to-host gateway IPs automatically.
-  // ALLHA-2D runs with host_network:false so 127.0.0.1 inside the container is NOT the HA host.
-  const candidates = [configured];
-  if(configured === 'http://127.0.0.1:1984'){
-    candidates.push('http://172.30.32.1:1984', 'http://172.17.0.1:1984');
+  if(_go2rtcUrl && Date.now() < _go2rtcUrlExpiry) return _go2rtcUrl;
+  const configured = String(loadAddonConfig()?.cameraGateway?.go2rtcUrl || '').replace(/\/+$/, '');
+  // Always probe all known candidates: configured first, then standard gateway IPs.
+  // This way if the LAN IP changes, the server auto-discovers go2rtc on the next request.
+  const seen = new Set();
+  const candidates = [];
+  for(const u of [configured, 'http://127.0.0.1:1984', 'http://172.30.32.1:1984', 'http://172.17.0.1:1984']){
+    if(u && !seen.has(u)){ seen.add(u); candidates.push(u); }
   }
   for(const url of candidates){
     try{
       const r = await fetch(`${url}/api/streams`, { signal: AbortSignal.timeout(1200) });
-      if(r.ok){ _go2rtcUrl = url; return url; }
+      if(r.ok){ _go2rtcUrl = url; _go2rtcUrlExpiry = Date.now() + _GO2RTC_CACHE_TTL; return url; }
     }catch(_){}
   }
-  _go2rtcUrl = configured;
-  return _go2rtcUrl;
+  // Nothing responded — return configured or default without caching (retry next call)
+  return configured || 'http://127.0.0.1:1984';
 }
 function isSafeCameraStreamName(value){
   if(typeof value !== 'string') return false;
@@ -5153,6 +5157,23 @@ app.get('/api/camera/go2rtc/play/:stream', (req, res) => {
     mjpeg: `api/camera/go2rtc/mjpeg/${stream}`,
     snapshot: `api/camera/go2rtc/snapshot/${stream}`
   });
+});
+
+// Proxy go2rtc player static files (stream.html, video-rtc.js, video-stream.js)
+const _GO2RTC_PLAYER_FILES = new Set(['stream.html','video-rtc.js','video-stream.js']);
+app.get('/api/camera/go2rtc/ui/:file', async (req, res) => {
+  const file = req.params.file;
+  if(!_GO2RTC_PLAYER_FILES.has(file)) return res.status(404).end();
+  const base = await resolveGo2rtcUrl();
+  try {
+    const qs = new URLSearchParams(req.query).toString();
+    const r = await fetch(`${base}/${file}${qs?'?'+qs:''}`, { signal: AbortSignal.timeout(5000) });
+    if(!r.ok) return res.status(r.status).end();
+    res.setHeader('Content-Type', r.headers.get('content-type')||'text/html');
+    res.setHeader('Cache-Control','no-store');
+    res.removeHeader('X-Frame-Options');
+    res.end(await r.text());
+  } catch(e){ if(!res.headersSent) res.status(502).end(); }
 });
 
 app.get('/api/camera/go2rtc/hls/:stream/index.m3u8', async (req, res) => {
@@ -6697,6 +6718,33 @@ mobileServer.on('error', err => {
   if(err && err.code === 'EADDRINUSE') console.error(`Mobile port ${MOBILE_PORT} already in use`);
   else throw err;
 });
+
+// WebSocket proxy for go2rtc MSE player (/api/camera/go2rtc/ui/api/ws?src=...)
+function _attachGo2rtcWsProxy(httpSrv){
+  httpSrv.on('upgrade',(req,socket,head)=>{
+    try{
+      const u=new URL(req.url,'http://localhost');
+      if(u.pathname!=='/api/camera/go2rtc/ui/api/ws'){ socket.destroy(); return; }
+      const src=u.searchParams.get('src')||'';
+      if(!src){ socket.destroy(); return; }
+      resolveGo2rtcUrl().then(base=>{
+        const upUrl=base.replace(/^http/,'ws')+'/api/ws?src='+encodeURIComponent(src);
+        const up=new WebSocket(upUrl);
+        const wss=new WebSocket.Server({noServer:true});
+        wss.handleUpgrade(req,socket,head,client=>{
+          up.on('message',(data,bin)=>{ try{ if(client.readyState===1) client.send(data,{binary:bin}); }catch(_){} });
+          up.on('close',code=>{ try{ client.close(code); }catch(_){} });
+          up.on('error',()=>{ try{ client.close(); }catch(_){} });
+          client.on('message',(data,bin)=>{ try{ if(up.readyState===1) up.send(data,{binary:bin}); }catch(_){} });
+          client.on('close',()=>{ try{ up.close(); }catch(_){} });
+          client.on('error',()=>{ try{ up.close(); }catch(_){} });
+        });
+      }).catch(()=>socket.destroy());
+    }catch(_){ socket.destroy(); }
+  });
+}
+_attachGo2rtcWsProxy(server);
+_attachGo2rtcWsProxy(mobileServer);
 
 let _shuttingDown=false;
 function shutdown(signal){
