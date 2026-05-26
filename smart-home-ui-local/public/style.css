@@ -2124,6 +2124,9 @@ body[data-theme="sepia"] .modal-card{background:#fdf5e2;color:#3b2a14;border-col
 .camera-stream-img{max-width:100%;max-height:60vh;border-radius:12px;object-fit:contain;background:#000;display:block}
 .camera-stream-video{display:none;width:100%;max-height:60vh;border-radius:12px;background:#000;outline:none}
 .camera-modal-footer{display:flex;align-items:center;justify-content:space-between;width:100%;gap:10px}
+.camera-status{font-size:11px;opacity:.7;flex:1;text-align:center}
+.camera-status-ok{color:var(--color-ok,#4caf50);opacity:1}
+.camera-status-fail{color:var(--color-warn,#ff9800);opacity:1}
 .camera-error{color:#db4437;font-size:13px;text-align:center;padding:20px}
 .device-marker.camera-visual,.device-card.camera-visual .dev-icon,.quick-action.camera-visual .quick-icon{background:rgba(26,37,53,var(--marker-bg-opacity,.94));color:#6eb8f0}
 

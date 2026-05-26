@@ -2306,6 +2306,10 @@ let _hlsInstance = null;
 function _destroyHls(){
   if(_hlsInstance){ try{ _hlsInstance.destroy(); }catch(e){} _hlsInstance=null; }
 }
+function _setCamStatus(text, type=''){
+  const s=el('camera-modal-status');
+  if(s){ s.textContent=text; s.className='camera-status'+(type?' camera-status-'+type:''); }
+}
 function openCameraStream(d){
   const modal=el('camera-modal');
   const img=el('camera-stream-img');
@@ -2317,6 +2321,7 @@ function openCameraStream(d){
   if(entityLabel) entityLabel.textContent=d.entity_id;
   img.dataset.entity=d.entity_id;
   img.alt=''; img.src='data:,';
+  _setCamStatus('Загрузка…');
   _destroyHls();
   if(video){ video.src=''; video.style.display='none'; }
   img.style.display='';
@@ -2324,7 +2329,8 @@ function openCameraStream(d){
   const startSnapshot=()=>{
     if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
     img.onload=null;
-    img.onerror=()=>{ img.alt='Камера недоступна или стрим не поддерживается'; };
+    _setCamStatus('Снапшот');
+    img.onerror=()=>{ img.alt='Камера недоступна или стрим не поддерживается'; _setCamStatus('Снапшот: ошибка','fail'); };
     img.style.display=''; if(video) video.style.display='none';
     img.src=`api/camera/snapshot/${encodeURIComponent(d.entity_id)}?t=`+Date.now();
     if(state.cameraRefreshTimer) clearInterval(state.cameraRefreshTimer);
@@ -2337,10 +2343,11 @@ function openCameraStream(d){
   // MJPEG via server proxy — works in both Ingress and direct-port mode
   const doServerMjpeg = () => {
     if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
+    _setCamStatus('MJPEG: загрузка…');
     img.style.display=''; if(video) video.style.display='none';
-    img.onerror=startSnapshot;
-    img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
-    state.cameraStreamTimer=setTimeout(startSnapshot, 10000);
+    img.onerror=()=>{ _setCamStatus('MJPEG: ошибка → снапшот','fail'); startSnapshot(); };
+    img.onload=()=>{ img.onload=null; _setCamStatus('MJPEG ▶','ok'); if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
+    state.cameraStreamTimer=setTimeout(()=>{ _setCamStatus('MJPEG: таймаут → снапшот','fail'); startSnapshot(); }, 10000);
     img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}`;
   };
 
@@ -2354,18 +2361,21 @@ function openCameraStream(d){
       _destroyHls(); video.style.display='none'; img.style.display=''; onFail();
     };
     // 8s timeout: if video isn't actually playing by then (e.g. HEVC on Windows silently fails)
+    _setCamStatus('HLS: загрузка…');
     state.cameraHlsTimer=setTimeout(()=>{
       if(video.readyState>=2 && !video.paused) return; // actually playing, keep it
+      _setCamStatus('HLS: таймаут → MJPEG','fail');
       fallback();
     }, 8000);
     video.style.display=''; img.style.display='none';
-    video.onerror=fallback; // catch MediaError that HLS.js might miss
+    video.onerror=()=>{ _setCamStatus('HLS: ошибка → MJPEG','fail'); fallback(); };
     video.muted=true; // required for autoplay after async delay (gesture context expires during fetch)
     if(typeof Hls !== 'undefined' && Hls && Hls.isSupported()){
       _hlsInstance=new Hls({ enableWorker:false });
       _hlsInstance.loadSource(hlsUrl);
       _hlsInstance.attachMedia(video);
-      _hlsInstance.on(Hls.Events.ERROR, (_,data)=>{ if(data.fatal) fallback(); });
+      _hlsInstance.on(Hls.Events.MANIFEST_PARSED, ()=>{ _setCamStatus('HLS ▶','ok'); });
+      _hlsInstance.on(Hls.Events.ERROR, (_,data)=>{ if(data.fatal){ _setCamStatus('HLS: fatal → MJPEG','fail'); fallback(); } });
       video.play().catch(()=>{});
     } else if(video.canPlayType('application/vnd.apple.mpegurl')){
       video.src=hlsUrl;
@@ -2380,6 +2390,7 @@ function openCameraStream(d){
   fetch(`api/camera/stream-url/${encodeURIComponent(d.entity_id)}`)
     .then(r=>r.json())
     .then(data=>{
+      if(!data?.ok){ _setCamStatus('stream-url: нет потока → MJPEG','fail'); doServerMjpeg(); return; }
       if(data?.ok && data.format==='hls' && data.url){
         // Route HLS through ALLHA-2D's proxy (Bearer auth added server-side).
         // Handles both relative /api/hls/... and absolute http://ha:8123/api/hls/... forms.
@@ -2393,7 +2404,7 @@ function openCameraStream(d){
         startSnapshot();
       }
     })
-    .catch(()=>startSnapshot());
+    .catch(()=>{ _setCamStatus('stream-url: ошибка сети → снапшот','fail'); startSnapshot(); });
 
   modal.classList.remove('hidden');
 }

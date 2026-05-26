@@ -5004,9 +5004,14 @@ app.get('/api/camera/stream-url/:entity_id', async (req, res) => {
 app.get('/api/camera/hls-proxy/*', async (req, res) => {
   if(!HA_TOKEN) return res.status(503).end();
   const haPath = '/api/hls/' + req.params[0];
+  // Forward query string — required for LL-HLS blocking reload requests
+  // (?_HLS_msn=N&_HLS_part=N). Without this, HA answers immediately with
+  // a stale playlist instead of blocking until the requested segment is ready.
+  const qs = new URLSearchParams(req.query).toString();
   const haBase = HA_API_BASE.replace(/\/api$/, '');
+  const haUrl = haBase + haPath + (qs ? '?' + qs : '');
   try{
-    const upstream = await fetch(haBase + haPath, {
+    const upstream = await fetch(haUrl, {
       headers: { 'Authorization': `Bearer ${HA_TOKEN}` },
       signal: AbortSignal.timeout(30000)
     });
