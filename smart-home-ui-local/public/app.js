@@ -1620,6 +1620,8 @@ const _iconStores = {};
 const _iconPackLoading = {};
 let _iconPickerEntityId = null;
 let _iconPickerPack = 'mdi';
+const _iconPackLoadPending = new Set();
+let _iconPackRenderTimer = null;
 let _searchGen = 0; // generation counter to cancel stale cross-pack searches
 
 function iconPackId(name){
@@ -1650,8 +1652,15 @@ function customIconSvg(name){
   const pack=ICON_PACKS[packId];
   const store=_iconStores[packId];
   if(!store){
-    // Pack not yet loaded — trigger async load and re-render when ready
-    loadIconPack(packId).then(()=>render());
+    // Pack not loaded yet — start loading once per pack, schedule single re-render when done
+    if(!_iconPackLoadPending.has(packId)){
+      _iconPackLoadPending.add(packId);
+      loadIconPack(packId).then(()=>{
+        _iconPackLoadPending.delete(packId);
+        clearTimeout(_iconPackRenderTimer);
+        _iconPackRenderTimer=setTimeout(()=>{ _iconPackRenderTimer=null; safeFullRender('icon-pack-loaded'); }, 50);
+      });
+    }
     return null;
   }
   const data=store[name];
@@ -1801,17 +1810,27 @@ async function selectCustomIcon(iconName){
   if(!_iconPickerEntityId) return;
   if(!state.ui.customIcons) state.ui.customIcons={};
   state.ui.customIcons[_iconPickerEntityId]=iconName;
-  saveUiPrefs();
   closeIconPicker();
+  const uiPayload=pickKeys(state.ui, CLIENT_STATE_UI_KEYS);
+  saveLocalUiPrefs(uiPayload);
+  await Promise.all([
+    apiJson('api/ui-state',{method:'POST',body:JSON.stringify({ui:uiPayload})}).catch(()=>{}),
+    apiJson('api/client-settings/current',{method:'POST',body:JSON.stringify({ui:uiPayload})}).catch(()=>{})
+  ]);
   await loadCustomIcons();
-  render();
+  safeFullRender('icon-selected');
 }
-function clearCustomIcon(){
+async function clearCustomIcon(){
   if(!_iconPickerEntityId) return;
   if(state.ui?.customIcons) delete state.ui.customIcons[_iconPickerEntityId];
-  saveUiPrefs();
   closeIconPicker();
-  render();
+  const uiPayload=pickKeys(state.ui, CLIENT_STATE_UI_KEYS);
+  saveLocalUiPrefs(uiPayload);
+  await Promise.all([
+    apiJson('api/ui-state',{method:'POST',body:JSON.stringify({ui:uiPayload})}).catch(()=>{}),
+    apiJson('api/client-settings/current',{method:'POST',body:JSON.stringify({ui:uiPayload})}).catch(()=>{})
+  ]);
+  safeFullRender('icon-cleared');
 }
 /* ─────────────────────────────────────────────────────────────────────── */
 function iconMarkup(d){
@@ -2297,7 +2316,7 @@ function openCameraStream(d){
   if(title) title.textContent=displayName(d);
   if(entityLabel) entityLabel.textContent=d.entity_id;
   img.dataset.entity=d.entity_id;
-  img.alt=''; img.src='';
+  img.alt=''; img.src='data:,';
   _destroyHls();
   if(video){ video.src=''; video.style.display='none'; }
   img.style.display='';
@@ -2315,8 +2334,6 @@ function openCameraStream(d){
     }, 3000);
   };
 
-  const inIngress = window.location.pathname.includes('hassio_ingress');
-
   // MJPEG via server proxy — works in both Ingress and direct-port mode
   const doServerMjpeg = () => {
     if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; }
@@ -2325,16 +2342,6 @@ function openCameraStream(d){
     img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
     state.cameraStreamTimer=setTimeout(startSnapshot, 10000);
     img.src=`api/camera/stream/${encodeURIComponent(d.entity_id)}`;
-  };
-
-  // MJPEG stream via entity_picture token (Ingress mode only — browser accesses HA directly)
-  const tryMjpegStream = (entity_picture) => {
-    const mjpegPath = entity_picture.replace('/api/camera_proxy/', '/api/camera_proxy_stream/');
-    img.style.display=''; if(video) video.style.display='none';
-    img.onerror=doServerMjpeg;
-    img.onload=()=>{ img.onload=null; if(state.cameraStreamTimer){ clearTimeout(state.cameraStreamTimer); state.cameraStreamTimer=null; } };
-    state.cameraStreamTimer=setTimeout(doServerMjpeg, 8000);
-    img.src=window.location.origin + mjpegPath;
   };
 
   // onFail: called when HLS fails (async codec error, e.g. HEVC not supported)
@@ -2379,14 +2386,9 @@ function openCameraStream(d){
         const _hlsM = String(data.url).match(/\/api\/hls\/(.+)$/);
         const hlsUrl = _hlsM ? 'api/camera/hls-proxy/' + _hlsM[1] : data.url;
         // onFail: HLS codec unsupported (e.g. HEVC/H.265) → try MJPEG → snapshot
-        const hlsFail = () => {
-          if(inIngress && data.entity_picture) tryMjpegStream(data.entity_picture);
-          else doServerMjpeg();
-        };
-        tryHlsVideo(hlsUrl, hlsFail);
-      } else if(data?.ok && data.format==='mjpeg' && data.entity_picture){
-        if(inIngress) tryMjpegStream(data.entity_picture);
-        else doServerMjpeg();
+        tryHlsVideo(hlsUrl, doServerMjpeg);
+      } else if(data?.ok && data.format==='mjpeg'){
+        doServerMjpeg();
       } else {
         startSnapshot();
       }
@@ -2399,7 +2401,7 @@ function closeCameraModal(){
   const modal=el('camera-modal');
   if(modal) modal.classList.add('hidden');
   const img=el('camera-stream-img');
-  if(img) img.src='';
+  if(img) img.src='data:,';
   const video=el('camera-stream-video');
   if(video){ try{ video.pause(); }catch(e){} video.src=''; video.style.display='none'; }
   _destroyHls();
@@ -7944,7 +7946,7 @@ function bindGlobal(){
   const camRefresh=el('btn-camera-refresh');
   if(camRefresh) camRefresh.onclick=()=>{
     const img=el('camera-stream-img');
-    if(img && img.dataset.entity){ img.src=''; img.src='api/camera/stream/'+encodeURIComponent(img.dataset.entity)+'?t='+Date.now(); }
+    if(img && img.dataset.entity){ img.src='api/camera/stream/'+encodeURIComponent(img.dataset.entity)+'?t='+Date.now(); }
   };
 
   /* ── Свайп между комнатами (мобильный) ──────────────────────── */
@@ -8038,6 +8040,7 @@ function applyConfigToInputs(){
   await loadLayout();
   await loadSourceConfig();
   await loadPersistedUiState();
+  loadCustomIcons(); // fire without await — preloads packs in background while rest of init runs
   await loadAttention();
   await loadImagesInfo();
   await loadRoomsSettings();
@@ -8047,14 +8050,14 @@ function applyConfigToInputs(){
   bindGlobal();
   startClock();
   renderSourceSettings();
-  render();
+  safeFullRender('init-pre-config');
   try{
     await loadConfig();
     await loadClientPrefs(); // применяем per-device настройки поверх глобальных
     await loadAuthoritativeClientSettings(); // v4.1.21.18.19: final authoritative client settings pass
-    await loadCustomIcons(); // load AFTER client prefs so state.ui.customIcons is fully populated
+    await loadCustomIcons(); // second call is no-op if already loaded; ensures packs ready before render
     applyUiPrefs();
-    render(); // first render used defaults; redraw once after per-client settings are loaded
+    safeFullRender('after-client-settings'); // redraw once after per-client settings are loaded
     stabilizeSelectedVirtualRoom('after-client-settings-render');
     await loadSecurityRules();
     try{ applyConfigToInputs(); }catch(e){ console.warn('applyConfigToInputs failed', e); }

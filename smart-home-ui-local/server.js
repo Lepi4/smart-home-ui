@@ -5018,13 +5018,14 @@ app.get('/api/camera/hls-proxy/*', async (req, res) => {
     const buf = await upstream.arrayBuffer();
     // Rewrite /api/hls/ references inside m3u8 playlists so all sub-playlists
     // and segment requests also route through this proxy (which adds Bearer auth).
+    // Use relative path (no leading /) so it works under HA Ingress prefix too.
     const isPlaylist = ct.includes('mpegurl') || req.params[0].includes('.m3u8');
     if(isPlaylist){
       let text = Buffer.from(buf).toString('utf8');
-      // Absolute HA URLs → proxy path
-      text = text.replace(/https?:\/\/[^\s\r\n]+\/api\/hls\//g, '/api/camera/hls-proxy/');
-      // Absolute paths → proxy path
-      text = text.replace(/\/api\/hls\//g, '/api/camera/hls-proxy/');
+      // Absolute HA URLs → relative proxy path
+      text = text.replace(/https?:\/\/[^\s\r\n]+\/api\/hls\//g, 'api/camera/hls-proxy/');
+      // Absolute paths → relative proxy path
+      text = text.replace(/\/api\/hls\//g, 'api/camera/hls-proxy/');
       return res.end(text);
     }
     res.end(Buffer.from(buf));
