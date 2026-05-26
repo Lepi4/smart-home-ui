@@ -1649,7 +1649,11 @@ function customIconSvg(name){
   const packId=iconPackId(name);
   const pack=ICON_PACKS[packId];
   const store=_iconStores[packId];
-  if(!store) return null;
+  if(!store){
+    // Pack not yet loaded — trigger async load and re-render when ready
+    loadIconPack(packId).then(()=>render());
+    return null;
+  }
   const data=store[name];
   if(!data) return null;
   return `<svg class="icon-svg custom-mdi-icon" viewBox="${pack.viewBox}" aria-hidden="true">${_packInner(data,pack)}</svg>`;
@@ -1793,12 +1797,13 @@ function renderIconGrid(query){
     renderSinglePackGrid(q); // browse current tab (small packs show all, large show hint)
   }
 }
-function selectCustomIcon(iconName){
+async function selectCustomIcon(iconName){
   if(!_iconPickerEntityId) return;
   if(!state.ui.customIcons) state.ui.customIcons={};
   state.ui.customIcons[_iconPickerEntityId]=iconName;
   saveUiPrefs();
   closeIconPicker();
+  await loadCustomIcons();
   render();
 }
 function clearCustomIcon(){
@@ -2370,8 +2375,9 @@ function openCameraStream(d){
     .then(data=>{
       if(data?.ok && data.format==='hls' && data.url){
         // Route HLS through ALLHA-2D's proxy (Bearer auth added server-side).
-        // Relative URL (no leading slash) works in both Ingress and local-docker mode.
-        const hlsUrl = data.url.replace(/^\/api\/hls\//, 'api/camera/hls-proxy/');
+        // Handles both relative /api/hls/... and absolute http://ha:8123/api/hls/... forms.
+        const _hlsM = String(data.url).match(/\/api\/hls\/(.+)$/);
+        const hlsUrl = _hlsM ? 'api/camera/hls-proxy/' + _hlsM[1] : data.url;
         // onFail: HLS codec unsupported (e.g. HEVC/H.265) → try MJPEG → snapshot
         const hlsFail = () => {
           if(inIngress && data.entity_picture) tryMjpegStream(data.entity_picture);
@@ -8030,7 +8036,6 @@ function applyConfigToInputs(){
 
 (async function init(){
   await loadLayout();
-  loadCustomIcons(); // preload icon pack JSON files for any non-MDI icons in state.ui.customIcons
   await loadSourceConfig();
   await loadPersistedUiState();
   await loadAttention();
@@ -8047,6 +8052,7 @@ function applyConfigToInputs(){
     await loadConfig();
     await loadClientPrefs(); // применяем per-device настройки поверх глобальных
     await loadAuthoritativeClientSettings(); // v4.1.21.18.19: final authoritative client settings pass
+    await loadCustomIcons(); // load AFTER client prefs so state.ui.customIcons is fully populated
     applyUiPrefs();
     render(); // first render used defaults; redraw once after per-client settings are loaded
     stabilizeSelectedVirtualRoom('after-client-settings-render');

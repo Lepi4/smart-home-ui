@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+﻿FROM node:20-bookworm-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget \
@@ -7,7 +7,7 @@ RUN apt-get update \
 WORKDIR /app
 ENV NODE_ENV=production
 ENV ALLHA_MODE=home-assistant-addon
-ENV BUILD_VERSION=5.1.0-beta.36
+ENV BUILD_VERSION=5.1.0-beta.37
 ENV PATH=/app/node_modules/.bin:$PATH
 ENV npm_config_audit=false
 ENV npm_config_fund=false

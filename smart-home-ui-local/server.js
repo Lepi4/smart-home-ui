@@ -5016,6 +5016,17 @@ app.get('/api/camera/hls-proxy/*', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache');
     if(!upstream.ok) return res.end();
     const buf = await upstream.arrayBuffer();
+    // Rewrite /api/hls/ references inside m3u8 playlists so all sub-playlists
+    // and segment requests also route through this proxy (which adds Bearer auth).
+    const isPlaylist = ct.includes('mpegurl') || req.params[0].includes('.m3u8');
+    if(isPlaylist){
+      let text = Buffer.from(buf).toString('utf8');
+      // Absolute HA URLs → proxy path
+      text = text.replace(/https?:\/\/[^\s\r\n]+\/api\/hls\//g, '/api/camera/hls-proxy/');
+      // Absolute paths → proxy path
+      text = text.replace(/\/api\/hls\//g, '/api/camera/hls-proxy/');
+      return res.end(text);
+    }
     res.end(Buffer.from(buf));
   }catch(e){
     if(!res.headersSent) res.status(502).end();
