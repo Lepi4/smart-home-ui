@@ -1,6 +1,6 @@
-﻿{
+{
   "name": "allha-2d-ha-addon",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -9,9 +9,7 @@
     "gen:brand": "node scripts/gen-brand-icons.js",
     "gen:phosphor": "node scripts/gen-phosphor-icons.js <path-to-assets/regular>",
     "gen:tabler": "node scripts/gen-tabler-icons.js <path-to-outline-svg-dir>",
-    "gen:remix": "node scripts/gen-remix-icons.js <path-to-RemixIcon/icons>",
-    "gen:lucide": "node scripts/gen-lucide-icons.js",
-    "gen:solar": "node scripts/gen-solar-icons.js"
+    "gen:remix": "node scripts/gen-remix-icons.js <path-to-RemixIcon/icons>"
   },
   "dependencies": {
     "better-sqlite3": "9.4.3",
@@ -23,8 +21,6 @@
     "sharp": "^0.33.5"
   },
   "devDependencies": {
-    "@iconify-json/lucide": "^1.2.109",
-    "@iconify-json/solar": "^1.2.5",
     "@mdi/svg": "^7.4.47"
   }
 }

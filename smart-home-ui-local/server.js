@@ -61,6 +61,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Global JSON body parser — fixes Bug 1: POST/PATCH routes that use req.body
+// without per-route express.json() (layout, source-config, config, factory-reset, etc.)
+// express.json() is Content-Type-aware: it only parses application/json, so it
+// does not interfere with express.raw() image-upload routes.
+app.use(express.json({ limit: '10mb' }));
+
 // Lightweight rate limiter (no external deps).
 // v4.1.21.18.44: keep it on sensitive endpoints only and cap internal Map growth.
 const _rlStore = new Map();
@@ -2351,12 +2357,23 @@ function createManualBackup(reason='manual'){
   const dst = path.join(LAYOUT_BACKUP_DIR, `${safeReason}-backup-${stamp}`);
   fs.mkdirSync(dst, {recursive:true});
   const candidates = [
-    PROFILES_META_PATH, PROFILES_DIR, ADDON_CONFIG_PATH, ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH
+    PROFILES_META_PATH, PROFILES_DIR,
+    path.join(DATA_DIR, 'images'),  // root-level images (overview + rooms) — not inside PROFILES_DIR
+    ADDON_CONFIG_PATH, ATTENTION_RULES_PATH, SECURITY_RULES_PATH, COMMAND_LOG_PATH
   ];
   const copied=[];
   for(const src of candidates){
     try{ if(fs.existsSync(src) && copyPathForBackup(src, path.join(dst, path.basename(src)))) copied.push(path.basename(src)); }catch(e){ console.warn('[ALLHA-2D] backup copy failed:', path.basename(src), e.message); }
   }
+  // Back up SQLite DB (web_client_settings: ui scale, opacity, icons per client).
+  // In WAL mode the main .db file is always self-consistent without the WAL file.
+  try{
+    const dbSrc = allhaDb.DB_PATH;
+    if(dbSrc && fs.existsSync(dbSrc)){
+      fs.copyFileSync(dbSrc, path.join(dst, 'allha2d.db'));
+      copied.push('allha2d.db');
+    }
+  }catch(e){ console.warn('[ALLHA-2D] backup: db copy failed:', e.message); }
   const sizeBytes = dirSizeBytes(dst);
   const manifest = writeBackupManifest(dst, {reason:safeReason, copied, sizeBytes});
   return { name:path.basename(dst), type:'directory', copied, path:dst, size:sizeBytes, manifest:!!manifest };
@@ -2371,11 +2388,12 @@ function restoreManualBackup(name, confirmWord){
   const before = autoBackupsEnabled() ? createManualBackup('before-restore') : null;
   const restoreMap = [
     ['profiles.json', PROFILES_META_PATH],
-    ['profiles', PROFILES_DIR],
-    ['addon_config.json', ADDON_CONFIG_PATH],
-    ['attention_rules.json', ATTENTION_RULES_PATH],
-    ['security_rules.json', SECURITY_RULES_PATH],
-    ['command_log.json', COMMAND_LOG_PATH]
+    ['profiles',      PROFILES_DIR],
+    ['images',        path.join(DATA_DIR, 'images')],
+    ['addon_config.json',     ADDON_CONFIG_PATH],
+    ['attention_rules.json',  ATTENTION_RULES_PATH],
+    ['security_rules.json',   SECURITY_RULES_PATH],
+    ['command_log.json',      COMMAND_LOG_PATH]
   ];
   const restored=[];
   for(const [name0, dst] of restoreMap){
@@ -2386,6 +2404,16 @@ function restoreManualBackup(name, confirmWord){
       copyPathRecursive(src, dst);
       restored.push(name0);
     }catch(e){ console.warn('[ALLHA-2D] restore backup failed:', name0, e.message); }
+  }
+  // Restore SQLite DB last (web_client_settings: ui scale, opacity, icons per client)
+  const dbBackup = path.join(srcDir, 'allha2d.db');
+  if(fs.existsSync(dbBackup) && allhaDb.DB_PATH){
+    try{
+      if(allhaDb.closeDb) allhaDb.closeDb();
+      if(fs.existsSync(allhaDb.DB_PATH)) fs.copyFileSync(allhaDb.DB_PATH, allhaDb.DB_PATH + '.pre-restore.bak');
+      fs.copyFileSync(dbBackup, allhaDb.DB_PATH);
+      restored.push('allha2d.db');
+    }catch(e){ console.warn('[ALLHA-2D] restore: db restore failed:', e.message); }
   }
   updateActiveProfilePaths();
   return { ok:true, restored, preRestoreBackup: before?.name || null, automaticPreRestoreBackup: !!before, backups: backupSummary(), reloadRecommended:true };
