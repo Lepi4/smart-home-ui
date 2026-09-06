@@ -1,3 +1,14 @@
+# ALLHA-2D v5.2.4 — image compression restored (Docker build hotfix)
+
+## Fixed
+
+- The production `Dockerfile`/`Dockerfile.local` ran `npm ci --omit=dev --omit=optional`. `sharp` (the WebP image encoder) is listed under `optionalDependencies` (to keep installs from hard-failing on unsupported platforms), but `--omit=optional` meant it was **never installed in any shipped image**, on any platform. `processUploadedImage()` silently falls back to a raw byte-for-byte copy (`converter: "copy-fallback"`) whenever `sharp` isn't available - every uploaded overview/room image was served uncompressed (1.5-2.8&nbsp;MB PNG) instead of being resized/re-encoded to WebP (~100-400&nbsp;KB).
+- This directly caused the "switching levels takes 10-15 seconds" reports: the API responses were fast (\<400ms), but downloading the multi-megabyte uncompressed images over the connection took several seconds each - confirmed via a user-provided Network panel screenshot showing 266ms server response vs 4.5s content download for a single overview image.
+- Fixed by dropping `--omit=optional` from both Dockerfiles (both build platforms, amd64/aarch64, have prebuilt `sharp` binaries, so this is safe) and adding `require.resolve('sharp')` to the post-install sanity check so a future regression fails the build loudly instead of silently degrading.
+- Verified live: re-uploading the same source image after installing `sharp` in a running container dropped it from 1,689,424 bytes (PNG, copy-fallback) to 150,842 bytes (WebP, sharp-webp) - roughly 11x smaller.
+- Note: like 5.2.3, this fixes *future* uploads only - overview/room images already stored uncompressed should be re-uploaded once to pick up the smaller WebP encoding.
+- Version metadata updated to `5.2.4`.
+
 # ALLHA-2D v5.2.3 — image upload level-bleed hotfix
 
 ## Fixed
