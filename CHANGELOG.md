@@ -1,3 +1,13 @@
+# ALLHA-2D v5.2.3 — image upload level-bleed hotfix
+
+## Fixed
+
+- `POST/DELETE /api/images/overview` and `POST/DELETE /api/images/rooms/:room_id` called `activateProfileLevelForCurrentServer(profileId, levelId)`, which **permanently** rewrites the persisted `activeLevelId` in `levels.json` (and the in-memory globals) to whatever level the upload/delete targeted, with no restore afterward. Any other request that falls back to that global (rather than a per-client preference) would keep resolving to the last-uploaded-to level indefinitely, until the user happened to explicitly reactivate a different level again. Reported symptom: uploading an overview image for one floor caused a different floor (that was never touched) to display that same image.
+- Fixed by replacing the permanent activation with the existing `withTemporaryLevel(profileId, levelId, fn)` helper (already used correctly by the `/media/*` static handler and `GET /api/images`), which resolves the correct level for the duration of the request only and restores the previous global state afterward - matching the read-path fix from 5.2.2 instead of fighting it.
+- Verified against a live container under real concurrency (parallel activate + upload + background polling requests): each level now reliably keeps its own distinct overview image after the fix, where it previously bled across levels.
+- Note: this fix stops *future* corruption; overview images already overwritten by the bug before upgrading need to be re-uploaded once per affected level.
+- Version metadata (`config.yaml`, `package.json`, `Dockerfile`, `Dockerfile.local`) updated to `5.2.3`.
+
 # ALLHA-2D v5.2.2 — level switch client-context hotfix
 
 ## Fixed

@@ -4385,118 +4385,122 @@ app.get('/api/images', async (req,res)=>{
 app.post('/api/images/overview', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), async (req,res)=>{
   try{
     const __lp = requestProfileLevelContext(req);
-    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
-    ensureDataStore();
-    const info = validateUploadedImage(req, req.body, 'overview');
-    const currentInfo = imageInfo('overview');
-    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
-    const preBackup = backupRequested ? createManualBackup('before-overview-image-replace') : null;
-    const originalPath = path.join(DATA_IMAGES_ORIGINALS_DIR, `overview-original.${info.ext}`);
-    fs.writeFileSync(originalPath, req.body);
-    const processed = await processUploadedImage('overview', req.body, info, path.join(DATA_IMAGES_OVERVIEW_DIR, 'overview.webp'));
-    const processedAspectRatio = processed.processedWidth && processed.processedHeight ? Math.round((processed.processedWidth/processed.processedHeight)*1000)/1000 : info.aspectRatio;
-    const meta = loadImagesMeta();
-    meta.overview = {
-      src: mediaUrlForOverview(),
-      file: processed.workingPath,
-      originalPath,
-      originalFilename: info.filename,
-      originalWidth: info.width,
-      originalHeight: info.height,
-      processedWidth: processed.processedWidth,
-      processedHeight: processed.processedHeight,
-      format: processed.format,
-      sizeBytes: info.sizeBytes,
-      processedSizeBytes: processed.processedSizeBytes,
-      aspectRatio: processedAspectRatio,
-      converter: processed.converter,
-      maxLongSide: processed.maxLongSide,
-      updatedAt: new Date().toISOString()
-    };
-    saveImagesMeta(meta);
-    const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
-    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
+    await withTemporaryLevel(__lp.profileId, __lp.id, async()=>{
+      ensureDataStore();
+      const info = validateUploadedImage(req, req.body, 'overview');
+      const currentInfo = imageInfo('overview');
+      const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+      const preBackup = backupRequested ? createManualBackup('before-overview-image-replace') : null;
+      const originalPath = path.join(DATA_IMAGES_ORIGINALS_DIR, `overview-original.${info.ext}`);
+      fs.writeFileSync(originalPath, req.body);
+      const processed = await processUploadedImage('overview', req.body, info, path.join(DATA_IMAGES_OVERVIEW_DIR, 'overview.webp'));
+      const processedAspectRatio = processed.processedWidth && processed.processedHeight ? Math.round((processed.processedWidth/processed.processedHeight)*1000)/1000 : info.aspectRatio;
+      const meta = loadImagesMeta();
+      meta.overview = {
+        src: mediaUrlForOverview(),
+        file: processed.workingPath,
+        originalPath,
+        originalFilename: info.filename,
+        originalWidth: info.width,
+        originalHeight: info.height,
+        processedWidth: processed.processedWidth,
+        processedHeight: processed.processedHeight,
+        format: processed.format,
+        sizeBytes: info.sizeBytes,
+        processedSizeBytes: processed.processedSizeBytes,
+        aspectRatio: processedAspectRatio,
+        converter: processed.converter,
+        maxLongSide: processed.maxLongSide,
+        updatedAt: new Date().toISOString()
+      };
+      saveImagesMeta(meta);
+      const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
+      res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
+    });
   }catch(e){ validationErrorResponse(req,res,e); }
 });
 
-app.delete('/api/images/overview', (req,res)=>{
+app.delete('/api/images/overview', async (req,res)=>{
   try{
     const __lp = requestProfileLevelContext(req);
-    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
-    ensureDataStore();
-    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
-    const preBackup = backupRequested ? createManualBackup('before-overview-image-replace') : null;
-    for(const ext of ['webp','png','jpg','jpeg']){
-      const f = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${ext}`);
-      if(fs.existsSync(f)) fs.unlinkSync(f);
-    }
-    const meta = loadImagesMeta();
-    meta.overview = null;
-    saveImagesMeta(meta);
-    res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:false});
+    await withTemporaryLevel(__lp.profileId, __lp.id, async()=>{
+      ensureDataStore();
+      const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+      const preBackup = backupRequested ? createManualBackup('before-overview-image-replace') : null;
+      for(const ext of ['webp','png','jpg','jpeg']){
+        const f = path.join(DATA_IMAGES_OVERVIEW_DIR, `overview.${ext}`);
+        if(fs.existsSync(f)) fs.unlinkSync(f);
+      }
+      const meta = loadImagesMeta();
+      meta.overview = null;
+      saveImagesMeta(meta);
+      res.json({ok:true, overview:imageInfo('overview'), meta:loadImagesMeta(), backup:false});
+    });
   }catch(e){ safeErrorResponse(req,res,e); }
 });
 
 app.post('/api/images/rooms/:room_id', express.raw({type:['image/*','application/octet-stream'], limit:'25mb'}), async (req,res)=>{
   try{
     const __lp = requestProfileLevelContext(req);
-    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
-    ensureDataStore();
-    const roomId = assertKnownRoomId(req.params.room_id);
-    const info = validateUploadedImage(req, req.body, 'room');
-    const currentInfo = imageInfo('room', roomId);
-    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
-    const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
-    const safe = safeRoomImageFileBase(roomId);
-    const originalPath = path.join(DATA_IMAGES_ORIGINALS_ROOMS_DIR, `${safe}-original.${info.ext}`);
-    fs.writeFileSync(originalPath, req.body);
-    const processed = await processUploadedImage('room', req.body, info, customRoomImagePath(roomId));
-    const processedAspectRatio = processed.processedWidth && processed.processedHeight ? Math.round((processed.processedWidth/processed.processedHeight)*1000)/1000 : info.aspectRatio;
-    const meta = loadImagesMeta();
-    meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
-    meta.rooms[roomId] = {
-      src: mediaUrlForRoom(roomId),
-      file: processed.workingPath,
-      originalPath,
-      originalFilename: info.filename,
-      originalWidth: info.width,
-      originalHeight: info.height,
-      processedWidth: processed.processedWidth,
-      processedHeight: processed.processedHeight,
-      format: processed.format,
-      sizeBytes: info.sizeBytes,
-      processedSizeBytes: processed.processedSizeBytes,
-      aspectRatio: processedAspectRatio,
-      converter: processed.converter,
-      maxLongSide: processed.maxLongSide,
-      updatedAt: new Date().toISOString()
-    };
-    saveImagesMeta(meta);
-    const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
-    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
+    await withTemporaryLevel(__lp.profileId, __lp.id, async()=>{
+      ensureDataStore();
+      const roomId = assertKnownRoomId(req.params.room_id);
+      const info = validateUploadedImage(req, req.body, 'room');
+      const currentInfo = imageInfo('room', roomId);
+      const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+      const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
+      const safe = safeRoomImageFileBase(roomId);
+      const originalPath = path.join(DATA_IMAGES_ORIGINALS_ROOMS_DIR, `${safe}-original.${info.ext}`);
+      fs.writeFileSync(originalPath, req.body);
+      const processed = await processUploadedImage('room', req.body, info, customRoomImagePath(roomId));
+      const processedAspectRatio = processed.processedWidth && processed.processedHeight ? Math.round((processed.processedWidth/processed.processedHeight)*1000)/1000 : info.aspectRatio;
+      const meta = loadImagesMeta();
+      meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
+      meta.rooms[roomId] = {
+        src: mediaUrlForRoom(roomId),
+        file: processed.workingPath,
+        originalPath,
+        originalFilename: info.filename,
+        originalWidth: info.width,
+        originalHeight: info.height,
+        processedWidth: processed.processedWidth,
+        processedHeight: processed.processedHeight,
+        format: processed.format,
+        sizeBytes: info.sizeBytes,
+        processedSizeBytes: processed.processedSizeBytes,
+        aspectRatio: processedAspectRatio,
+        converter: processed.converter,
+        maxLongSide: processed.maxLongSide,
+        updatedAt: new Date().toISOString()
+      };
+      saveImagesMeta(meta);
+      const aspectChanged = currentInfo.aspectRatio && processedAspectRatio && Math.abs(currentInfo.aspectRatio - processedAspectRatio) > 0.01;
+      res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:!!preBackup, backupName:preBackup?.name||null, aspectChanged, previousAspectRatio:currentInfo.aspectRatio, newAspectRatio:processedAspectRatio});
+    });
   }catch(e){ validationErrorResponse(req,res,e); }
 });
 
-app.delete('/api/images/rooms/:room_id', (req,res)=>{
+app.delete('/api/images/rooms/:room_id', async (req,res)=>{
   try{
     const __lp = requestProfileLevelContext(req);
-    activateProfileLevelForCurrentServer(__lp.profileId, __lp.id);
-    ensureDataStore();
-    const roomId = assertKnownRoomId(req.params.room_id);
-    const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
-    const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
-    const bases = Array.from(new Set([safeRoomImageFileBase(roomId), legacyUnsafeRoomImageFileBase(roomId)]));
-    for(const base of bases){
-      for(const ext of ['webp','png','jpg','jpeg']){
-        const f = path.join(DATA_IMAGES_ROOMS_DIR, `${base}.${ext}`);
-        if(fs.existsSync(f)) fs.unlinkSync(f);
+    await withTemporaryLevel(__lp.profileId, __lp.id, async()=>{
+      ensureDataStore();
+      const roomId = assertKnownRoomId(req.params.room_id);
+      const backupRequested = req.query.backup === '1' || req.get('x-create-backup') === '1';
+      const preBackup = backupRequested ? createManualBackup(`before-room-${safeRoomImageFileBase(roomId)}-image-replace`) : null;
+      const bases = Array.from(new Set([safeRoomImageFileBase(roomId), legacyUnsafeRoomImageFileBase(roomId)]));
+      for(const base of bases){
+        for(const ext of ['webp','png','jpg','jpeg']){
+          const f = path.join(DATA_IMAGES_ROOMS_DIR, `${base}.${ext}`);
+          if(fs.existsSync(f)) fs.unlinkSync(f);
+        }
       }
-    }
-    const meta = loadImagesMeta();
-    meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
-    delete meta.rooms[roomId];
-    saveImagesMeta(meta);
-    res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:false});
+      const meta = loadImagesMeta();
+      meta.rooms = isPlainObject(meta.rooms) ? meta.rooms : {};
+      delete meta.rooms[roomId];
+      saveImagesMeta(meta);
+      res.json({ok:true, room_id:roomId, room:imageInfo('room', roomId), rooms:{[roomId]:imageInfo('room', roomId)}, meta:loadImagesMeta(), backup:false});
+    });
   }catch(e){ safeErrorResponse(req,res,e); }
 });
 
