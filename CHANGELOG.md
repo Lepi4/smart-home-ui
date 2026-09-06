@@ -1,3 +1,11 @@
+# ALLHA-2D v5.2.1 — level switch persistence hotfix
+
+## Fixed
+
+- `POST /api/levels/:id/activate` wrapped `activateLevel()` in `withTemporaryLevel()`, whose `finally` block restored the previous `ACTIVE_LEVEL_ID`/`ACTIVE_LEVEL_DIR` right after the call. The new active level was correctly persisted to disk, but the live server state was immediately rolled back, so every subsequent request kept serving the old level's rooms/devices until a full server restart — in multi-level setups (e.g. floor 1 / floor 2 / outside) switching levels in the web UI appeared to do nothing, always showing whichever level was active at server start.
+- Fixed by re-syncing live globals with `updateActiveProfilePaths()` right after the wrapped `activateLevel()` call, so the just-persisted level switch actually takes effect without requiring a restart.
+- Version metadata (`config.yaml`, `package.json`, `Dockerfile`, `Dockerfile.local`) updated to `5.2.1`.
+
 # ALLHA-2D v5.1.0-beta.3 — CI/package-lock registry hotfix
 
 - package-lock.json resolved tarball URLs changed from the sandbox internal registry to public https://registry.npmjs.org/.
