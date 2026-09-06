@@ -1,3 +1,11 @@
+# ALLHA-2D v5.2.2 — level switch client-context hotfix
+
+## Fixed
+
+- `POST /api/levels/:id/activate` persisted the newly activated level only into the `web_client_settings` store keyed by the `x-client-id` header, via a hand-rolled `getClientPrefs`/`saveClientPrefs` pair. The HA add-on / Ingress root client ("Server" identity) is not a `web_client` and is never addressed by that header — its active-level preference lives in `data/client_settings/server_ui.json`, which the route never touched. As a result, every data-reading endpoint (`/api/rooms`, `/api/layout`, `/api/images`, ...) kept resolving the level through the stale `server_ui.json` value forever, regardless of which level was actually activated — rooms and images always showed whichever level was last active before the bug was hit, identical across all levels/floors.
+- Fixed by persisting the new active level through `saveCurrentClientSettings(req, ...)`, the same identity-aware function `getCurrentClientSettings()` reads from (mobile device / web client / Server-ui.json), in addition to the existing header-based web-client write.
+- Version metadata (`config.yaml`, `package.json`, `Dockerfile`, `Dockerfile.local`) updated to `5.2.2`.
+
 # ALLHA-2D v5.2.1 — level switch persistence hotfix
 
 ## Fixed

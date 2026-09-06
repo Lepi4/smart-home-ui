@@ -7,7 +7,7 @@ RUN apt-get update \
 WORKDIR /app
 ENV NODE_ENV=production
 ENV ALLHA_MODE=local-dev
-ENV BUILD_VERSION=5.2.1
+ENV BUILD_VERSION=5.2.2
 ENV PATH=/app/node_modules/.bin:$PATH
 ENV npm_config_audit=false
 ENV npm_config_fund=false
